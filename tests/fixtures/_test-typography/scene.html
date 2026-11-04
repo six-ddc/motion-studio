@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="./assets/fonts/fonts.css">
+<style>html,body{margin:0;background:#111}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script type="module">
+// film-typography 自测：拆字（前缀测量）+ 遮罩升起 + 字重连续轴 + opsz 任意轴（非标准）
+// + 中文断行避头尾 + 标点挤压 + 打字机。首帧 = 末帧（全空），可循环。
+import { makeLayout } from './runtime/layout.js';
+import { sat, norm } from './runtime/motion.js';
+import { loadFonts, splitText, layoutCJK, drawRiseIn, wrapCJK,
+         setAxes, clearAxes, disableFontSynthesis, segments } from './runtime/text.js';
+import { typeSchedule, typedAt } from './runtime/textfx.js';
+
+const fmt = new URLSearchParams(location.search).get('format') ?? '9x16';
+const L = makeLayout(fmt);
+const c = document.getElementById('stage');
+c.width = L.width; c.height = L.height;
+const ctx = c.getContext('2d');
+disableFontSynthesis(ctx);
+
+const SC = '"Noto Sans SC Variable"';
+const LAT = '"Inter Variable"';
+const TITLE = '画面必须是时间的纯函数。';
+const PARA = '「字距」不能丢——前缀测量，保住 kerning！排版：避头尾、标点挤压，seek(t) 任意可跳。';
+const WORD = 'Motion';
+const fTitle = `700 ${L.size(0.075)}px ${SC}`;
+const fPara = `400 ${L.size(0.042)}px ${SC}`;
+const fWord = (w) => `${w} ${L.size(0.16)}px ${LAT}`;
+window.DURATION = 4;
+
+let title, paraLines, word;
+const TYPED = typeSchedule(999, { start: 1.0, perUnit: 0.035 });   // 打字机时刻表：加载时算一次，seek 里只查表
+window.ready = (async () => {
+  await loadFonts([[fTitle, TITLE], [fPara, PARA], [fWord(900), WORD], [fWord(100), WORD]]);
+  // 一切测量在加载时做一次
+  ctx.font = fTitle;
+  title = layoutCJK(ctx, TITLE, L.size(0.075), { punct: 'adjacent' });
+  ctx.font = fPara;
+  paraLines = wrapCJK(ctx, PARA, L.width - L.pad * 2).map((s) => ({ s, n: segments(s).length }));
+  ctx.font = fWord(400);
+  word = splitText(ctx, WORD, { granularity: 'grapheme' });
+})();
+
+const OUT0 = 3.0, OUT1 = 3.7;           // 统一出场窗口：3.7s 之后全空 = 首帧
+const exitP = (t) => sat((t - OUT0) / (OUT1 - OUT0));
+const ease = (p) => 1 - (1 - p) ** 3;
+
+window.seek = (t) => {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, L.width, L.height);
+  ctx.fillStyle = '#F2EFE6';
+  const ex = ease(exitP(t));
+
+  // 1. 中文标题：逐字遮罩升起（layoutCJK 带标点挤压）；出场时沉回遮罩
+  ctx.font = fTitle;
+  const ty = L.titleY;
+  const x0 = L.cx - title.totalWidth / 2;
+  drawRiseIn(ctx, title, t, {
+    x: x0, y: ty, size: L.size(0.075),
+    progress: (i) => ease(sat((t - (0.15 + i * 0.04)) / 0.5)) * (1 - ex),
+    rise: 1.2, dir: 1,
+  });
+
+  // 2. Motion：字重 100→900 连续（标准 ctx.font），opsz 14→32（非标准 setAxes）
+  const wp = ease(norm(t, 0.6, 2.2));
+  const wght = Math.round(100 + 800 * wp);
+  const wy = L.place(0, 0.52).y;
+  setAxes(ctx, { opsz: 14 + 18 * wp }, fWord(wght));
+  // 字重变了 advance 也变：按当前字重重新前缀测量（splitText 很便宜，且只依赖 t → 纯函数）
+  const g = splitText(ctx, WORD);
+  drawRiseIn(ctx, g, t, {
+    x: L.cx, y: wy, size: L.size(0.16), align: 'center',
+    progress: (i) => ease(sat((t - (0.45 + i * 0.05)) / 0.6)) * (1 - ex),
+    rise: 1.2,
+  });
+  clearAxes(ctx, fPara);
+
+  // 3. 段落：断行避头尾 + 打字机，逐行显示
+  ctx.font = fPara;
+  ctx.textAlign = 'left';
+  const lh = L.size(0.042) * 1.6;
+  let budget = typedAt(t, TYPED);
+  const py0 = L.place(0, 0.62).y;
+  ctx.save();
+  ctx.globalAlpha = 1 - ex;               // 段落出场用淡出：代价最低，和标题的遮罩出场形成主次
+  paraLines.forEach((ln, k) => {
+    const show = Math.min(ln.n, budget);
+    budget -= show;
+    if (show > 0) ctx.fillText(segments(ln.s).slice(0, show).join(''), L.pad, py0 + k * lh);
+  });
+  ctx.restore();
+};
+</script>
+</body>
+</html>

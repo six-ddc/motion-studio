@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>_test-webfx</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script type="module">
+// film-webfx 验收片：两条合成方向都走一遍
+//   A  着色器 → 2D：循环 fbm 墨场（半分辨率渲染再放大）→ 画进离屏 2D → destination-out 挖出一个圆孔
+//   B  2D → 着色器：2D 画的几何体当纹理，喂给置换着色器，再画回主画布
+// 4 秒一圈；u_time 由 render(t) 传入，period=DURATION 让 t=D 与 t=0 逐像素一致。
+import { makeLayout } from './runtime/layout.js';
+import { createShaderLayer, GLSL } from './runtime/webfx.js';
+
+const L = makeLayout(new URLSearchParams(location.search).get('format') || '9x16');
+const DURATION = 4;
+window.DURATION = DURATION;
+const TAU = Math.PI * 2;
+
+const stage = document.getElementById('stage');
+stage.width = L.width; stage.height = L.height;
+const ctx = stage.getContext('2d', { alpha: false });
+
+const LIB = GLSL.header + GLSL.hash + GLSL.noise + GLSL.loop;
+
+// A：墨场。半分辨率（1/4 像素成本）
+const field = createShaderLayer({
+  width: L.width, height: L.height, scale: 0.5, seed: 11, period: DURATION,
+  frag: LIB + `
+uniform float u_period;
+void main(){
+  vec2 p = v_uv * vec2(u_res.x / u_res.y, 1.0) * 2.5 + u_seed;
+  float ph = u_time / u_period;
+  vec2 q = vec2(loopFbm(p, ph, 0.7), loopFbm(p + 5.2, ph, 0.7));
+  float n = loopFbm(p + 3.0 * q, ph, 0.5);
+  float a = smoothstep(0.35, 0.75, n);
+  vec3 c = mix(vec3(0.05, 0.08, 0.12), vec3(0.85, 0.55, 0.30), n);
+  OUT = vec4(c * a, a);              // 预乘输出：rgb 已乘 alpha
+}`,
+});
+
+// B：置换。全分辨率，因为它采样的是 2D 画的锐利边缘
+const warp = createShaderLayer({
+  width: L.width, height: L.height, scale: 1, seed: 5, period: DURATION,
+  frag: LIB + `
+uniform sampler2D u_src; uniform float u_amp; uniform float u_period;
+void main(){
+  vec2 p = v_uv * 5.0;
+  float ph = u_time / u_period;
+  vec2 off = vec2(loopNoise(p, ph, 0.9), loopNoise(p + 7.3, ph, 0.9)) - 0.5;
+  OUT = TEX(u_src, v_uv + off * u_amp);
+}`,
+});
+
+// 离屏 2D 层
+const mk = () => { const c = document.createElement('canvas'); c.width = L.width; c.height = L.height; return c; };
+const ink = mk(), ictx = ink.getContext('2d');
+const geo = mk(), gctx = geo.getContext('2d');
+
+function seek(t) {
+  // 相位在 JS 里用 double 取模，和着色器一侧（period 选项）一致
+  const ph = (((t % DURATION) + DURATION) % DURATION) / DURATION;
+  const u = L.size(1);
+
+  ctx.fillStyle = '#0b0d10';
+  ctx.fillRect(0, 0, L.width, L.height);
+
+  // A：着色器 → 离屏 2D → 挖空 → 主画布
+  field.render(t, { u_period: DURATION });
+  ictx.clearRect(0, 0, L.width, L.height);
+  field.drawTo(ictx, { smoothing: true });
+  ictx.save();
+  ictx.globalCompositeOperation = 'destination-out';
+  const c = L.place(0.5 + 0.12 * Math.cos(TAU * ph), 0.42 + 0.06 * Math.sin(TAU * ph));
+  ictx.beginPath(); ictx.arc(c.x, c.y, u * 0.28, 0, TAU); ictx.fill();
+  ictx.restore();
+  ctx.drawImage(ink, 0, 0);
+
+  // B：2D 几何 → 纹理 → 置换 → 主画布
+  gctx.clearRect(0, 0, L.width, L.height);
+  gctx.strokeStyle = '#e8e2d0';
+  gctx.lineWidth = u * 0.012;
+  for (let i = 0; i < 9; i++) {
+    const y = L.place(0, 0.62 + i * 0.03).y;
+    gctx.beginPath(); gctx.moveTo(L.pad, y); gctx.lineTo(L.width - L.pad, y); gctx.stroke();
+  }
+  warp.texture('u_src', geo);
+  warp.render(t, { u_amp: 0.04 * (0.5 + 0.5 * Math.sin(TAU * ph)), u_period: DURATION });
+  warp.drawTo(ctx);
+}
+
+window.seek = seek;
+seek(0); // 预热：首帧含着色器 JIT 编译
+</script>
+</body>
+</html>

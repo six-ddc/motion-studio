@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "gates": [
+    {
+      "id": "physcheck",
+      "about": "定步重放 / 烘焙：顺序、乱序、倒序、冷启动逐帧像素哈希比（抓检查点存引用、外部 rng、不回退），声明了 PHYS.timeMap / PHYS.claims 时另验时间映射与断言",
+      "when": { "uses": ["replay.js", "baked.js", "chain.js"] },
+      "needs": ["scene"],
+      "run": ["node", "{skill}/scripts/physcheck.mjs", "--film", "{slug}", "--films-dir", "{films}"],
+      "cost": 2
+    }
+  ]
+}

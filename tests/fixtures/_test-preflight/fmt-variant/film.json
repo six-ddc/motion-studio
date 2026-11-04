@@ -1,0 +1,1 @@
+{ "schema": 1, "slug": "fmt-variant", "title": "预检阴性：竖版 format 变体撑超槽位", "entry": "scene.html", "format": "16x9", "formats": ["16x9", "9x16"], "fps": 30, "sub": 1, "checks": ["preflight"] }

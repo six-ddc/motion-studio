@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>critique 测试片</title>
+<style>html,body{margin:0;background:#000}#stage{display:block}</style>
+<canvas id="stage"></canvas>
+<script type="module">
+// 纯函数：seek(t) 只依赖 t。
+import { makeLayout } from './runtime/layout.js';
+import { settle, norm, lerp } from './runtime/motion.js';
+const fmt = new URLSearchParams(location.search).get('format') || '9x16';
+const L = makeLayout(fmt);
+const cv = document.getElementById('stage'); cv.width = L.width; cv.height = L.height;
+const ctx = cv.getContext('2d');
+const PAPER = '#EDE4D3', INK = '#1F1C18', CIN = '#B33A28';
+const V = window.VARIANT || {};
+window.DURATION = V.duration ?? 4.5;
+const SEAL = V.seal ?? [3.25, 3.9];        // 朱印：绑在「朱」字
+window.MARKS = [
+  { label: '墨滴落纸', start: 0.0, end: 0.8 },
+  { label: '坊线铺开', word: '一百零八', start: 2.0, end: 2.9, load: true },
+  { label: '盖印', word: '朱印', start: SEAL[0], end: SEAL[1], load: true },
+];
+const sp = (t, a) => (t < a ? 0 : settle(t - a, 170, 22));
+window.seek = (t0) => {
+  const t = V.freeze ? (t0 > V.freeze[0] && t0 < V.freeze[1] ? V.freeze[0] : t0) : t0;
+  ctx.fillStyle = PAPER; ctx.fillRect(0, 0, L.width, L.height);
+  const out = norm(t, 4.0, 4.45);                      // 收笔：一切收回
+  const k = 1 - out;
+  if (V.clearAt && t >= V.clearAt) return;             // 缺陷：提前清空
+  // 1 墨滴竖直落下
+  const dropY = lerp(-0.1, 0.32, Math.min(1, sp(t, 0)));
+  const r = L.size(0.05) * (1 + 0.6 * norm(t, 0.5, 0.9)) * k;
+  if (r > 0.5) { ctx.fillStyle = INK; ctx.fillRect(L.cx - r, dropY * L.height - r, 2 * r, 2 * r); }
+  // 2 年份字，竖直升起
+  const y1 = lerp(0.48, 0.44, sp(t, 0.3)), a1 = norm(t, 0.3, 0.6) * k;
+  ctx.globalAlpha = a1; ctx.fillStyle = INK; ctx.textAlign = 'center';
+  ctx.font = `600 ${L.size(0.12)}px "PingFang SC", sans-serif`;
+  ctx.fillText('618', L.cx, y1 * L.height);
+  ctx.font = `${L.size(0.055)}px "PingFang SC", sans-serif`;
+  ctx.fillText('长安', L.cx, (y1 + 0.05) * L.height);
+  ctx.globalAlpha = 1;
+  // 3 坊线：横竖墨线逐条落笔
+  for (let i = 0; i < 6; i++) {
+    const p = sp(t, 2.0 + i * 0.12) * k;
+    const yy = (0.58 + i * 0.045) * L.height;
+    ctx.fillStyle = INK; ctx.fillRect(L.cx - p * L.width * 0.35, yy, 2 * p * L.width * 0.35, 6);
+    const xx = L.cx + (i - 2.5) * L.width * 0.13;
+    ctx.fillRect(xx, 0.58 * L.height, 6, p * 0.225 * L.height);
+  }
+  ctx.font = `${L.size(0.055)}px "PingFang SC", sans-serif`;
+  ctx.globalAlpha = norm(t, 2.2, 2.5) * k;
+  ctx.fillText(V.label ?? '一百零八坊', L.cx, 0.88 * L.height);
+  ctx.globalAlpha = 1;
+  // 4 朱印：竖直压下
+  if (t >= SEAL[0] && t < Math.max(SEAL[1], 4.45) && (!V.sealOnly || t < SEAL[1])) {
+    const s = sp(t, SEAL[0]) * k * L.size(0.09);
+    ctx.fillStyle = CIN; ctx.fillRect(L.cx + L.width * 0.2 - s / 2, 0.36 * L.height - s / 2, s, s);
+  }
+  if (V.extra) V.extra(ctx, t, L);
+};
+window.ready = document.fonts.ready;
+</script>

@@ -1,0 +1,19 @@
+{
+ "version": 1,
+ "sim": "balls",
+ "opts": {
+  "n": 300,
+  "W": 1000,
+  "H": 1688.888888888889
+ },
+ "fps": 60,
+ "substeps": 4,
+ "frames": 361,
+ "n": 300,
+ "fields": [
+  "x",
+  "y"
+ ],
+ "dtype": "float32",
+ "layout": "frame-major"
+}

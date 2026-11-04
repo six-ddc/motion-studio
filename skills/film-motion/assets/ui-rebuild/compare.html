@@ -1,0 +1,58 @@
+<!doctype html><meta charset="utf-8"><title>ui-rebuild compare</title>
+<!--
+  逐状态 1:1 对照：参考截图 | 复刻 | 差异（复刻叠在参考上，mix-blend-mode:difference，一样的地方变黑）。
+  用法：compare.html?replica=replica.html&ref=ref-{state}.png[&state=A][&lang=en]
+    replica 页约定：window.UI = { W, H, states: { 名字: state }, set(state) }，可选 window.ready。
+                    复刻根节点 W×H，左上角在页面 (0,0)，页面不留边。
+    ref 里的 {state} 换成状态名；参考图按 W×H 的 CSS 尺寸显示（2x 截图就是 1:1 设备像素）。
+  只是对照工具：不进片子、不带长相。外框颜色只用来分隔面板。
+-->
+<style>
+  html, body { margin: 0; background: #808080; font: 12px monospace; }
+  .row { display: grid; grid-auto-flow: column; justify-content: start; gap: 12px; padding: 8px; }
+  .cell { display: grid; gap: 4px; }
+  .box { position: relative; overflow: hidden; outline: 1px solid #000; }
+  .box > * { position: absolute; left: 0; top: 0; border: 0; display: block; }
+  .diff iframe { mix-blend-mode: difference; }
+</style>
+<div id="rows"></div>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const replica = q.get('replica'), refT = q.get('ref'), only = q.get('state'), lang = q.get('lang');
+if (!replica || !refT) throw new Error('compare.html 需要 ?replica=…&ref=…{state}…');
+
+// iframe 先挂进 DOM 才会加载；loaded 在加载完、按状态 set 之后兑现
+const frame = (W, H, state) => {
+  const f = document.createElement('iframe');
+  f.style.width = W + 'px'; f.style.height = H + 'px';
+  f.loaded = new Promise((ok) => {
+    f.onload = async () => { const w = f.contentWindow; await w.ready; w.UI.set(w.UI.states[state]); ok(); };
+  });
+  f.src = replica + (lang ? (replica.includes('?') ? '&' : '?') + 'lang=' + lang : '');
+  return f;
+};
+
+const probe = await new Promise((ok) => {
+  const f = document.createElement('iframe'); f.style.display = 'none'; f.src = replica;
+  f.onload = async () => { await f.contentWindow.ready; ok(f); }; document.body.append(f);
+});
+const { W, H, states } = probe.contentWindow.UI; probe.remove();
+
+window.ready = (async () => {
+  for (const name of Object.keys(states)) {
+    if (only && name !== only) continue;
+    const row = document.createElement('div'); row.className = 'row';
+    const img = () => { const i = new Image(); i.src = refT.replace('{state}', name); i.style.width = W + 'px'; i.style.height = H + 'px'; return i; };
+    const cell = (label, cls, ...kids) => {
+      const c = document.createElement('div'); c.className = 'cell';
+      const b = document.createElement('div'); b.className = 'box ' + cls; b.style.width = W + 'px'; b.style.height = H + 'px';
+      b.append(...kids); c.append(Object.assign(document.createElement('div'), { textContent: `${name} · ${label}` }), b);
+      return c;
+    };
+    const fr1 = frame(W, H, name), fr2 = frame(W, H, name);
+    row.append(cell('参考', 'ref', img()), cell('复刻', 'rep', fr1), cell('差异（黑 = 一致）', 'diff', img(), fr2));
+    document.getElementById('rows').append(row);
+    await Promise.all([fr1.loaded, fr2.loaded, ...[...row.querySelectorAll('img')].map((i) => i.decode())]);
+  }
+})();
+</script>

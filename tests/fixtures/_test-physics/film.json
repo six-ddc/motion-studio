@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "title": "film-physics 测试片（三策略确定性 + 性能）",
+  "entry": "scene.html",
+  "format": "9x16",
+  "fps": 60,
+  "loop": false,
+  "stage": "#stage",
+  "checks": ["narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide", "laws", "still", "empty", "marks", "claims", "tilt", "page"]
+}

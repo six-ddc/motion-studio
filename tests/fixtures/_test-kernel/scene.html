@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>kernel-min</title>
+<style>
+  html,body { margin:0; background:#000; }
+  #stage { display:block; }
+</style>
+<canvas id="stage"></canvas>
+<script type="module">
+// 契约：seek(t) 是时间的纯函数。画出第 t 秒那一帧，别的什么都不做。
+// 禁止 setTimeout / setInterval / rAF 驱动的状态 / Date.now / performance.now /
+// Math.random / 任何从上一帧带过来并影响输出的变量。
+// 详见 film-motion skill。
+import { layoutFromURL } from './runtime/layout.js';
+import { settle, spring, seeded } from './runtime/motion.js';
+
+const L = layoutFromURL('9x16');
+const cv = document.getElementById('stage');
+cv.width = L.width; cv.height = L.height;
+const c = cv.getContext('2d');
+
+const rnd = seeded(1);          // 随机数只能来自种子，Math.random 会让两次渲染不一致
+
+// 有旁白时由 narration.json 实测时长决定，不手填（契约 §6）
+window.DURATION = 3;
+
+// spring() 按「多久停下 + 过冲多少」反解弹簧参数，比直接猜 stiffness/damping 直观
+const drop = spring({ duration: 0.9, overshoot: 0.12 });
+
+window.seek = (t) => {
+  c.fillStyle = '#000';
+  c.fillRect(0, 0, L.width, L.height);
+
+  // ↓↓↓ 占位内容：只为让脚手架立刻能渲通，写自己的东西时整段删掉 ↓↓↓
+  // 它顺便演示了三条契约：位置走 L.place / 尺寸走 L.size / 运动走闭式解弹簧
+  const p = settle(t, drop.stiffness, drop.damping);
+  const from = L.place(0.5, 0.18);
+  const to = L.place(0.5, 0.5);
+  c.beginPath();
+  c.arc(from.x, from.y + (to.y - from.y) * p, L.size(0.06), 0, Math.PI * 2);
+  c.fillStyle = '#e8e4da';
+  c.fill();
+  // ↑↑↑ 占位内容结束 ↑↑↑
+};
+
+window.ready = true;
+</script>

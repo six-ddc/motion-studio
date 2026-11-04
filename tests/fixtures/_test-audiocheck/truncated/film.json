@@ -1,0 +1,7 @@
+{
+  "format": "16x9",
+  "fps": 10,
+  "entry": "scene.html",
+  "_注释": "audiocheck 夹具：配乐文件 1.5 s、画面 3 s：合流后片尾 1.5 s 数字静音",
+  "checks": ["audiocheck"]
+}

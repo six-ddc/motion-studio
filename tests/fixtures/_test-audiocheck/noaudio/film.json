@@ -1,0 +1,7 @@
+{
+  "format": "16x9",
+  "fps": 10,
+  "entry": "scene.html",
+  "_注释": "audiocheck 夹具：成片没有音轨（只合了画面）——要友好报错、退出码 2，不能抛 traceback",
+  "checks": ["audiocheck"]
+}

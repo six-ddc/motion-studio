@@ -1,0 +1,11 @@
+{
+  "slug": "_test-webfx",
+  "title": "film-webfx 验收片",
+  "format": "9x16",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 4,
+  "loop": true,
+  "checks": ["narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide", "laws", "still", "empty", "marks", "claims", "tilt", "page"]
+}

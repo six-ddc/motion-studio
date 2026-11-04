@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>_test-3d 对照：noreset</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<!-- 阴性/对照：reset:false + 只在 t>3.5 写 rings.visible=false（期望门 2 红） -->
+<script>window.FX_VARIANT = "noreset";</script>
+<script type="module" src="./scene.js"></script>
+</body>
+</html>

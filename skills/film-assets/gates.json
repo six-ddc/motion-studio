@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "gates": [
+    {
+      "id": "licenses",
+      "about": "素材台账与自包含：assets/ 每个文件进了 LICENSES.md、入口页与片内运行时没有 local()/file:// /绝对路径/外链素材",
+      "when": { "checks": ["licenses"] },
+      "run": ["node", "{skill}/scripts/audit.mjs", "--film", "{slug}", "--films-dir", "{films}"],
+      "cost": 1
+    }
+  ]
+}

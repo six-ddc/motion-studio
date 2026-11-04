@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>_test-3d 对照：clock</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<!-- 阴性/对照：用 THREE.Clock（期望加载/seek 即抛错） -->
+<script>window.FX_VARIANT = "clock";</script>
+<script type="module" src="./scene.js"></script>
+</body>
+</html>

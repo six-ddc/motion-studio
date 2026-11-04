@@ -1,0 +1,20 @@
+{
+  "slug": "_test-motion",
+  "title": "film-motion 闭环测试",
+  "format": "9x16",
+  "fps": 30,
+  "sub": 4,
+  "entry": "scene.html",
+  "duration": null,
+  "loop": true,
+  "renderer": {
+    "chromium": "156.0.8078.4",
+    "playwright": "1.64.1",
+    "args": [
+      "--font-render-hinting=none"
+    ],
+    "ffmpeg": "ffmpeg version 8.0 Copyright (c) 2000-2025 the FFmpeg developers",
+    "x264Threads": 4
+  },
+  "checks": ["narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide", "laws", "still", "empty", "marks", "claims", "tilt", "page"]
+}

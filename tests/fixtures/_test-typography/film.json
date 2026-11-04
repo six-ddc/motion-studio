@@ -1,0 +1,10 @@
+{
+  "title": "film-typography 自测片",
+  "format": "9x16",
+  "fps": 30,
+  "duration": 4,
+  "loop": true,
+  "entry": "scene.html",
+  "stage": "#stage",
+  "checks": ["narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide", "laws", "still", "empty", "marks", "claims", "tilt", "page"]
+}

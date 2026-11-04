@@ -1,0 +1,1 @@
+factcheck: tests/fixtures/_test-research/cases/scaffold-format/docs/facts.md 里找不到事实总表（表头需含 id | 说法 | 匹配 | 类型 | 承重 | 状态）。从 film-story/assets/facts.template.md 拷表头

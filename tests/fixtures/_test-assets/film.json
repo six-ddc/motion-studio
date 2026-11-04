@@ -1,0 +1,7 @@
+{
+  "format": "16x9",
+  "fps": 30,
+  "entry": "scene.html",
+  "duration": 2,
+  "checks": ["narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide", "laws", "still", "empty", "marks", "claims", "tilt", "page"]
+}

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>_test-3d 对照：sloppy</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<!-- 阴性/对照：reset:true + 同样的漏写（期望全绿：复位接住了） -->
+<script>window.FX_VARIANT = "sloppy";</script>
+<script type="module" src="./scene.js"></script>
+</body>
+</html>

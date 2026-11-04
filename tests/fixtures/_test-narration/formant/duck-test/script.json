@@ -1,0 +1,33 @@
+{
+  "engine": "volcano-stream",
+  "resourceId": "seed-tts-2.0",
+  "speaker": "zh_male_m191_uranus_bigtts",
+  "format": "mp3",
+  "sampleRate": 44100,
+  "speechRate": -6,
+  "gap": 0.45,
+  "pronunciationDict": {
+    "tone": [
+      "密钥/(mi4)(yue4)"
+    ]
+  },
+  "lines": [
+    {
+      "id": "s1",
+      "text": "你在看一条公开的线路。"
+    },
+    {
+      "id": "s2",
+      "text": "两端交换参数，各自算出同一个密钥。"
+    },
+    {
+      "id": "s3",
+      "text": "从这一刻起，你看见的只有乱码。"
+    }
+  ],
+  "_注释": {
+    "音色": "云舟 2.0。从 documentary 候选组筛出来的：基频中位 146.9 Hz、跨度 13 半音（五个里最平），语速 3.96 字/秒，停顿占比 0.05 —— 技术讲解要稳，不要解说腔的起伏。实测表见 film-narration/VERIFIED.md。未经人耳确认，已记进 review_log。",
+    "pronunciationDict": "密钥在技术语境通常读 mì yuè。词典条目的**格式**经 tts.py 的 lint_dict 校验通过；但引擎有没有采纳、实际念成什么，无法自动确认——实测波形差分和 mel-DTW 都分不出来（同一请求连发两次的差异就和带/不带词典一样大）。必须人听。详见 film-narration SKILL.md 第三节。",
+    "speechRate": "-6，比默认稍慢。乱码那一刻需要留出反应时间。"
+  }
+}

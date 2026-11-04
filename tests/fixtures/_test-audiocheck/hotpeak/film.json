@@ -1,0 +1,7 @@
+{
+  "format": "16x9",
+  "fps": 10,
+  "entry": "scene.html",
+  "_注释": "audiocheck 夹具：1 kHz 方波满幅：AAC 解码后 true peak 过 -1.0",
+  "checks": ["audiocheck"]
+}

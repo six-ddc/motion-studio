@@ -1,0 +1,50 @@
+[
+ {
+  "cond": "ref_yue",
+  "tag": "密月_",
+  "text": "两端交换参数，各自算出同一个密月。",
+  "dict": null,
+  "n": 4,
+  "target": "月"
+ },
+ {
+  "cond": "ref_yue",
+  "tag": "蜜月_",
+  "text": "两端交换参数，各自算出同一个蜜月。",
+  "dict": null,
+  "n": 4,
+  "target": "月"
+ },
+ {
+  "cond": "ref_yue",
+  "tag": "密阅_",
+  "text": "两端交换参数，各自算出同一个密阅。",
+  "dict": null,
+  "n": 4,
+  "target": "阅"
+ },
+ {
+  "cond": "ref_yao",
+  "tag": "密药_",
+  "text": "两端交换参数，各自算出同一个密药。",
+  "dict": null,
+  "n": 4,
+  "target": "药"
+ },
+ {
+  "cond": "ref_yao",
+  "tag": "秘药_",
+  "text": "两端交换参数，各自算出同一个秘药。",
+  "dict": null,
+  "n": 4,
+  "target": "药"
+ },
+ {
+  "cond": "ref_yao",
+  "tag": "密耀_",
+  "text": "两端交换参数，各自算出同一个密耀。",
+  "dict": null,
+  "n": 4,
+  "target": "耀"
+ }
+]

@@ -1,0 +1,45 @@
+# 凭证 —— 绝不提交
+.env
+.env.*
+!.env.example
+
+# 依赖
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# 产出：都是可重新渲染的，不进版本库。含 out/.render/（渲染清单、serve 加载记录、分片缓存）
+# 和仓库根 out/test/（dev/test.mjs 的工作目录）
+out/
+# 例外：audiocheck 夹具的成片是它的**输入**（约 200K，阴性对照要靠它），入库。
+!tests/fixtures/_test-audiocheck/*/out/
+# 下面这些不在这里：它们是**输入**或交付凭据，入库。
+#   receipt.json    交付收据（deliver / freeze --receipt 写）：accept 拿它对账，丢了片子就成了「未交付」
+#   runtime/        片内运行时（交付时冻结的那份，或片子自己的）：收据的输入哈希含它
+#   narration.json  画面时间轴的唯一真相源，TTS 每次合成的时间戳都不一样，
+#                   丢了它 clone 下来的片子没法按原来的时刻重渲（音频 out/vo.wav 仍不入库，要听声音得重新合成）。
+#   cues.json       音效表：多数片子是手写的（ghost-jam、demo-grid），有的由场景 window.CUES 导出留痕（weiqi 系列 tools/dump_cues.mjs）；
+#                   同名文件分不出是哪种，一律入库。
+#   beats.json      beats.py 默认写进 out/（上面那条已忽略）；放到片子根让场景读的那份是时间输入，入库。
+
+# 参考素材和下载的素材（体积大，且多数有授权限制）
+refs/*
+!refs/.gitkeep
+assets/*
+!assets/.gitkeep
+
+# 从本机拷来的系统字体（Apple 授权，不能再分发；夹具要用时从 /System/Library/Fonts 重新拷）
+*.ttc
+
+# 自检产出：只忽略仓库根的 docs/review_log.md（套件开发时的临时自检记录）。
+# 片子的 films/<slug>/docs/review_log.md 是片子文档，入库——
+# 不加前导 / 的话这条规则的意图就要靠"git 对含斜杠的模式按根锚定"这条冷知识来读。
+/docs/review_log.md
+
+# 系统
+.DS_Store
+
+# 片子与品牌/系列组件只留本地，不进开源仓库
+/films/
+/kits/

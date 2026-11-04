@@ -1,0 +1,4 @@
+画面必须是时间的纯函数。「字距」不能丢——前缀测量，保住 kerning！排版：避头尾、标点挤压，seek(t) 任意可跳。
+Motion Type AVATAR Wave
+量未末己已
+言

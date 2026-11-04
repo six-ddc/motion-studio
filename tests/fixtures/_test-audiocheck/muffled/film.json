@@ -1,0 +1,7 @@
+{
+  "format": "16x9",
+  "fps": 10,
+  "entry": "scene.html",
+  "_注释": "audiocheck 夹具：能量全在 60/120 Hz（无人声片按混音判闷），其余正常",
+  "checks": ["audiocheck"]
+}

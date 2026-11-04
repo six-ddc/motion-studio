@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "name": "demo",
+  "version": "1.0.0",
+  "about": "夹具 kit：一个画标准帧的纯函数 + 一个不导出的内部文件（阴性对照用）",
+  "exports": ["paint.js"],
+  "check": { "std": { "png": "std.png", "format": "16x9", "at": [0, "end"] } }
+}

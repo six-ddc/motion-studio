@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "assets": { "logo": "assets/logo.svg" },
+  "text": {
+    "title": { "text": "Acme: 3x faster", "maxChars": 20, "box": { "w": 1200 }, "font": "700 72px \"Fix Mono\"" }
+  },
+  "claims": [ { "text": "3x faster", "source": "F01" } ]
+}

@@ -1,0 +1,23 @@
+{
+  "engine": "volcano-stream",
+  "resourceId": "seed-tts-2.0",
+  "speaker": "<跑 film-narration 的 voices.py 按内容筛选后填音色 ID，不要硬编码>",
+  "format": "mp3",
+  "sampleRate": 44100,
+  "speechRate": 0,
+  "gap": 0.35,
+  "pronunciationDict": {
+    "tone": []
+  },
+  "lines": [
+    { "id": "s1", "text": "" }
+  ],
+  "_注释": {
+    "片名": "<片名>",
+    "slug": "<slug>",
+    "pronunciationDict": "专有名词、多音字、英文术语进 tone 数组。要改读音用文本转写：多音字写成同音字 \"密钥/密月\"，英文术语 \"ffmpeg/F F mpeg\"；token 会被改写（tts.py 自动还原并记 alias，单查词里的一个字会查不到），转写处要人听。拼音写法 \"原词/(pin1)(yin1)\" 接口接受但实测不改读音（仓库 docs/verified/film-narration.md 第 12 节）。每词 ≤9 字符，仅中英文音色。",
+    "音色": "<填选定理由：维度目标 + voices.py 实测指标；没经人耳确认就写明，并在 docs/review_log.md 记一行>",
+    "speechRate": "<语速理由；改了要重跑 voices.py>",
+    "schema": "字段表见 film-narration/references/schemas.md；lines[].id 全片唯一，镜头按它引用"
+  }
+}

@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8">
+<style>html,body{margin:0;background:#111}#stage{width:1080px;height:1920px;position:relative;overflow:hidden}#box{position:absolute;width:200px;height:200px;background:#e44;left:0;top:800px}</style>
+<div id="stage"><div id="box"></div></div>
+<script type="module">
+window.USES_WAAPI = true;
+window.DURATION = 2;
+const anim = document.getElementById('box').animate([{ transform: 'translateX(0)' }, { transform: 'translateX(880px)' }, { transform: 'translateX(0)' }], { duration: 2000, fill: 'both' });
+anim.pause();
+window.seek = (t) => { anim.currentTime = (t % 2) * 1000; };
+</script>

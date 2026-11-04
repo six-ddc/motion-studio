@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>_test-3d 对照：integrate</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<!-- 阴性/对照：位置按 dt 累积（期望门 1a/2 红） -->
+<script>window.FX_VARIANT = "integrate";</script>
+<script type="module" src="./scene.js"></script>
+</body>
+</html>

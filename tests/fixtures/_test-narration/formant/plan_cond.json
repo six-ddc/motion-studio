@@ -1,0 +1,43 @@
+[
+ {
+  "cond": "c_nodict",
+  "text": "两端交换参数，各自算出同一个密钥。",
+  "dict": null,
+  "n": 12,
+  "target": "钥"
+ },
+ {
+  "cond": "c_dict_yue",
+  "text": "两端交换参数，各自算出同一个密钥。",
+  "dict": [
+   "密钥/(mi4)(yue4)"
+  ],
+  "n": 12,
+  "target": "钥"
+ },
+ {
+  "cond": "c_dict_yao",
+  "text": "两端交换参数，各自算出同一个密钥。",
+  "dict": [
+   "密钥/(mi4)(yao4)"
+  ],
+  "n": 12,
+  "target": "钥"
+ },
+ {
+  "cond": "b_nodict",
+  "text": "他走进了一家银行。",
+  "dict": null,
+  "n": 8,
+  "target": "行"
+ },
+ {
+  "cond": "b_dict_xing",
+  "text": "他走进了一家银行。",
+  "dict": [
+   "银行/(yin2)(xing2)"
+  ],
+  "n": 8,
+  "target": "行"
+ }
+]

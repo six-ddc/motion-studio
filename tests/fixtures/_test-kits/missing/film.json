@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "slug": "missing",
+  "title": "kit 对照：声明了不存在的 kit",
+  "entry": "scene.html",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "checks": [],
+  "kits": ["nope"]
+}

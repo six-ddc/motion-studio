@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "slug": "ok",
+  "title": "kit 对照：声明 kits 并在线挂载 demo",
+  "entry": "scene.html",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "checks": ["kits"],
+  "kits": ["demo"]
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fontsrc 阳性对照：克隆舞台，字全在随片字体里</title>
+<style>
+  @font-face { font-family: 'Fix Mono'; font-weight: 700; src: url('./assets/fonts/mono.woff2') format('woff2'); }
+  html, body { margin: 0; overflow: hidden; background: #fff; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; font-family: 'Fix Mono'; font-weight: 700; color: #222; }
+  .row { position: absolute; left: 120px; font-size: 28px; line-height: 36px; white-space: nowrap; }
+  .fname, .lit { position: absolute; left: 1200px; font-size: 48px; display: none; }
+</style>
+<div id="stage">
+  <div class="fname" style="top:200px">ship.lua</div>
+  <div class="lit" style="top:300px">x = x - 1</div>
+</div>
+<script>
+// 阳性对照：与 bad-clone.html 同一种克隆舞台写法，但每个字都在 Fix Mono 里。
+// 证明"每帧都是新元素"本身不会被判红，也不会把门拖慢到不可用。
+const ROWS = 30;
+let TPL = null;
+window.DURATION = 8;
+window.seek = (t) => {
+  const st = TPL.cloneNode(true);
+  document.getElementById('stage').replaceWith(st);
+  for (let i = 0; i < ROWS; i++) {
+    const r = document.createElement('div');
+    r.className = 'row'; r.style.top = `${40 + i * 34}px`;
+    r.textContent = `row ${i}: speed = ${(i * 3) % 7}`;
+    st.append(r);
+  }
+  if (t >= 6) for (const el of st.querySelectorAll('.fname, .lit')) el.style.display = 'block';
+};
+window.ready = document.fonts.load('700 40px "Fix Mono"', 'abcdefghijklmnopqrstuvwxyz0123456789:=.-').then(() => {
+  TPL = document.getElementById('stage').cloneNode(true);
+});
+</script>

@@ -1,0 +1,38 @@
+{
+  "engine": "volcano-stream",
+  "resourceId": "seed-tts-2.0",
+  "speaker": "zh_male_m191_uranus_bigtts",
+  "format": "mp3",
+  "sampleRate": 44100,
+  "speechRate": 0,
+  "gap": 0.5,
+  "pronunciationDict": {
+    "tone": [
+      "帧/(zhen1)",
+      "ffmpeg/F F mpeg"
+    ]
+  },
+  "lines": [
+    {
+      "id": "s1",
+      "text": "每一帧画面，都是时间的纯函数。"
+    },
+    {
+      "id": "s2",
+      "text": "渲染器调用 seek，把第几秒交给页面。"
+    },
+    {
+      "id": "s3",
+      "text": "截下的帧交给 ffmpeg，编码成视频。"
+    },
+    {
+      "id": "s4",
+      "text": "声音先行，画面去读它的时间戳。"
+    }
+  ],
+  "_注释": {
+    "用途": "film-narration skill 的端到端测试片，不是成片。",
+    "pronunciationDict": "帧念 zhēn；ffmpeg 默认会被当成一个英文词乱读，转写成逐字母。",
+    "音色": "云舟 2.0（zh_male_m191）。documentary 组实测：基频跨度 13.0 半音为五个里最平稳，停顿占比 0.05 最低，语速 3.96 字/秒居中——技术讲解要稳、要连贯，按指标选。音色未经人耳确认。"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "three-film.core.js": {
+    "upstream": "three.js 0.186.1（npm three@0.186.1 build/three.core.js）",
+    "license": "MIT",
+    "why": "第三方库。由仓库 dev/film-webfx/vendor-three.mjs 打过帧契约补丁（用错就抛错），补丁是增强、不是进套件的前提；seek 期间的违约由逐片 seamcheck 探针判"
+  },
+  "three-film.module.js": {
+    "upstream": "three.js 0.186.1（npm three@0.186.1 build/three.module.js）",
+    "license": "MIT",
+    "why": "同上"
+  }
+}

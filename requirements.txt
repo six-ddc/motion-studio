@@ -1,0 +1,19 @@
+# film-* skill 套件的 Python 依赖
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# 注：这台机器做 TLS 拦截，Python 直连会 CERTIFICATE_VERIFY_FAILED。
+# truststore 让 Python 走系统钥匙串，见 film-narration 的 make_ssl_context()。
+
+# TLS —— 企业证书拦截环境下的必需项，不是可选
+truststore>=0.10
+
+# 旁白与音频分析（film-narration）
+edge-tts>=7.3          # 免费兜底 TTS，不要 key
+faster-whisper>=1.2    # 时间戳反推 + 成片音轨回转写校验
+librosa>=0.11          # 节拍栅格、基频/响度测量（音色筛选）
+pypinyin>=0.55         # --verify 区分同音字与真错字。不装的话「在/再」会被当成硬错误
+
+# 字体子集化（film-assets）
+fonttools>=4.67
+brotli>=1.2            # woff2 压缩，fonttools 出 woff2 时必需

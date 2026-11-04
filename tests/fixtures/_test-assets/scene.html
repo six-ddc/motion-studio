@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<style>html,body{margin:0;background:#fff}</style>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script type="module">
+// film-assets 测试片：子集字体 + svg2path 产出的图标，都从 ./assets/ 相对路径加载。
+const face = new FontFace('TestHei', 'url(./assets/fonts/hiragino-w3.subset.woff2)');
+document.fonts.add(await face.load());
+const icons = await (await fetch('./assets/icons/icons.json')).json();
+const ctx = document.getElementById('stage').getContext('2d');
+window.DURATION = 2;
+window.seek = (t) => {
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 1920, 1080);
+  ctx.fillStyle = '#111'; ctx.font = '96px TestHei'; ctx.textBaseline = 'top';
+  ctx.fillText('素材自包含：片子不依赖机器上装了什么。', 80, 160);
+  let x = 80;
+  for (const [, ic] of Object.entries(icons)) {
+    ctx.save(); ctx.translate(x, 420); ctx.scale(12, 12);
+    ctx.lineWidth = ic.strokeWidth ?? 2; ctx.lineCap = ic.linecap ?? 'butt'; ctx.lineJoin = ic.linejoin ?? 'miter';
+    ctx.strokeStyle = '#111';
+    for (const p of ic.paths) ctx.stroke(new Path2D(p.d));
+    ctx.restore(); x += 360;
+  }
+};
+window.ready = Promise.resolve();
+window.seek(0);
+</script>
+</html>

@@ -1,0 +1,41 @@
+{
+  "name": "motion-studio",
+  "version": "0.1.0",
+  "description": "Code-rendered video studio: seek(t) + Playwright + ffmpeg",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "selfcheck": "node dev/selfcheck.mjs",
+    "new-film": "node skills/film-core/scripts/new-film.mjs",
+    "preview": "node skills/film-core/scripts/preview.mjs",
+    "render": "node skills/film-core/scripts/render.mjs",
+    "render:square": "node skills/film-core/scripts/render.mjs --format 1x1",
+    "render:wide": "node skills/film-core/scripts/render.mjs --format 16x9",
+    "seam": "node skills/film-core/scripts/seamcheck.mjs",
+    "fontsrc": "node skills/film-core/scripts/font_source.mjs",
+    "deliver": "node skills/film-core/scripts/deliver.mjs",
+    "freeze": "node skills/film-core/scripts/freeze.mjs",
+    "accept": "node skills/film-core/scripts/accept.mjs",
+    "accept:deep": "node skills/film-core/scripts/accept.mjs --deep",
+    "check": "node skills/film-critique/scripts/check.mjs",
+    "contact": "bash skills/film-critique/scripts/contact.sh",
+    "sfx": "node skills/film-narration/scripts/sfx.mjs",
+    "mux": "bash skills/film-narration/scripts/mux.sh",
+    "tts": "./.venv/bin/python skills/film-narration/scripts/tts.py",
+    "subs": "./.venv/bin/python skills/film-narration/scripts/subs.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/noto-sans-sc": "^5.3.1",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "playwright": "1.64.1"
+  },
+  "dependencies": {
+    "@dimforge/rapier2d-compat": "^0.14.0",
+    "matter-js": "^0.20.0",
+    "planck": "^1.4.2"
+  }
+}

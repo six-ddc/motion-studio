@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "assets": { "hero": "assets/hero.png" },
+  "text": {
+    "title": { "text": "一句长到装不下标题槽位的宣传口号，客户又加了半句", "maxChars": 14 },
+    "cta": "立即下载"
+  },
+  "claims": [
+    { "text": "下载量第一" },
+    { "text": "快 3 倍", "source": "F09" },
+    { "text": "用户破百万", "source": "F02" }
+  ]
+}

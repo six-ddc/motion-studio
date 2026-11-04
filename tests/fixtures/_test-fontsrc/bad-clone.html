@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fontsrc 阴性对照：克隆舞台 + 拉丁等宽字体写中文</title>
+<style>
+  @font-face { font-family: 'Fix Mono'; font-weight: 700; src: url('./assets/fonts/mono.woff2') format('woff2'); }
+  html, body { margin: 0; overflow: hidden; background: #fff; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; font-family: 'Fix Mono'; font-weight: 700; color: #222; }
+  .row { position: absolute; left: 120px; font-size: 28px; line-height: 36px; white-space: nowrap; }
+  .fname, .lit { position: absolute; left: 1200px; font-size: 48px; display: none; }
+</style>
+<div id="stage">
+  <div class="fname" style="top:200px">飞船.lua</div>
+  <div class="lit" style="top:300px">x = x − 1</div>
+</div>
+<script>
+// 阴性对照（仿 freshStage 写法）：每次 seek 用加载期的模板克隆一棵全新的 #stage，
+// 前 6 秒只有 30 行拉丁字（全由随片的 Fix Mono 画）；6 秒后才出现两个只配了 Fix Mono 的元素：
+// 「飞船」Fix Mono 里没有 → 回退系统中文字体；「−」（U+2212）也没有 → 回退系统字体。门必须判红。
+// 曾经的漏检：DOM 文字按元素身份去重、总额 300 个元素，克隆舞台每帧都是新元素，6 秒前额度就用光了。
+const ROWS = 30;
+let TPL = null;
+window.DURATION = 8;
+window.seek = (t) => {
+  const st = TPL.cloneNode(true);
+  document.getElementById('stage').replaceWith(st);
+  for (let i = 0; i < ROWS; i++) {
+    const r = document.createElement('div');
+    r.className = 'row'; r.style.top = `${40 + i * 34}px`;
+    r.textContent = `row ${i}: speed = ${(i * 3) % 7}`;
+    st.append(r);
+  }
+  if (t >= 6) for (const el of st.querySelectorAll('.fname, .lit')) el.style.display = 'block';
+};
+window.ready = document.fonts.load('700 40px "Fix Mono"', 'abcdefghijklmnopqrstuvwxyz0123456789:=.-').then(() => {
+  TPL = document.getElementById('stage').cloneNode(true);
+});
+</script>

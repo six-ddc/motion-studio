@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html,body{margin:0;background:#111;overflow:hidden}canvas{display:block}</style>
+<canvas id="stage"></canvas>
+<script type="module">
+import { follow, seeded, spring, wrap, lerp } from './runtime/motion.js';
+import { layoutFromURL } from './runtime/layout.js';
+
+const L = layoutFromURL();
+const cv = document.getElementById('stage');
+cv.width = L.width; cv.height = L.height;
+const c = cv.getContext('2d');
+
+const D = 2;
+window.DURATION = D;
+
+// 种子随机：加载时一次生成，之后只读
+const rnd = Math.random;
+const DOTS = Array.from({ length: 24 }, (_, i) => ({
+  x0: rnd(), y0: rnd(), x1: rnd(), y1: rnd(), hue: Math.floor(rnd() * 360), delay: i * 0.012,
+}));
+const SP = spring({ duration: 0.5, overshoot: 0.08 });
+
+// 去 -> 回，1.6s 内走完并停稳，2s 处循环
+const paint = (t) => {
+  c.fillStyle = '#111'; c.fillRect(0, 0, L.width, L.height);
+  for (const d of DOTS) {
+    const k = [[0, 0], [0.1 + d.delay, 1], [0.95 + d.delay, 0]];
+    const p = follow(t, k, SP);
+    const { x, y } = L.place(lerp(d.x0, d.x1, p), lerp(d.y0, d.y1, p));
+    c.fillStyle = `hsl(${d.hue} 70% 60%)`;
+    c.beginPath(); c.arc(x, y, L.size(0.03), 0, Math.PI * 2); c.fill();
+  }
+  // 连续旋转的指针：相位 2πt/D，跨缝连续
+  const a = (t / D) * Math.PI * 2, o = L.place(0.5, 0.5), r = L.size(0.3);
+  c.strokeStyle = '#eee'; c.lineWidth = L.size(0.01);
+  c.beginPath(); c.moveTo(o.x, o.y); c.lineTo(o.x + Math.cos(a) * r, o.y + Math.sin(a) * r); c.stroke();
+};
+window.seek = (t) => paint(wrap(t, D));
+</script>

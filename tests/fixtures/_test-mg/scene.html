@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="./assets/fonts/fonts.css">
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script type="module">
+// _test-mg：Motion Graphics 能力夹具。按顺序演示每种转场（film-motion transitions.js）
+// 和每种文字动画（film-typography textfx.js），每个约 1.2 秒。
+// 这是**能力夹具**，不是一支片子：配色、字号、缓动只为让每个手法在静帧里认得出来，不是推荐。
+import { layoutFromURL } from './runtime/layout.js';
+import { sat, lerp, win } from './runtime/motion.js';
+import { createAnchors } from './runtime/anchors.js';
+import { EASE, easeOf, stagger, timeline } from './runtime/choreo.js';
+import { createStage } from './runtime/transitions.js';
+import { loadFonts, CHARSETS } from './runtime/text.js';
+import { makeNarration } from './runtime/narration.js';
+import { layoutText, drawUnits, unitProgress, IN, OUT, EMPHASIS, scramble, typeSchedule, typedAt, cursorOn,
+         pathSampler, drawOnPath, drawSliceReveal, drawLineReveal, odometer, drawDigits, digitAdvance,
+         glyphSprites, drawFlip, matchUnits, drawMorphText, fontPx } from './runtime/textfx.js';
+
+const L = layoutFromURL('16x9');
+const cv = document.getElementById('stage');
+cv.width = L.width; cv.height = L.height;
+const ctx = cv.getContext('2d');
+const A = createAnchors(cv);
+const S = createStage(cv, { anchors: A, L });
+const W = L.width, H = L.height;
+
+// ---- 夹具色（只为认得出来）----
+const INK = '#15171d', PAPER = '#efe9dc', BLUE = '#1f3c70', RUST = '#b4532a';
+const FG_D = '#f4efe4', FG_L = '#1a1a1a', ACC = '#f2b23a';
+const FAM = '"Noto Sans SC Variable"';
+const F = (w, n) => `${w} ${L.size(n)}px ${FAM}`;
+
+// ---- 文案（全部要进 loadFonts）----
+const T = {
+  s1: '时间的纯函数，乱序也一样。',
+  s2: 'DECODE · 解码揭示 0x2F',
+  s3: 'seek(t) 只画第 t 秒，别的什么都不做。',
+  s4: '沿着路径排字 · text on a path · 沿着路径排字',
+  s5a: '切分揭示', s5b: '遮罩切成条，\n每条各自滑进来。',
+  s7: 'FLIP 翻转',
+  s8a: 'one moment, well orchestrated', s8b: '把胆子放在一处，其余保持安静。',
+  s10: 'Magic Move', s11: '同名元素自己移过去',
+  s12a: '纯函数的时间', s12b: '时间的纯函数',
+  labels: '01 逐字交错 stagger 入场02 乱码解码 scramble03 打字机 + 光标 typewriter04 沿路径排字 text on path05 遮罩切分揭示 slice / line reveal06 数字滚动 odometer / slot07 逐字 3D 翻转 strips vs affine08 按词强调 wave / pulse09 匹配剪辑 match cut10 共享元素 Magic Move（A）11 共享元素 Magic Move（B）12 文字 Magic Move matchUnits透视条带仿射近似里程表老虎机↓ ← 字 卡在「移」上 转场：',
+  trs: 'wipe linear iris luma noise push zoomThrough glitch leak whip match magicMove bars →',
+};
+const POOL = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789#$%&*+=<>/\\码字乱序随机种子解揭示';
+const ALL = Object.values(T).join('') + POOL;
+
+// 合成的字时间戳（没有音频）：只为演示"剪辑点钉在字上"。真片子用 loadNarration('./narration.json')。
+const FAKE = (() => {
+  const text = '元素自己移过去'; const t0 = 11.55, step = 0.12;
+  const words = [...text].map((w, i) => ({ w, start: +(t0 + i * step).toFixed(3), end: +(t0 + (i + 1) * step).toFixed(3) }));
+  words[4].start = 12.0; words[3].end = 12.0;    // 「移」正好在 12.0s 念到
+  return { duration: 13, words, lines: [{ id: 's1', text, start: words[0].start, end: words.at(-1).end, words }] };
+})();
+const vo = makeNarration(FAKE);
+
+window.DURATION = 14.4;
+let lay = {}, delays = {}, misc = {};
+
+window.ready = (async () => {
+  await loadFonts([
+    [F(800, 0.085), ALL], [F(700, 0.06), ALL], [F(500, 0.026), ALL], [F(400, 0.05), { text: ALL, sets: ['digits'] }],
+    [F(900, 0.2), { sets: ['digits'] }],
+  ]);
+  // 一切测量在加载时做一次
+  ctx.font = F(800, 0.085);
+  lay.s1 = layoutText(ctx, T.s1, { by: 'char', align: 'center' });
+  delays.s1 = stagger(lay.s1.units.length, { each: 0.04, from: 'start' });
+  delays.s1c = stagger(lay.s1.units.length, { amount: 0.3, from: 'center', ease: EASE.quad.out });
+  ctx.font = F(700, 0.09);
+  lay.s2 = layoutText(ctx, T.s2, { by: 'char', align: 'center' });
+  delays.s2 = stagger(lay.s2.units.length, { amount: 0.35, from: 'random', seed: 4 });
+  ctx.font = F(400, 0.05);
+  lay.s3 = layoutText(ctx, T.s3, { by: 'char', maxWidth: W * 0.7, lineHeight: L.size(0.075) });
+  misc.sched = typeSchedule(lay.s3.units, { start: 0.25, perUnit: 0.03, pauses: { '，': 0.16, '）': 0.05 }, jitter: 0.3, seed: 2 });
+  ctx.font = F(700, 0.06);
+  lay.s4 = layoutText(ctx, T.s4, { by: 'char' });
+  misc.path = pathSampler({ cubic: [[W * -0.05, H * 0.72], [W * 0.3, H * 0.05], [W * 0.62, H * 1.05], [W * 1.05, H * 0.3]] });
+  ctx.font = F(400, 0.05);
+  lay.s5b = layoutText(ctx, T.s5b, { by: 'char', lineHeight: L.size(0.075) });
+  ctx.font = F(900, 0.2);
+  misc.adv = digitAdvance(ctx);
+  ctx.font = F(800, 0.12); ctx.fillStyle = FG_D;
+  lay.s7 = layoutText(ctx, T.s7, { by: 'char', align: 'center' });
+  misc.spr = glyphSprites(ctx, lay.s7);
+  ctx.font = F(700, 0.06);
+  lay.s8a = layoutText(ctx, T.s8a, { by: 'word', align: 'center' });
+  lay.s8b = layoutText(ctx, T.s8b, { by: 'word', align: 'center' });
+  ctx.font = F(800, 0.11);
+  lay.s12a = layoutText(ctx, T.s12a, { by: 'char', align: 'center' });
+  lay.s12b = layoutText(ctx, T.s12b, { by: 'char', align: 'center' });
+  misc.m12 = matchUnits(lay.s12a.units, lay.s12b.units);
+})();
+
+// ---- 小件 ----
+const bg = (c, col) => { c.fillStyle = col; c.fillRect(0, 0, W, H); };
+function label(c, text, col) {
+  c.save(); c.font = F(500, 0.026); c.fillStyle = col; c.textAlign = 'left'; c.textBaseline = 'alphabetic';
+  const p = L.place(0.035, 0.075); c.fillText(text, p.x, p.y); c.restore();
+}
+const rr = (c, x, y, w, h, r) => { c.beginPath(); c.roundRect(x, y, w, h, Math.max(0, Math.min(r, w / 2, h / 2))); };
+
+const RISE = IN.rise({ dist: 0.7 });
+const POP = IN.scale({ from: 0.2 });
+const WAVE = EMPHASIS.wave({ amp: 0.08, freq: 1.2, phase: 0.12 });
+
+// ---- 镜头 ----
+const S1 = (c, lt) => {
+  bg(c, INK); label(c, '01 逐字交错 stagger 入场', FG_D);
+  c.font = F(800, 0.085); c.fillStyle = FG_D;
+  const size = fontPx(c.font);
+  drawUnits(c, lay.s1, L.cx, H * 0.45, (u, i) => RISE(unitProgress(lt, i, { start: 0.05, dur: 0.45, delays: delays.s1, ease: EASE.cubic.out }), u, size));
+  c.fillStyle = ACC;
+  drawUnits(c, lay.s1, L.cx, H * 0.7, (u, i) => POP(unitProgress(lt, i, { start: 0.15, dur: 0.5, delays: delays.s1c, ease: EASE.back.out }), u, size));
+};
+const S2 = (c, lt, sh) => {
+  bg(c, BLUE); label(c, '02 乱码解码 scramble', FG_D);
+  c.font = F(700, 0.09);
+  const r = scramble(lt, lay.s2.units, { start: 0.1, delays: delays.s2, settle: 0.4, rate: 20, pool: POOL, seed: 9 });
+  drawUnits(c, lay.s2, L.cx, H * 0.55, (u, i) => r[i].state === 'hidden' ? null : { text: r[i].text, fill: r[i].state === 'locked' ? FG_D : ACC });
+  const s = L.size(0.06);
+  sh.el('chip', { x: W * 0.78, y: H * 0.72, w: s, h: s }, (x, _, R) => { x.fillStyle = ACC; x.fillRect(R.x, R.y, R.w, R.h); });
+};
+const S3 = (c, lt) => {
+  bg(c, PAPER); label(c, '03 打字机 + 光标 typewriter', FG_L);
+  c.font = F(400, 0.05); c.fillStyle = FG_L;
+  const n = typedAt(lt, misc.sched);
+  const x0 = W * 0.15, y0 = H * 0.42;
+  drawUnits(c, lay.s3, x0, y0, (u, i) => (i < n ? {} : null));
+  const lastU = n ? lay.s3.units[n - 1] : null;
+  const cx = x0 + (lastU ? lastU.x + lastU.w : 0), cy = y0 + (lastU ? lastU.y : 0);
+  if (cursorOn(lt, misc.sched, { blink: 2, hold: 0.4 })) { c.fillStyle = RUST; c.fillRect(cx + L.size(0.004), cy - L.size(0.045), L.size(0.006), L.size(0.055)); }
+};
+const S4 = (c, lt) => {
+  bg(c, INK); label(c, '04 沿路径排字 text on path', FG_D);
+  const P = misc.path;
+  c.save(); c.strokeStyle = 'rgba(244,239,228,0.18)'; c.lineWidth = L.size(0.003); c.beginPath();
+  for (let s = 0; s <= P.length; s += 8) { const q = P.at(s); s ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y); } c.stroke(); c.restore();
+  c.font = F(700, 0.06); c.fillStyle = FG_D;
+  const off = lerp(-lay.s4.width * 0.45, P.length * 0.25, lt / 1.6);
+  drawOnPath(c, lay.s4, P, { offset: off, normal: -L.size(0.01), style: (u) => {
+    const s = off + u.cx; const a = sat(s / (P.length * 0.08)) * sat((P.length - s) / (P.length * 0.08));
+    return { alpha: a, fill: /[a-z]/.test(u.s) ? ACC : FG_D };
+  } });
+};
+const S5 = (c, lt, sh) => {
+  bg(c, RUST); label(c, '05 遮罩切分揭示 slice / line reveal', FG_D);
+  c.font = F(800, 0.17); c.fillStyle = FG_D;
+  drawSliceReveal(c, T.s5a, W * 0.36, H * 0.48, { slices: 6, dist: W * 0.25, progress: (k) => win(lt, 0.05 + k * 0.05, 0.5, EASE.expo.out) });
+  c.font = F(400, 0.05);
+  drawLineReveal(c, lay.s5b, W * 0.12, H * 0.68, { rise: 1.1, progress: (li) => win(lt, 0.35 + li * 0.12, 0.45, EASE.cubic.out) });
+  // 门框：下一个转场钻进它
+  const pw = W * 0.2, ph = pw * 9 / 16;
+  sh.el('portal', { x: W * 0.7, y: H * 0.36, w: pw, h: ph }, (x, _, R) => {
+    x.fillStyle = INK; x.fillRect(R.x, R.y, R.w, R.h);
+    x.strokeStyle = FG_D; x.lineWidth = L.size(0.004); x.strokeRect(R.x, R.y, R.w, R.h);
+  });
+};
+const S6 = (c, lt) => {
+  bg(c, INK); label(c, '06 数字滚动 odometer / slot', FG_D);
+  c.font = F(900, 0.2); c.fillStyle = FG_D;
+  const v = 2026 * win(lt, 0.0, 1.0, EASE.expo.out);
+  drawDigits(c, odometer(v, 4), W * 0.3, H * 0.58, { adv: misc.adv, lineHeight: L.size(0.24), hideLeading: true, value: v });
+  c.fillStyle = ACC;
+  const target = [1, 0, 2, 4];
+  const cols = target.map((d, k) => d + 10 * 3 * (1 - win(lt, 0.1 + k * 0.12, 0.7, EASE.cubic.out)));
+  drawDigits(c, cols, W * 0.72, H * 0.58, { adv: misc.adv, lineHeight: L.size(0.24) });
+  c.font = F(500, 0.026); c.fillStyle = 'rgba(244,239,228,0.6)'; c.textAlign = 'center';
+  c.fillText('里程表', W * 0.3, H * 0.78); c.fillText('老虎机', W * 0.72, H * 0.78);
+};
+const S7 = (c, lt) => {
+  bg(c, BLUE); label(c, '07 逐字 3D 翻转 strips vs affine', FG_D);
+  c.font = F(800, 0.12);
+  const size = fontPx(c.font);
+  const d = stagger(lay.s7.units.length, { each: 0.07, from: 'start' });
+  lay.s7.units.forEach((u, i) => {
+    const p = unitProgress(lt, i, { start: 0.05, dur: 0.7, delays: d, ease: EASE.cubic.out });
+    const ang = (1 - p) * (Math.PI / 2) * 0.98;
+    if (p <= 0) return;
+    drawFlip(c, misc.spr[i], L.cx + u.cx, H * 0.4, ang, { axis: 'x', mode: 'strips', strips: 40, focal: size * 2.2 });
+    drawFlip(c, misc.spr[i], L.cx + u.cx, H * 0.72, ang, { axis: 'x', mode: 'affine' });
+  });
+  c.font = F(500, 0.026); c.fillStyle = 'rgba(244,239,228,0.6)'; c.textAlign = 'left';
+  c.fillText('透视条带', W * 0.06, H * 0.42); c.fillText('仿射近似', W * 0.06, H * 0.74);
+};
+const S8 = (c, lt) => {
+  bg(c, PAPER); label(c, '08 按词强调 wave / pulse', FG_L);
+  c.font = F(700, 0.06); const size = fontPx(c.font);
+  c.fillStyle = FG_L;
+  drawUnits(c, lay.s8a, L.cx, H * 0.4, (u, i) => {
+    const p = unitProgress(lt, i, { start: 0.0, dur: 0.35, delays: [0, 0.08, 0.16, 0.24], ease: EASE.cubic.out });
+    const w = WAVE(lt, u, size);
+    return { alpha: p, dy: w.dy + (1 - p) * size * 0.4 };
+  });
+  const P = EMPHASIS.pulse({ t0: 0.2, dur: 0.35, amp: 0.22, each: 0.12 });
+  drawUnits(c, lay.s8b, L.cx, H * 0.66, (u, i) => ({ ...P(lt, u), fill: i === 1 ? RUST : FG_L }));
+  // 词边界：每个单元下一条短线（验证中文切词与标点挂靠）
+  c.fillStyle = 'rgba(26,26,26,0.35)';
+  for (const u of lay.s8b.units) c.fillRect(L.cx + u.x + 4, H * 0.66 + size * 0.25, u.w - 8, L.size(0.004));
+};
+const ORB = (x, props, R) => { x.fillStyle = props.fill; x.beginPath(); x.ellipse(R.x + R.w / 2, R.y + R.h / 2, R.w / 2, R.h / 2, 0, 0, Math.PI * 2); x.fill(); };
+const CARD = (x, props, R) => { x.fillStyle = props.fill; rr(x, R.x, R.y, R.w, R.h, props.radius * Math.min(R.w, R.h)); x.fill(); };
+const S9 = (c, lt, sh) => {
+  bg(c, INK); label(c, '09 匹配剪辑 match cut', FG_D);
+  const q = win(lt, 0.0, 1.3, EASE.sine.inOut);
+  const r = L.size(0.09);
+  sh.el('orb', { x: lerp(W * 0.15, W * 0.62, q) - r, y: H * 0.5 - r, w: 2 * r, h: 2 * r }, ORB, { props: { fill: ACC }, morph: true });
+};
+const S10 = (c, lt, sh) => {
+  bg(c, PAPER); label(c, '10 共享元素 Magic Move（A）', FG_L);
+  const r = L.size(0.12);
+  sh.el('orb', { x: W * 0.62 - r, y: H * 0.5 - r, w: 2 * r, h: 2 * r }, ORB, { props: { fill: ACC }, morph: true });
+  sh.el('card', { x: W * 0.08, y: H * 0.2, w: W * 0.3, h: H * 0.6 }, CARD, { props: { fill: BLUE, radius: 0.04 }, morph: true });
+  sh.el('title', { x: W * 0.1, y: H * 0.86, w: W * 0.26, h: L.size(0.06) }, (x, _, R) => {
+    x.font = F(700, 0.06); x.fillStyle = FG_L; x.textBaseline = 'top'; x.fillText(T.s10, R.x, R.y);
+  });
+  c.fillStyle = RUST; c.fillRect(W * 0.85, H * 0.15, L.size(0.05), L.size(0.05));   // 只在 A：随根淡出
+};
+const S11 = (c, lt, sh) => {
+  bg(c, BLUE); label(c, '11 共享元素 Magic Move（B）· 卡在「移」上', FG_D);
+  const r = L.size(0.05);
+  sh.el('orb', { x: W * 0.2 - r, y: H * 0.25 - r, w: 2 * r, h: 2 * r }, ORB, { props: { fill: '#e6463c' }, morph: true });
+  sh.el('card', { x: W * 0.45, y: H * 0.3, w: W * 0.48, h: H * 0.42 }, CARD, { props: { fill: PAPER, radius: 0.5 }, morph: true });
+  sh.el('title', { x: W * 0.47, y: H * 0.8, w: W * 0.44, h: L.size(0.06) }, (x, _, R) => {
+    x.font = F(700, 0.06); x.fillStyle = FG_D; x.textBaseline = 'top'; x.fillText(T.s11, R.x, R.y);
+  });
+};
+const S12 = (c, lt) => {
+  bg(c, INK); label(c, '12 文字 Magic Move matchUnits', FG_D);
+  c.font = F(800, 0.11); c.fillStyle = FG_D;
+  const p = win(lt, 0.25, 0.8, EASE.cubic.inOut);
+  drawMorphText(c, lay.s12a, lay.s12b, misc.m12, p, { a: [L.cx, H * 0.45], b: [L.cx, H * 0.62], arc: 0.6, fadeOut: 0.3, fadeIn: 0.3, delays: (k) => k * 0.06 });
+};
+
+// ---- 时间轴：剪辑点 = 1.2s 栅格；第 10 个剪辑点钉在合成旁白的「移」上，转场在念到它时完成（align: 1）----
+const C = (k) => +(1.2 * k).toFixed(3);
+const TL = timeline([
+  { shot: 's1', paint: S1 },
+  { cut: C(1), kind: 'wipe', dur: 0.5, ease: 'cubic.inOut', shape: 'linear', dir: 'right', feather: 0.06 },
+  { shot: 's2', paint: S2 },
+  { cut: C(2), kind: 'wipe', dur: 0.5, ease: 'quart.inOut', shape: 'iris', focus: 'chip' },
+  { shot: 's3', paint: S3 },
+  { cut: C(3), kind: 'luma', dur: 0.6, ease: 'sine.inOut', map: 'noise', seed: 7, cell: 0.012, octaves: 3, softness: 0.05, burn: { color: ACC, width: 0.35, strength: 0.3 } },
+  { shot: 's4', paint: S4 },
+  { cut: C(4), kind: 'push', dur: 0.45, ease: 'expo.inOut', dir: 'left' },
+  { shot: 's5', paint: S5 },
+  { cut: C(5), kind: 'zoomThrough', dur: 0.6, align: 0.6, ease: 'cubic.in', focus: 'portal', clip: 'rect', reveal: 0.3 },
+  { shot: 's6', paint: S6 },
+  { cut: C(6), kind: 'glitch', dur: 0.35, ease: 'linear', seed: 11, rate: 24, slices: 16, shift: 0.06, split: 0.006 },
+  { shot: 's7', paint: S7 },
+  { cut: C(7), kind: 'leak', dur: 0.6, ease: 'sine.inOut', colors: ['rgba(255,170,90,0.9)', 'rgba(255,80,130,0.7)', 'rgba(255,230,160,0.8)'], seed: 5, bloom: 0.45 },
+  { shot: 's8', paint: S8 },
+  { cut: C(8), kind: 'whip', dur: 0.4, ease: 'expo.inOut', dir: 'left', gap: 0.15, fill: INK, smear: { passes: 6, fps: 30, shutter: 0.5 } },
+  { shot: 's9', paint: S9 },
+  { cut: C(9), kind: 'match', dur: 0.5, ease: 'cubic.inOut', focus: 'orb', at: 0.5, meet: 1, blend: 0.08 },
+  { shot: 's10', paint: S10 },
+  { cut: vo.at('移'), kind: 'magicMove', dur: 0.7, align: 1, ease: 'cubic.inOut', root: 'crossfade', fit: 'uniform', arc: 0.15, delay: (name, i) => i * 0.08 },
+  { shot: 's11', paint: S11 },
+  { cut: C(11), kind: 'wipe', dur: 0.5, ease: 'quad.inOut', shape: 'bars', bars: 7, dir: 'right', spread: 0.5 },
+  { shot: 's12', paint: S12 },
+], { end: window.DURATION });
+window.MARKS = TL.marks();
+window.__TL = TL;   // 只给 bench 读段名，不影响绘制
+
+// 转场窗口里在右下角写出转场名（叠加层，画在合成之后）
+function overlay(at) {
+  if (at.type !== 'transition') return;
+  ctx.save(); ctx.font = F(500, 0.026); ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+  const s = `转场：${at.tr.kind}${at.tr.shape ? ' ' + at.tr.shape : ''}${at.tr.map ? ' ' + at.tr.map : ''} →`;
+  ctx.lineWidth = L.size(0.006); ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.strokeText(s, W * 0.965, H * 0.94);
+  ctx.fillStyle = '#fff'; ctx.fillText(s, W * 0.965, H * 0.94); ctx.restore();
+}
+window.seek = A.install((t) => { const at = S.frame(t, TL); overlay(at); });
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+[
+  { "at": "纯函数", "offset": -0.04, "type": "thump", "gain": 0.7 },
+  { "at": "seek", "type": "tick", "gain": 0.5 },
+  { "at": "帧", "nth": 2, "type": "click", "gain": 0.6 },
+  { "at": "时间戳", "type": "chime", "gain": 0.4 },
+  { "t": 0.0, "type": "whoosh", "gain": 0.3 }
+]

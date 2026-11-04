@@ -1,0 +1,1 @@
+{ "schema": 1, "slug": "bad-variant", "title": "预检阴性：变体残留", "entry": "scene.html", "format": "16x9", "fps": 30, "sub": 1, "checks": ["preflight"], "variantOf": "pf-src" }

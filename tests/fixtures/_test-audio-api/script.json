@@ -1,0 +1,8 @@
+{
+  "engine": "volcano-audio",
+  "audioModel": "seed-audio-1.0",
+  "speaker": "zh_male_m191_uranus_bigtts",
+  "format": "mp3",
+  "sampleRate": 44100,
+  "lines": [{ "id": "a1", "text": "两端交换参数，各自算出同一个密钥。" }]
+}

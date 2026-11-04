@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "gates": [
+    {
+      "id": "seam4",
+      "about": "着色器层 / 三维后期把上一层画布当图源再画：门 4 顺序 vs 并行逐帧比。与 film-motion 共享这道门（同 id、同命令，注册表合并 uses，一支片子只跑一次）；deliver 已永远开门 4，所以只给 accept --deep",
+      "when": { "uses": ["webfx.js", "stage3d.js", "post3d.js"] },
+      "needs": ["scene"],
+      "run": ["node", "{core}/scripts/seamcheck.mjs", "--film", "{slug}", "--films-dir", "{films}", "--parallel", "4"],
+      "deliver": false,
+      "cost": 3,
+      "timeoutPerFrame": 1000
+    },
+    {
+      "id": "texcache",
+      "about": "纹理只传一次的缓存：缓存版 vs 每次上传版（WEBFX_NOCACHE）逐像素比。缓存键漏了内容变化时 seamcheck 门 1a/1b/2 全绿，只有这道门抓得到；没用缓存时通过但为空",
+      "when": { "uses": ["webfx.js"] },
+      "needs": ["scene"],
+      "run": ["node", "{skill}/scripts/texcache-check.mjs", "--film", "{slug}", "--films-dir", "{films}"],
+      "cost": 2
+    }
+  ]
+}

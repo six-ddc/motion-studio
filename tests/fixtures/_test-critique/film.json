@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "title": "film-critique 测试片",
+  "format": "9x16",
+  "formats": [
+    "9x16"
+  ],
+  "fps": 60,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 4.5,
+  "loop": true,
+  "checks": ["facts.script", "verify", "narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide", "laws", "still", "empty", "marks", "claims", "tilt", "page"]
+}

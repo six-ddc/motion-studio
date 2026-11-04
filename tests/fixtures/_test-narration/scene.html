@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<canvas id="stage"></canvas>
+<script type="module">
+import { makeLayout } from './runtime/layout.js';
+import { settle } from './runtime/motion.js';
+import { loadNarration } from './runtime/narration.js';
+import { drawCaption } from './runtime/text.js';
+
+const fmt = new URLSearchParams(location.search).get('format') ?? '9x16';
+const L = makeLayout(fmt);
+const cv = document.getElementById('stage');
+cv.width = L.width; cv.height = L.height;
+const ctx = cv.getContext('2d');
+
+const vo = await loadNarration('./narration.json');
+window.DURATION = vo.filmDuration;   // = narrationOffset + 旁白长 + narrationTail（film.json）
+// 事件绑在字上：四个关键词各触发一个弹簧
+const marks = ['纯函数', 'seek', 'ffmpeg', '时间戳'].map((k) => ({ k, t: vo.at(k) }));   // vo.at 已是成片时间
+// 给 film-critique check.mjs 的 mark.sync / mark.visible 用：和画面同源，不手抄
+window.MARKS = marks.map((m) => ({ label: m.k, start: m.t, end: m.t + 0.6, word: m.k }));
+
+window.seek = (t) => {
+  ctx.fillStyle = '#111'; ctx.fillRect(0, 0, L.width, L.height);
+  marks.forEach((m, i) => {
+    const p = settle(t - m.t, 170, 20);
+    const { x, y } = L.place(0.2 + i * 0.2, 0.4);
+    ctx.fillStyle = '#888';
+    ctx.beginPath(); ctx.arc(x, y, L.size(0.03) * p, 0, Math.PI * 2); ctx.fill();
+  });
+  drawCaption(ctx, vo.captionAt(t, { maxChars: 14 }), {
+    font: `${L.size(0.05)}px sans-serif`, x: L.cx, y: L.place(0, 0.8).y,
+    idle: '#777', active: '#fff',
+  });
+};
+window.ready = true;
+</script>

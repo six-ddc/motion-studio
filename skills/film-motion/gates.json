@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "gates": [
+    {
+      "id": "seam4",
+      "about": "离屏层合成（转场两镜头各进离屏层再合成）：门 4 顺序 vs 并行逐帧比。_test-mg 实测 48 个采样时刻全绿、只有门 4 抓到 imageSmoothingQuality='high' 让缩放 drawImage 依赖上一帧。与 film-webfx 共享这道门（同 id、同命令，注册表合并 uses，一支片子只跑一次）；deliver 已永远开门 4，所以只给 accept --deep",
+      "when": { "uses": ["transitions.js"] },
+      "needs": ["scene"],
+      "run": ["node", "{core}/scripts/seamcheck.mjs", "--film", "{slug}", "--films-dir", "{films}", "--parallel", "4"],
+      "deliver": false,
+      "cost": 3,
+      "timeoutPerFrame": 1000
+    }
+  ]
+}

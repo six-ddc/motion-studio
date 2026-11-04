@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-critique 转场取帧夹具",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 4,
+  "loop": false,
+  "checks": []
+}

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "slug": "undeclared",
+  "title": "kit 对照：没在 film.json 声明 kits 就 import kit 文件",
+  "entry": "scene.html",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "checks": []
+}

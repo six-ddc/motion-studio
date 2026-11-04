@@ -1,0 +1,7 @@
+{
+  "format": "16x9",
+  "fps": 10,
+  "entry": "scene.html",
+  "_注释": "audiocheck 夹具：阳性：第 0 秒起有声、亮、到片尾、真峰低",
+  "checks": ["audiocheck"]
+}

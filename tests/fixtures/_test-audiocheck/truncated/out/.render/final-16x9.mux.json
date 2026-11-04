@@ -1,0 +1,1 @@
+{"schema": 1, "skill": "film-narration", "script": "scripts/mux.sh", "_注释": "夹具：只为让 audiocheck 从合流记录找到配乐，sha 不作数", "args": ["--music", "assets/music.wav"], "narrationOffset": 0, "inputs": {"music": {"path": "assets/music.wav", "sha256": "-"}}, "output": {"path": "out/final-16x9.mp4", "sha256": "-"}}

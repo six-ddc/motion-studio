@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "gates": [
+    {
+      "id": "verify",
+      "about": "念读核验：Whisper 转写成片，比对 script.json 的字与 narration.json 的时间戳（漂移、片头留白各环、成片 true peak）",
+      "when": { "checks": ["verify"] },
+      "needs": ["final"],
+      "run": ["python", "{skill}/scripts/align.py", "--film", "{slug}", "--films-dir", "{films}", "--verify"],
+      "cost": 3
+    },
+    {
+      "id": "vo-timing",
+      "about": "字级时间戳 vs 每句 wav 的能量包络（意群起点错拍 ≥ 0.20s 判红），离线、不调接口",
+      "when": { "checks": ["vo-timing"] },
+      "run": ["python", "{skill}/scripts/tts.py", "--film", "{slug}", "--films-dir", "{films}", "--check-timing"],
+      "cost": 1
+    },
+    {
+      "id": "audiocheck",
+      "about": "声音质量：开场静音（前 0.5s RMS）、闷（频谱质心与 <400 Hz 占比）、配乐被截断/硬切（音轨 vs 画面时长）、成片真峰；阈值可在声明里给",
+      "when": { "checks": ["audiocheck"] },
+      "run": ["python", "{skill}/scripts/audiocheck.py", "--film", "{slug}", "--films-dir", "{films}"],
+      "mp4": "optional",
+      "needs": ["final"],
+      "cost": 1
+    }
+  ]
+}

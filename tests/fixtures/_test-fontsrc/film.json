@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "slug": "_test-fontsrc",
+  "title": "fontsrc 对照：每次 seek 克隆 #stage 的 DOM 场景",
+  "entry": "scene.html",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "checks": []
+}

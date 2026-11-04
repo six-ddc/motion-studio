@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "about": "subset_font.py 收字夹具：基础文案只有「字体」，变体 b 才有「测试素材」。note 里的「不收」不该进子集",
+  "text": { "title": { "text": "字体", "note": "不收" } },
+  "claims": [ { "text": "包含", "source": "X01" } ],
+  "variants": { "hook": { "a": {}, "b": { "text": { "title": { "text": "测试素材" } } } } }
+}

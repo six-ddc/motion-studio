@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-assets 子集收字夹具",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 1,
+  "loop": false,
+  "checks": []
+}

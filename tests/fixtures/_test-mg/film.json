@@ -1,0 +1,19 @@
+{
+  "slug": "_test-mg",
+  "title": "Motion Graphics 能力夹具：转场 / 文字动画 / 缓动编排",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "loop": false,
+  "renderer": {
+    "chromium": "156.0.8078.4",
+    "playwright": "1.64.1",
+    "args": [
+      "--font-render-hinting=none"
+    ],
+    "ffmpeg": "ffmpeg version 8.0 Copyright (c) 2000-2025 the FFmpeg developers",
+    "x264Threads": 4
+  },
+  "checks": ["narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide", "laws", "still", "empty", "marks", "claims", "tilt", "page"]
+}

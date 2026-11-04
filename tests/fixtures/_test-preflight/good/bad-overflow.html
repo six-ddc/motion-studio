@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>preflight 阴性：溢出</title>
+<style>
+  @font-face { font-family: 'Fix Mono'; font-weight: 700; src: url('./assets/fonts/mono.woff2') format('woff2'); }
+  html, body { margin: 0; overflow: hidden; background: #fff; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; font-family: 'Fix Mono'; font-weight: 700; color: #222; background: #fff; }
+  .title { position: absolute; left: 200px; top: 120px; width: 1200px; height: 100px; font-size: 72px; line-height: 100px; white-space: nowrap; overflow: hidden; }
+  .cap { position: absolute; left: 560px; top: 900px; width: 800px; height: 60px; font-size: 36px; line-height: 60px; white-space: nowrap; overflow: hidden; text-align: center; }
+  .mark { position: absolute; left: 1500px; top: 640px; width: 200px; height: 120px; background: #eee; }
+  .logo { position: absolute; left: 1700px; top: 120px; width: 60px; height: 60px; }
+  pre.code { position: absolute; left: 200px; top: 300px; margin: 0; font: inherit; font-size: 32px; line-height: 44px; }
+  pre.code > div { display: block; white-space: pre; }
+</style>
+<div id="stage">
+  <div class="title" data-slot="title"></div>
+  <div class="title" style="top:8px;width:600px" data-slot="headline">This headline is far too long for its box</div>
+  <img class="logo" src="./assets/logo.svg" alt="">
+  <pre class="code" data-code-lang="lua"><div>function update(dt)</div><div>  x = x + dt</div><div>end</div></pre>
+  <pre class="code" style="top:520px" data-code-lang="js"><div>const speed = 3;</div><div>if (speed) {</div><div>  go(speed);</div><div>}</div></pre>
+  <div class="mark" data-avoid="landmark"></div>
+  <div class="cap" style="left:1300px;top:660px" data-slot="caption">Blocks or code, same game</div>
+</div>
+<script type="module">
+// 阴性对照：标题贴顶越出安全区且溢出自己的盒子（被截断）、字幕压住地标（data-avoid）
+// 阳性对照：素材都在、字体随片且画得出、槽位在安全区里不溢出、代码行是 block + pre、content.json 的宣传数据有出处
+const C = await (await fetch('./content.json')).json();
+document.querySelector('[data-slot=title]').textContent = C.text.title.text;
+window.DURATION = 2;
+window.seek = (t) => { document.querySelector('.cap').style.opacity = t < 0.1 ? 0 : 1; };
+window.ready = document.fonts.load('700 40px "Fix Mono"', 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789(){}+=;,.');
+</script>

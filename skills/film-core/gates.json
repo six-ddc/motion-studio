@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "gates": [
+    {
+      "id": "seam",
+      "about": "内核门 1a/1b/2/3 + 探针 + 页面报错（references/kernel.md §4）。deliver 另以 --parallel 4 --relaunch 2 跑全套，所以这条只给 accept --deep",
+      "when": "always",
+      "needs": ["scene"],
+      "run": ["node", "{core}/scripts/seamcheck.mjs", "--film", "{slug}", "--films-dir", "{films}"],
+      "deliver": false,
+      "cost": 1
+    },
+    {
+      "id": "relaunch",
+      "about": "门 5：跨启动 + 和上一次整片渲染的逐帧清单对账。没有清单不适用（对账是它全部的检出力）",
+      "when": "always",
+      "needs": ["scene", "manifest"],
+      "run": ["node", "{core}/scripts/seamcheck.mjs", "--film", "{slug}", "--films-dir", "{films}", "--relaunch", "2"],
+      "deliver": false,
+      "cost": 3,
+      "timeoutPerFrame": 1000
+    },
+    {
+      "id": "fontsrc",
+      "about": "字体来源：画出来的字全部来自随片字体（references/kernel.md §2）",
+      "when": "always",
+      "needs": ["scene"],
+      "run": ["node", "{core}/scripts/font_source.mjs", "--film", "{slug}", "--films-dir", "{films}"],
+      "cost": 2
+    },
+    {
+      "id": "preflight",
+      "about": "渲染前预检（声明才开）：素材在不在、字体加载与覆盖、槽位溢出/安全区、画面代码语法、变体复制残留、宣传数据出处（references/preflight.md）",
+      "when": { "checks": ["preflight"] },
+      "needs": ["scene"],
+      "run": ["node", "{core}/scripts/preflight.mjs", "--film", "{slug}", "--films-dir", "{films}"],
+      "cost": 1
+    },
+    {
+      "id": "kits",
+      "about": "kit 自检（声明才开）：片子 film.json kits 声明的每个 kit，跑它 kit.json check 登记的标准帧比对与自带命令（references/kits.md）",
+      "when": { "checks": ["kits"] },
+      "needs": ["scene"],
+      "run": ["node", "{core}/scripts/kitcheck.mjs", "--film", "{slug}", "--films-dir", "{films}"],
+      "cost": 1
+    }
+  ]
+}
