@@ -907,3 +907,17 @@ style_guide 拒绝条目的样例（原在 SKILL.md 第 7 步，只说明格式"
 | 场景之间靠共享元素交棒，不靠切和叠化 | 让片子连贯 | 见转场表。硬切用在主题断点上比任何交棒都有力 |
 | 落地要有一点回弹 | 让物体有质量感 | 回弹：物理感、俏皮；代价是轻。墨、烟、光这类无质量的材料回弹会显得假 |
 | 首帧 = 末帧 | 循环播放平台 | 本片要求循环时是技术约束（seamcheck 第 3 门）；不循环的片子没必要 |
+
+## 先看后写与画面先行配方（2026-11-10）
+
+加了 `references/lookdev.md`（参考锚、风格帧比稿、粗剪预演、两个确认点）和配方 `assets/recipes/visual/`（brief.md、beats.md、recipe.json）。
+来历：方法论复盘认为三处在压上限——长相只在文字里定、人的确认放在成片之后、唯一的配方以旁白为时间来源。
+
+实测（临时 films 目录，不入库）：
+- `new-film.mjs --list` 列出 `visual`；`new-film.mjs lk --recipe visual` 写出 brief / beats / PROGRESS / style_guide / review_log 五份文档，
+  film.json 声明 `divergence page mp4 readability contrast style-guide laws still cover rhythm continuity`，模板里没有残留占位符。
+- `deliver --list` 显示这 11 项分别由 shotlist 门（只查发散留痕）和 critique 门认领，没有"缺能力"。
+- 空模板上跑 `check_shotlist.py`：没有 narration.json 也能跑，报视觉方向和近作对照 4 个失败（和 explainer 的空模板行为一致）。
+
+没测到：没有用这个配方做过一支完整的片子；"在像素上挑方向比在文字上挑更好"是判断，没有对照实验；
+`docs/neutrality-eval.md` 的盲测还没按新流程重跑。

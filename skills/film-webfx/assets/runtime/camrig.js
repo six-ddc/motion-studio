@@ -78,6 +78,28 @@ export function track(keys) {
   };
 }
 
+// ---- 镜头表（多镜硬切）------------------------------------------------------------
+/** shots([{ t0, t1, a, b?, ease? }, ...]) → track 的关键帧数组（不是求值函数，交给 track()，可与别的关键帧拼接）。
+ *  每个镜头在 [t0, t1) 内从机位 a 运动到 b（b 省略 = 定机位），ease 管这一段（缓动名或函数，省略 = 'inOut'）；
+ *  镜头之间是硬切：上一镜在 t1 − ε 停在 b，下一镜在自己的 t0 直接从 a 开始，所以相邻镜头可以写 t1 = 下一镜 t0。
+ *  a/b 是 track 能插值的值（数或等长数组）——要插 shot 对象时，调用方先把 shot 摊平成数组，求值后再拼回去。
+ *  镜头时长 ≤ 2ε 时抛错（不悄悄吞掉一个镜头）；镜头之间有空隙时，空隙里保持上一镜的 b。 */
+export function shots(list, { eps = 0.003 } = {}) {
+  if (!Array.isArray(list) || !list.length) throw new Error('camrig.shots: 至少一个镜头 { t0, t1, a }');
+  const keys = [];
+  for (const s of list) {
+    if (s.a == null) throw new Error(`camrig.shots: 镜头 ${s.t0}–${s.t1} 缺 a（起始机位）`);
+    if (!(Number.isFinite(s.t0) && Number.isFinite(s.t1) && s.t1 - 2 * eps > s.t0)) {
+      throw new Error(`camrig.shots: 镜头 ${s.t0}–${s.t1} 太短或时刻无效（要 > ${2 * eps}s；时刻是 NaN 多半是 vo.at 没找到字）`);
+    }
+    if (keys.length && !(s.t0 > keys[keys.length - 1][0])) {
+      throw new Error(`camrig.shots: 镜头 ${s.t0}–${s.t1} 与上一镜重叠（上一镜止于 ${keys[keys.length - 1][0] + eps}）`);
+    }
+    keys.push([s.t0, s.a, s.ease ?? 'inOut'], [s.t1 - eps, s.b ?? s.a, 'linear']);
+  }
+  return keys;
+}
+
 // ---- 样条路径 ---------------------------------------------------------------
 /** 向心 Catmull-Rom（alpha=0.5，不打结、不过冲成环）穿过 points。返回 { at(u), tangent(u), length }，
  *  u ∈ [0,1] **按弧长**：u 匀速走 = 相机匀速。加载期建一张弧长表（samples 段），之后只查表——是常量，不是状态。 */

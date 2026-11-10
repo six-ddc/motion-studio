@@ -32,13 +32,14 @@ Clip 适配器（Lottie、Pixi、three、p5、CSS 动效、游戏引擎怎么接
 node <core>/scripts/new-film.mjs <slug>                         # 内核骨架：只生成 film.json 和 scene.html，不写文档、不拷运行时
 node <core>/scripts/new-film.mjs <slug> --format 16x9           # 横版；默认是 9x16，忘了指定的话后面的布局全错
 node <core>/scripts/new-film.mjs <slug> --recipe explainer      # 解说片配方：生成文档模板，在 film.json 的 checks 里声明检查（已有片子也能补）
+node <core>/scripts/new-film.mjs <slug> --recipe visual         # 画面先行配方：镜头节奏先定，声音去贴（宣传片、片头、MV、logo 演绎）
 node <core>/scripts/new-film.mjs --list                         # 列出已安装的配方
 node <core>/scripts/new-film.mjs <新slug> --from <已有slug>     # 以已有片子为起点另做一支（整支复制）；同一来源出多个版本用 content.json，见 §5b
 ```
 
 **运行时不拷贝。** scene.html 直接写 `import './runtime/motion.js'`。服务器把 `/runtime/<名>` 解析成片内的 `runtime/<名>`（存在就用它），
 否则解析成已安装 skill 的 `assets/runtime/<名>`，这就是「挂载」。用到哪个 skill 的运行时就 import 哪个，建片时不用预先猜。交付时这些文件会被「冻结」，也就是复制进片子目录，之后不再随套件变化。细节和代价见 `references/runtime.md` §2。
-要改已有片子就跳过建骨架，先读那支片的 `docs/`，尤其是 `style_guide.md`，审美判据以它为准。新片默认只出静帧或低分辨率小样，用户确认或明确说"直接出"之后才渲终稿并 deliver。改已有片子之前，先比对片子目录的 mtime 和 receipt，
+要改已有片子就跳过建骨架，先读那支片的 `docs/`，尤其是 `style_guide.md`，审美判据以它为准。新片默认只出静帧或低分辨率小样，用户确认或明确说"直接出"之后才渲终稿并 deliver。人的判断放在两个最便宜的时刻最划算：几个方向各出一帧让用户挑长相，占位形状的粗剪小样让用户定节奏（`film-story/references/lookdev.md`）。改已有片子之前，先比对片子目录的 mtime 和 receipt，
 再读上一轮 review_log 里的「下一轮先读」；对话之外发生的改动视为用户的意图，不要覆盖，并向用户说明。手写有名字的效果之前先查 `film-motion/references/effects.md`。
 
 **kit（品牌或系列共享的组件，可选）。** 已经定下来的 logo、主题、token、标准帧放在仓库顶层的 `kits/<名>/`。film.json 写上 `"kits": ["acme"]` 之后

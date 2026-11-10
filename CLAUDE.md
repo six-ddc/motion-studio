@@ -4,7 +4,7 @@
 
 ## 做片子
 
-读 `film-core` skill。它是入口：建内核骨架（解说片流程是可选配方 `--recipe explainer`），给出 seek(t) 契约，并指出每步该读哪个 skill。
+读 `film-core` skill。它是入口：建内核骨架（解说片流程是可选配方 `--recipe explainer`，镜头节奏先定的片子用 `--recipe visual`），给出 seek(t) 契约，并指出每步该读哪个 skill。
 或者 `/film`。
 
 ```bash

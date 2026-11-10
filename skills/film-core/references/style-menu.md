@@ -33,7 +33,9 @@
 |---|---|---|---|
 | 机制驱动 | 把核心变量映射到一个视觉变量，整片靠这一条规则支撑；先写出本题的默认画法（候选 0），再用三刀判据去筛 | film-story 的 `SKILL.md`「机制与分镜」第 1–2 步、`references/mechanism.md` | 适合"把一件事讲清楚"的解说片。对角色动画、MV、纯视觉片来说，能支撑整片的那个变量未必存在，硬套只是走形式 |
 | 讲法和长相的发散、近作对照 | 脚本结构和视觉方向各写几个候选再挑；看一眼仓库里已有的片子 | film-story 的 `references/divergence.md` | 写下这些候选要花时间。它只能证明"想过"，不能证明"选得好"（同文件第 5 节） |
-| 音频先行、关键词触发 | 画面读取旁白的字级时间戳，用 `vo.at('字')` 触发 | film-narration 的 `SKILL.md` | 有旁白且需要同步时几乎是必需的；无旁白的片子用不上 |
+| 音频先行、关键词触发 | 画面读取旁白的字级时间戳，用 `vo.at('字')` 触发 | film-narration 的 `SKILL.md` | 有旁白且需要同步时几乎是必需的；无旁白的片子用不上。镜头长度跟着句子走，画面容易变成台词的配图 |
+| 画面先行 | 镜头节奏先定（节拍栅格或一张具名时刻表），旁白和配乐去贴它；配方 `--recipe visual` | film-story 的 `references/lookdev.md` §5 | 旁白要按镜头时长去写，句子可能要删改；没有分镜断言对账 |
+| 参考锚、风格帧比稿、粗剪预演 | 审美写明参照谁；候选方向各画一帧再挑；占位形状先把时间跑通 | film-story 的 `references/lookdev.md` §1–4 | 各多一轮：拆解参考、每个方向几十行代码、一次小样渲染。换来的是在最便宜的时刻改长相和节奏 |
 | 节拍驱动 | 从配乐测出节拍栅格，让事件对准节拍 | film-narration `scripts/beats.py`、film-core `runtime/motion.js` 的 `beatGrid` | 每个事件都卡拍会显得机械，完全不卡拍又会和音乐脱节 |
 | 镜头语言与转场 | 时间轴、16 种转场、共享元素 Magic Move、缓动表 | film-motion 的 `references/transitions.md` | 每个转场都要把参数写全；花样太多会看起来像样品册 |
 | 视觉 token（look.json） | 本片把颜色和字体集中写成一处 token，生成 CSS 变量供 scene 引用；不带任何预设值 | film-typography 的 `SKILL.md`「可选：look.json」 | 多了一层间接引用；token 改名时 scene 里的引用不会跟着改 |

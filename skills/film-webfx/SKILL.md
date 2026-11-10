@@ -135,7 +135,7 @@ node <film-webfx>/scripts/texcache-check.mjs --film <slug>          # 用了 tex
 4. 锚点在渲染之后用渲染时的矩阵投影（`S.anchor`），不另外推算一遍坐标。
 
 可选能力：**世界文字可读性** `S.legible(name, obj, {from, to, em})` 测量投影后的字高与压扁比，film.json 的 `checks` 声明了 `{"legible": {"min_px": …, "min_squash": …}}` 时由 film-critique 判定（three.md §2）。
-**镜头** `camrig.js` 全部是 t 的纯函数，`fromCamera3d()` 让 film-motion 的 2D 标注与 3D 物体共用同一个投影（three.md §3）。
+**镜头** `camrig.js` 全部是 t 的纯函数（多镜硬切的镜头表用 `shots()` 生成关键帧），`fromCamera3d()` 让 film-motion 的 2D 标注与 3D 物体共用同一个投影（three.md §3）。
 **模型资产**（获取、度量、评审、内联、截面扫掠、LOD）见 `references/models.md`；模型要登记进 film-assets 的台账（"3D 模型"一类）。
 
 **代价**（SwiftShader，`dev/film-webfx/bench3d.mjs`，全表见 three.md §7）：基准 PBR 场景约 8 ms；只要开任何后期，先要付一遍直通，约多 11 ms；景深最贵（多 78 ms，blur=0 时整条跳过）；色差、颗粒、暗角、扫描线、故障合并成一遍，只比单开一项多几 ms；软阴影多 5 ms；GPU 闭式粒子 1 万个几乎不花时间。

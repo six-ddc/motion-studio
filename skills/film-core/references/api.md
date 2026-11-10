@@ -255,7 +255,7 @@ accept 的判定方法：有收据时重算 `inputs.digest`，相同显示 ✓�
 
 任何 skill 都可以提供 `assets/recipes/<名>/recipe.json`；`new-film.mjs <slug> --recipe <名>` 会按它写入文件、合并 film.json 字段、声明检查。
 配方名在全套件内唯一。new-film 扫描所有已安装 skill 的 `assets/recipes/`，core 自身不带配方；解说片配方 `explainer` 位于
-`film-story/assets/recipes/explainer/`（包含 brief.md、PROGRESS.md、recipe.json）。
+`film-story/assets/recipes/explainer/`（包含 brief.md、PROGRESS.md、recipe.json），画面先行配方 `visual` 在它旁边。
 
 ```json
 { "schema": 1, "name": "explainer", "about": "一句话",

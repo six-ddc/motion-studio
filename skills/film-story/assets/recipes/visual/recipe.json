@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "name": "visual",
+  "tags": ["画面先行", "宣传片", "片头", "MV", "logo 演绎", "无旁白", "配乐片", "visual-first"],
+  "about": "画面先行配方：brief（含参考锚）→ 风格帧比稿 → 节奏骨架 → 粗剪预演 → 精修 → 声音贴画 → 自检 → 交付。镜头节奏先定，旁白和配乐去贴它；不写调研和分镜对账文档。",
+  "files": [
+    { "dest": "docs/brief.md", "from": "brief.md" },
+    { "dest": "docs/beats.md", "from": "beats.md" },
+    { "dest": "docs/PROGRESS.md", "skill": "film-story", "from": "assets/recipes/explainer/PROGRESS.md" },
+    { "dest": "docs/style_guide.md", "skill": "film-story", "from": "assets/style_guide.md" },
+    { "dest": "docs/review_log.md", "skill": "film-critique", "from": "assets/review_log.md" }
+  ],
+  "checks": ["divergence", "page", "mp4", "readability", "contrast", "style-guide", "laws", "still", "cover", "rhythm", "continuity"],
+  "next": [
+    "1. 填 docs/brief.md —— 时长、画幅、参考锚、时间从哪来",
+    "2. 风格帧比稿：2–3 个方向各写一页 look/<名>.html，stills.mjs --entries 拼图，交给用户选（film-story references/lookdev.md §2）",
+    "3. 节奏骨架 → docs/beats.md（镜头边界读节拍栅格或一张具名时刻表）",
+    "4. 粗剪预演：占位形状 + 真实的镜头运动和时刻，出小样确认节奏（lookdev.md §3）",
+    "5. 逐镜精修 scene.html（守 film-core references/kernel.md）",
+    "6. 声音贴画：音效、配乐、旁白；和声音同步的事件仍然读时间戳",
+    "中途停下时在 docs/PROGRESS.md 记当前问题和下一步（几行，过时就删）"
+  ]
+}

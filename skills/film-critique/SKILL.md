@@ -52,9 +52,12 @@ MP4 本身读不出内容，代码也读不出画面。这个 skill 把片子变
 node <film-critique>/scripts/stills.mjs --film <slug> --at 1.2,8.8,9.8,22
 node <film-critique>/scripts/stills.mjs --film <slug>          # 不给 --at：取 window.MARKS 的中点，没有就均匀 5 个
 #   --entry scene-v2.html（临时换入口，不改 film.json）   --cols 5 --tile 420 --label stills
+node <film-critique>/scripts/stills.mjs --film <slug> --entries look/a.html,look/b.html [--at 0.1,0.9]   # 比稿：每个入口一行，拼成 out/lookdev.png
 ```
 
 产出 `films/<slug>/out/stills.png`（每格下方标时间戳）和 `out/stills/still-<t>s.png`。
+
+**比稿**（`--entries`）用在动手写整片之前：几个视觉方向各画一帧，拼在一张图上让用户挑；入口是片子目录下任何暴露 seek 的页面。什么时候值得做、页面怎么写见 `film-story/references/lookdev.md` §2。
 
 **怎么挑时刻**：取每个镜头画面定型的那一刻，加上每个关键事件的中点。转场进行到一半的画面交给下面的转场拼图，因为 MARKS 中点和均匀取点很少正好落在转场中段。
 

@@ -1,6 +1,6 @@
 ---
 name: film-story
-description: 一支片子"讲什么、凭什么可信、靠什么撑起来、怎么排"：选题调研与事实核查（带出处的 docs/facts.md，旁白数字对账 factcheck）、参考片拆解、撑起整支片子的视觉机制、讲法与长相的发散和近作对照（siblings）、分镜与镜头设计（景别、机位、运镜）、可执行 spec（shotlist.md，时刻以 narration.json 实测为准）、本片法律 style_guide.md、解说片配方流程。用户说调研、查资料、事实核查、fact check、出处、别编数字、这数据哪来的、有没有争议、参考片、拆解、出创意、画面方案、怎么拍、分镜、shotlist、storyboard、运镜、镜头语言、镜头设计、电影感、节奏、构图、视觉方向，嫌丑、没创意、太平、平铺、千篇一律、像模板、和上一支长得一样、重要事件一闪而过时加载；用户只说"做一支讲唐朝的片子"没提调研，也先用它调研。转场实现归 film-motion，旁白合成归 film-narration，成片检查归 film-critique。
+description: 一支片子"讲什么、凭什么可信、靠什么撑起来、怎么排"：选题调研与事实核查（带出处的 docs/facts.md，旁白数字对账 factcheck）、参考片拆解、撑起整支片子的视觉机制、讲法与长相的发散和近作对照（siblings）、分镜与镜头设计（景别、机位、运镜）、可执行 spec（shotlist.md，时刻以 narration.json 实测为准）、本片法律 style_guide.md、参考锚与风格帧比稿、粗剪预演、解说片配方和画面先行配方。用户说调研、查资料、事实核查、fact check、出处、别编数字、这数据哪来的、有没有争议、参考片、拆解、出创意、画面方案、怎么拍、分镜、shotlist、storyboard、运镜、镜头语言、镜头设计、电影感、节奏、构图、视觉方向、照着这个风格、出几个方向比一下、风格帧、animatic、粗剪，嫌丑、没创意、太平、平铺、千篇一律、像模板、和上一支长得一样、重要事件一闪而过时加载；用户只说"做一支讲唐朝的片子"没提调研，也先用它调研。转场实现归 film-motion，旁白合成归 film-narration，成片检查归 film-critique。
 ---
 
 # film-story
@@ -20,9 +20,13 @@ films/<slug>/docs/
 └── style_guide.md      顶部：视觉方向候选与近作对照；其余：本片法律     ← 第 3 步末起草，第 7 步写完
 ```
 
+另有两份可选产出：`look/<名>.html` 风格帧（一个视觉方向一页，比稿用）和画面先行配方的 `docs/beats.md`（节奏骨架）。
+
 模板在 `assets/`（只有占位符，没有可以照抄的画面）；`node <film-core>/scripts/new-film.mjs <slug> --recipe explainer` 一次写齐，字段说明见 `references/templates.md`。
 
 **解说片配方（可选）**的顺序是：brief、调研、机制、旁白（音频先行）、分镜（读实测时长）、实现、静帧闸门、渲染、自检、合流、deliver。唯一的技术约束是**有旁白时音频先行**：机制排在旁白之前，因为旁白要按机制写；分镜排在旁白之后，因为时长要读实测值。其余顺序只是推荐做法，非解说片怎么排、各步要点和声明的检查见 `references/explainer.md`。
+
+**先看后写（可选，`references/lookdev.md`）。** 长相和节奏只在文字里定，要到成片才第一次被看见，那时改动最贵。三件事把判断提前：**参考锚**（style_guide 写明审美参照谁、取什么、不取什么）、**风格帧比稿**（候选方向各画一帧，`stills.mjs --entries` 拼图后让用户挑）、**粗剪预演**（占位形状按真实时刻跑通，确认节奏后再精修）。镜头节奏比台词重要的片子（宣传片、片头、MV、logo 演绎）用**画面先行配方** `--recipe visual`：镜头先定，声音去贴。
 
 # 调研与事实核查
 
@@ -87,7 +91,7 @@ node <film-story>/scripts/factcheck.mjs --film <slug> --also out/critique/onscre
 
 写法同上（候选 0 是默认值，其余候选分属不同类别）。方法、类别表、判据、跳过条件见 `references/divergence.md`。
 - **讲法**（写在 mechanism.md「讲法」一节，在旁白草稿之前）：用两刀检验，一是最关键的那一刻是不是高潮，二是讲法有没有一路走向观众能复述的那句话。
-- **长相**（写在 style_guide.md 顶部「视觉方向」，在排分镜之前）：先运行 `node <film-story>/scripts/siblings.mjs --film <slug>` 并打开 `out/siblings.png`；这里的候选 0 是最省事的画法加上上一支片子的长相。
+- **长相**（写在 style_guide.md 顶部「视觉方向」，在排分镜之前；候选在像素上比更可靠，见 `references/lookdev.md` §2）：先运行 `node <film-story>/scripts/siblings.mjs --film <slug>` 并打开 `out/siblings.png`；这里的候选 0 是最省事的画法加上上一支片子的长相。
 - **近作对照**（写在 style_guide「近作对照」）：点名可能撞脸的片子，写明拉开了哪些差别，或者有意重复了什么、为什么。
 
 ### 第 4 步：让旁白和画面同构，然后交给 film-narration
@@ -143,4 +147,5 @@ accept --deep 和 deliver 按声明运行；`--recipe explainer` 会声明全部
 
 - 调研：`references/facts-format.md`（判据、状态、格式、匹配词、factcheck、产品 UI）· `references/fact-check.md`（核查步骤、来源分级、争议、建构）· `references/tools.md`（工具与已知坑）· `references/deconstruct.md`（参考片拆解、motionprint）
 - 机制与分镜：`references/mechanism.md`（判据、案例、代价）· `references/divergence.md`（讲法、长相、近作、门）· `references/templates.md`（产出文件字段、shotlist json）· `references/claims.md`（`curves.source`）· `references/vocabulary.md`（转场/节奏/构图/形似） · `references/cinematography.md`（镜头设计、运镜代价、实现指路）
-- 配方 `references/explainer.md`、`assets/recipes/explainer/`；模板 `assets/`；`scripts/factcheck.mjs` · `scripts/check_shotlist.py`（`--plan` / `--verdict` 给 film-critique，`--divergence` 给 siblings）· `scripts/siblings.mjs` · `scripts/motionprint.mjs`
+- 先看后写与画面先行：`references/lookdev.md`（参考锚、风格帧比稿、粗剪预演、`visual` 配方）
+- 配方 `references/explainer.md`、`assets/recipes/explainer/`、`assets/recipes/visual/`；模板 `assets/`；`scripts/factcheck.mjs` · `scripts/check_shotlist.py`（`--plan` / `--verdict` 给 film-critique，`--divergence` 给 siblings）· `scripts/siblings.mjs` · `scripts/motionprint.mjs`
