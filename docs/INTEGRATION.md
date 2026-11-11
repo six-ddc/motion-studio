@@ -1100,3 +1100,19 @@ Chromium 给变换层选光栅缩放有滞回，seamcheck 门 1a/2/5 都红（1�
 复盘里提了但这一轮没做的：评审不判运动质量（缓动、同屏运动数、节拍对点）；`shot / chain / loop` 组合子；固定后端的 GPU 渲染路径；
 画面词汇的缺口（路径变形、多 pass 着色器、风格化后期、数据可视化）；neutrality-eval 按新流程重跑并比到成片。
 装机 md 现在 6657 行，高于 6500 的目标。
+
+## 能力补齐：上一节"没做的"几项（2026-11-11）
+
+五块并行做完，各自的实测数字在 `docs/verified/<skill>.md` 当天的小节里：
+
+- **film-motion `shapes.js`**：路径按弧长采样、描边生长 `trim`、形状变形 `morph`、沿路径 `along`。凹形和自交形状的中间态仍会打结（数字见 shapes.md §7）。
+- **film-core `motion.js` 镜头组合子**：`sequence` `series` `loopT` `rate` `freeze`。原提议的 `shots` / `chain` 与 camrig.js、chain.js 的导出重名，所以改了名。
+- **film-motion `chart.js`**：比例尺、柱状图竞赛、折线生长、刻度进出、地理投影、加载期力导向。
+  顺带的发现：Node 22 与 Chromium 156 的 `Math.sin/cos/log/pow` 不逐位一致（各有 2.5–17% 的输入差 1 ULP），凡是要在 Node 里复算浏览器那组数的运行时都会踩到；chart.js 自带 `dmath`。
+- **film-webfx `fxchain.js` / `fxglsl.js`**：一个 context 内的多 pass 管线、可 seek 的帧间反馈（定步 + 检查点重放，新门 `fxreplay`）、14 个风格化与调色片段。冷启动 seek 到 30 s 约 6 s，并行渲染时每个 worker 各付一次。
+- **film-critique 运动读数**：`motion` `variety` `beatsync` `hook` `mute`，只报 LOOK。文字流、粒子这类片子的"同时运动区域"会偏高。
+- **film-core GPU 后端**：film.json `"backend": "gpu"` 声明才开，只有 WebGL 走 Metal，2D 仍走软件（全开 Metal 时 2D 文字跨页面不稳定，门 1b / 4 会红）。
+  weiqi-fx-open 拷贝整片 185 s → 41 s。代价：像素与软件后端不同、收据只在同款显卡和驱动上能对账、只支持 macOS。没有进夹具（期望依赖本机有无硬件 GPU）。
+  `_pool.mjs`、`texcache-check.mjs`、`physcheck.mjs` 已改成按片子声明的后端起浏览器；`siblings.mjs`、`legibility.mjs`、`font_proof.mjs` 没改（前者靠 openScene 自动补起，后两者打开的不是片子画面）。
+
+仍没做：neutrality-eval 按新流程重跑；用新能力做一支完整的片子；Linux 与其他显卡上的 GPU 后端；装机 md 已到约 7300 行，高于 6500 的目标，需要一轮瘦身。

@@ -22,7 +22,7 @@
 //   --dup-rate  E3 判红的倍率下限（默认 0.2：倍率 < 0.2 的定格斜坡尾部只警告，那里每帧运动不到正常的 1/5）
 import { parseArgs, resolveFilm, main, fail, FILM_OPTS } from '../../film-core/lib/film.mjs';
 import { serve } from '../../film-core/lib/serve.mjs';
-import { launchBrowser } from '../../film-core/lib/browser.mjs';
+import { launchBrowser, filmBackend } from '../../film-core/lib/browser.mjs';
 import { importRuntime } from '../../film-core/lib/runtime-node.mjs';
 
 const args = parseArgs({
@@ -59,7 +59,7 @@ for (let f = Math.round(t0 * fps); f <= Math.round(t1 * fps) + 1e-9; f += Math.r
 const rnd = (await importRuntime('rand.js')).seeded(seed);   // 打乱顺序用全套件同一个 mulberry32
 const shuffled = [...times]; for (let i = shuffled.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]; }
 
-const browser = await launchBrowser();
+const browser = await launchBrowser({ backend: filmBackend(Film) });
 const errors = [];
 async function open() {
   const page = await browser.newPage({ viewport: { width: 400, height: 400 } });
