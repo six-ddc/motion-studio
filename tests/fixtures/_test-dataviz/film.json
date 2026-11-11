@@ -1,0 +1,10 @@
+{
+  "slug": "_test-dataviz",
+  "title": "film-motion chart.js 夹具：柱状图竞赛 / 折线生长 / 地图 / 力导向",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "loop": false,
+  "checks": []
+}

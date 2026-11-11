@@ -78,4 +78,4 @@ node <film-core>/scripts/new-film.mjs <slug> --recipe visual
 - **有旁白但它是从属的**：镜头定了再写词、再合成，合成之后**字词触发的事件仍然读实测时间戳**（音频对齐的规则不变，变的只是谁迁就谁）。句子比镜头长时，改词、调语速或给那一镜加时长，三选一写进 beats.md。
 - **机制**：这类片子未必有一个撑起整片的变量，mechanism.md 不在配方里；有的话照常写。视觉方向和近作对照仍然留痕（配方声明了 `divergence`）。
 
-配方声明的检查：`divergence`（视觉方向与近作对照的留痕）、`page` `mp4` `readability` `contrast` `style-guide` `laws` `still` `cover`，以及只报疑点的 `rhythm` `continuity`（镜头长度分布、静止占比、镜头交接）。不想要哪项就从 film.json 的 `checks` 里删掉。
+配方声明的检查：`divergence`（视觉方向与近作对照的留痕）、`page` `mp4` `readability` `contrast` `style-guide` `laws` `still` `cover`，以及只报疑点的 `rhythm` `continuity`（镜头长度分布、静止占比、镜头交接）和 `motion` `variety` `hook` `beatsync`（起停突变、同时运动区域、匀速段、镜头间构图变化、开头几秒、事件与拍点的偏差；没有节拍文件时 beatsync 跳过），见 film-critique `references/checks.md`。不想要哪项就从 film.json 的 `checks` 里删掉。

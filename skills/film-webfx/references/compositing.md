@@ -49,4 +49,5 @@
 主画面(2D) ─texture→ bright(阈值提取, 可 scale:0.25) ─drawTo→ 离屏 2D
             ─texture→ blur 层(scale:0.25, T4 档 2.9 ms) ─drawTo(ctx, low 放大)→ 主画布 lighter/screen 叠回
 ```
-每一遍都是独立的 `createShaderLayer`（各有一个 canvas 和一个 context）。每经过 2D 中转一次约 5 ms，比自己管理 FBO 慢，但好处是每一遍都可以单独用 `pixels()` 检查、单独跑 seamcheck。遍数多到中转成本明显时（超过 4 遍），可以在一个 context 里用 FBO 串起来，这一点本封装没有实现。三维路线的多级泛光在 `post3d.js` 里（见 three.md §4）。阈值、半径、叠回模式和强度都是风格参数，由本片的 style_guide 决定。
+上图每一遍都是独立的 `createShaderLayer`（各有一个 canvas 和一个 context）。每经过 2D 中转一次约 5 ms，好处是每一遍都可以单独用 `pixels()` 检查、单独跑 seamcheck。
+同样的链在一个 WebGL2 context 里用 FBO 串起来是 `fxchain.js` 的 `createChain`（中间目标可以是 rgba16f/32f，接法和积木见 `fxchain.md`、`stylize.md` §4）：4 遍全分辨率模糊实测 54 ms，经 2D 中转是 83.6 ms；完整泛光链（提取 → 降采样 → 横竖模糊 → 合成）全分辨率 17.7 ms（rgba16f）。三维路线的多级泛光在 `post3d.js` 里（见 three.md §4）。阈值、半径、叠回模式和强度都是风格参数，由本片的 style_guide 决定。

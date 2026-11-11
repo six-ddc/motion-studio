@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>shapes.js 夹具：morph 中间态一字排开（看有没有翻折/打结）</title>
+<style>html,body{margin:0;background:#fff;overflow:hidden}canvas{display:block}</style>
+<canvas id="stage"></canvas>
+<script type="module">
+// 静态检查页：三行 morph，每行 7 个 p = 0, 1/6 … 1；最后一行是 align:'none' + winding:'keep' 的对照（应当看到拧和翻折）。
+// trim 端点：第四行在圆上画 trim(0, k) 并在 along(k) 处打点，点必须正好落在描边末端。
+import { layoutFromURL } from './runtime/layout.js';
+import { morph, trim, along, tracePath, circle, star, polygon, pathSampler } from './runtime/shapes.js';
+const L = layoutFromURL();
+const cv = document.getElementById('stage'); cv.width = L.width; cv.height = L.height;
+const c = cv.getContext('2d');
+const W = L.width, H = L.height, cols = 7, rows = 5, cw = W / cols, rh = H / rows, r = Math.min(cw, rh) * 0.36;
+window.DURATION = 1;
+const at = (i, j) => [cw * (i + 0.5), rh * (j + 0.5)];
+const rowsDef = [];
+for (let j = 0; j < 3; j++) {
+  rowsDef.push((i) => {
+    const [x, y] = at(i, j);
+    if (j === 0) return [polygon(x, y, r, 4, Math.PI / 4), star(x, y, r * 1.1, r * 0.45, 5, -Math.PI / 2), {}];
+    if (j === 1) return [circle(x - r * 0.5, y, r * 0.42) + circle(x + r * 0.5, y, r * 0.42), circle(x - r * 0.7, y, r * 0.3) + circle(x, y, r * 0.3) + circle(x + r * 0.7, y, r * 0.3), { orphans: 'self' }];
+    return [polygon(x, y, r, 4, Math.PI / 4), star(x, y, r * 1.1, r * 0.45, 5, -Math.PI / 2), { align: 'none', winding: 'keep' }];
+  });
+}
+// 第 2 行的 b 用逆时针的方形，测绕向统一
+const ccwSquare = (x, y, s) => `M${x + s} ${y - s} L${x - s} ${y - s} L${x - s} ${y + s} L${x + s} ${y + s} Z`;
+window.seek = () => {
+  c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
+  for (let j = 0; j < 4; j++) for (let i = 0; i < cols; i++) {
+    const p = i / (cols - 1);
+    let a, b, o;
+    if (j < 3) [a, b, o] = rowsDef[j](i);
+    else { const [x, y] = at(i, j); a = circle(x, y, r * 0.8); b = ccwSquare(x, y, r * 0.7); o = {}; }
+    const m = morph(a, b, o);
+    const sh = m(p);
+    c.beginPath(); tracePath(c, sh); c.fillStyle = j === 2 ? '#d9534f55' : '#2b6cb055'; c.fill('nonzero');
+    c.lineWidth = 2; c.strokeStyle = '#111'; c.stroke();
+    // 起点标记：看对齐
+    for (const poly of sh) { c.beginPath(); c.arc(poly.pts[0][0], poly.pts[0][1], 4, 0, 7); c.fillStyle = '#e67e22'; c.fill(); }
+  }
+  for (let i = 0; i < cols; i++) {
+    const [x, y] = at(i, 4), k = (i + 0.5) / cols;
+    const S = pathSampler(circle(x, y, r * 0.8));
+    c.beginPath(); tracePath(c, S.shape); c.lineWidth = 1; c.strokeStyle = '#bbb'; c.stroke();
+    c.beginPath(); tracePath(c, trim(S, 0, k, 0.25)); c.lineWidth = 10; c.lineCap = 'butt'; c.strokeStyle = '#2b6cb0'; c.stroke();
+    const e = along(S, 0.25 + k);
+    c.beginPath(); c.arc(e.x, e.y, 6, 0, 7); c.fillStyle = '#d9534f'; c.fill();
+    c.fillStyle = '#111'; c.font = '20px monospace';
+  }
+};
+window.ready = Promise.resolve();
+</script>

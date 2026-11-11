@@ -231,7 +231,8 @@ function extract(R, s0, s1) {    // 0 ≤ s0 ≤ s1 ≤ length → 点数组（�
   return out;
 }
 
-const CACHE_S = new Map(), CACHE_O = new WeakMap();
+// 只按值缓存 d 字符串（不可变）。数组/对象不缓存：调用方改了数组内容，按引用缓存的采样器就过期了，结果会依赖求值顺序。
+const CACHE_S = new Map();
 /**
  * pathSampler(path, { tolerance }) → { length, shape, subpaths:[{start, length, closed}], at(s), slice(a, b, {as}) }
  *   at(s)        s = 沿全部子路径累计的弧长（px，子路径之间的空跳不计长度），越界夹到两端 → { x, y, angle }（angle = 所在段的切线方向，弧度）
@@ -242,7 +243,6 @@ export function pathSampler(path, opts = {}) {
   if (path && path.shape && typeof path.at === 'function') return path;
   const key = typeof path === 'string' ? `${opts.tolerance ?? ''}|${path}` : null;
   if (key && CACHE_S.has(key)) return CACHE_S.get(key);
-  if (!key && typeof path === 'object' && CACHE_O.has(path) && !opts.tolerance && !opts.closed) return CACHE_O.get(path);
   const shape = toShape(path, opts);
   const rings = shape.map(ring);
   const subpaths = [];
@@ -268,7 +268,6 @@ export function pathSampler(path, opts = {}) {
     },
   };
   if (key) { if (CACHE_S.size > 64) CACHE_S.delete(CACHE_S.keys().next().value); CACHE_S.set(key, S); }
-  else if (typeof path === 'object' && !opts.tolerance && !opts.closed) CACHE_O.set(path, S);
   return S;
 }
 
@@ -342,7 +341,7 @@ export function trim(path, start, end, offset = 0, { each = false, as = 'points'
  *   orient     true（默认）= angle 取切线方向；false = angle 恒为 0；数字 = 切线方向再加这么多弧度（素材画的是朝上/朝左时用）
  *   lookahead  px。> 0 时朝向取 [s - lookahead/2, s + lookahead/2] 两点连线的方向：折线拐角处朝向不再突跳，代价是在急弯里"切内道"
  *   wrap       显式指定是否绕回
- * path 传字符串或数组时会按值缓存采样器；最省的写法仍是加载时建好 pathSampler 再传进来。
+ * path 传 d 字符串时按值缓存采样器；传数组时每次调用都重建弧长表。最省的写法是加载时建好 pathSampler 再传进来。
  */
 export function along(path, p, { orient = true, lookahead = 0, wrap } = {}) {
   const S = pathSampler(path);
@@ -400,8 +399,8 @@ function resample(R, N) {
     for (const [, s] of cand) {
       let k = Math.round(s / step);
       if (closed) k = ((k % N) + N) % N; else k = Math.max(0, Math.min(N - 1, k));
-      if (taken[k]) continue;
-      taken[k] = 1; pos[k] = closed && k === 0 && s > L / 2 ? 0 : s;
+      if (taken[k] || (closed && k === 0 && s > L / 2)) continue;   // 落在终点附近的角绕回 0 号点会打乱顺序，让给别的点
+      taken[k] = 1; pos[k] = s;
     }
   }
   const out = new Float64Array(N * 2);

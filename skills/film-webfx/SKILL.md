@@ -1,6 +1,6 @@
 ---
 name: film-webfx
-description: 代码渲染视频里决定"一个像素是什么颜色"的那一层：WebGL/WebGL2 片元着色器（程序化噪声、fbm、domain warp、流场、光线步进 SDF）、后期处理（泛光、色差、晕影、胶片颗粒、色调映射、景深）、位移与扭曲（置换、水波、热浪、玻璃折射）、SVG 滤镜、canvas 混合模式与挖空，以及按帧契约改造的 three.js 三维（场景、材质打光、软阴影、三维运镜、GPU 闭式粒子、GLB 模型资产、三维文字可读性）。片子里出现"着色器""shader""GLSL""噪声纹理""辉光""bloom""颗粒""色散""扭曲""水波""玻璃""墨晕""烟雾""程序化背景""后期""调色""混合模式""挖空""3D""三维""three.js""立体""打光""景深""体积光""数字雨"，或要在 2D canvas、SVG 滤镜、WebGL 之间选型、估算着色器渲染耗时时使用。
+description: 代码渲染视频里决定"一个像素是什么颜色"的那一层：WebGL/WebGL2 片元着色器（程序化噪声、fbm、domain warp、流场、光线步进 SDF）、后期处理（泛光、色差、晕影、胶片颗粒、色调映射、景深、halation、变形镜头拉丝、镜头畸变）、风格化（半调、抖动、像素化、Sobel 勾线、油画 Kuwahara、ASCII）与调色（LUT、lift/gamma/gain）、多 pass 管线与可 seek 的帧间反馈（反应扩散、拖影、墨晕）、位移与扭曲（置换、水波、热浪、玻璃折射）、SVG 滤镜、canvas 混合模式与挖空，以及按帧契约改造的 three.js 三维（场景、材质打光、软阴影、三维运镜、GPU 闭式粒子、GLB 模型资产、三维文字可读性）。片子里出现"着色器""shader""GLSL""噪声纹理""辉光""bloom""颗粒""色散""扭曲""水波""玻璃""墨晕""烟雾""程序化背景""后期""调色""混合模式""挖空""3D""三维""three.js""立体""打光""景深""体积光""数字雨"，或要在 2D canvas、SVG 滤镜、WebGL 之间选型、估算着色器渲染耗时时使用。
 ---
 
 # film-webfx
@@ -9,7 +9,7 @@ description: 代码渲染视频里决定"一个像素是什么颜色"的那一�
 粒子的动力学归 film-physics，这里只管粒子怎么着色，以及闭式 GPU 粒子；画什么归 film-story。`seek(t)` 契约见 `../film-core/references/kernel.md`。
 
 参考文档：`references/shaders.md`（着色器模板，以及时间怎么传进着色器）、`references/compositing.md`（WebGL 与 2D 互相合成、预乘、纹理只上传一次与 mipmap、混合模式、泛光链）、
-`references/svg-filters.md`、`references/three.md`（三维的全部内容）、`references/models.md`（模型资产）。
+`references/svg-filters.md`、`references/three.md`（三维的全部内容）、`references/models.md`（模型资产）、`references/fxchain.md`（一个 context 里的多 pass 管线、浮点目标、帧间反馈的定步重放）、`references/stylize.md`（风格化后期与调色的效果菜单、参数、实测代价、对细线小字的影响）。
 
 ## 0. 先看代价（实测环境：SwiftShader 软件渲染，16 线程 CPU）
 
@@ -36,6 +36,7 @@ description: 代码渲染视频里决定"一个像素是什么颜色"的那一�
 5. **一次渲染只用一个固定后端**。SwiftShader 在同一台机器上逐次渲染、跨进程、WebGL1 与 WebGL2 之间都逐位一致；与 Metal 之间不一致；跨机器（不同 CPU 架构）还没测过。需要跨机器重渲的片子，给关键帧留黄金帧哈希。
 6. **sampler 必须用 `uniform1i` 设置**。封装好的 `texture()` / `setUniform` 已经按反射得到的类型分派；绕过封装直接调用 `gl.uniform*` 时，不要把 sampler 当 float 设置。
 7. **纹理缓存的键只能来自内容，不能来自时间。** `texture(..., { static:true })` / `{ key }` 命中缓存后就不再上传；如果键没有反映内容的变化，纹理会一直停在第一次上传时的样子，而 **seamcheck 的三道门照样全部通过**。所以用了缓存就要过 texcache 门（§6；规则见 compositing.md §2）。
+8. **这一帧取决于上一帧的效果只能定步重放。** 用 `fxchain.js` 的 feedback：状态定义为第 n 步 = step(第 n−1 步)、n 由 t 算出，往回 seek 从检查点重放。自己拿两张纹理每次 seek 只推一步，顺序渲染看着对，乱序和并行渲染就错（阴性对照：seamcheck 只有门 2 红，fxreplay 倒序、乱序红）。step 只能读上一步、步号和加载期确定的纹理（fxchain.md §4）。
 
 ## 2. 接入
 
@@ -94,6 +95,11 @@ GLSL 片段有 `header`（WebGL1）、`header2`（WebGL2）、`hash`、`noise`�
 | 泛光 | 提取亮部，降采样模糊，再用 `lighter` 叠回 | 1/4 分辨率模糊约 3 ms | shaders.md `bright` + compositing.md |
 | 景深、大半径模糊 | 2D `ctx.filter='blur(Npx)'`（半径 4–48px 都约 13–16 ms，结果可重复），或降采样后用 T4 | 13–16 ms | compositing.md |
 | 程序化 3D | 光线步进 SDF | T3 起步 | `assets/templates.mjs` 的 `t3_raymarch` |
+| 两遍以上的后期链（泛光、halation、变形镜头拉丝） | `fxchain.js` 的 `createChain`：一个 WebGL2 context、FBO 串联、可用 rgba16f/32f 中间目标 | 泛光整条链 17.7 ms；4 遍模糊 54 ms，经 2D 中转是 84 ms | fxchain.md、stylize.md §4 |
+| 这一帧取决于上一帧（反应扩散、拖影、墨晕、元胞） | `createChain({ feedback })`：定步推进，往回 seek 从检查点重放 | 每仿真秒 = 步数 × 每步（270×240 每步 0.58 ms）；冷启动 O(t)，夹具 30 s 要 6 s | fxchain.md §4–5、`fxglsl.js` 的 `FEEDBACK` |
+| 半调、抖动、像素化、描边、ASCII | `fxglsl.js` 的 `STYLIZE`，单 pass | 6.5–28 ms | stylize.md §2 |
+| 油画感（Kuwahara） | `STYLIZE.kuwahara` | 成本 ∝ 4(r+1)²，r=4 时 156 ms（半分辨率 39 ms） | stylize.md §2 |
+| 镜头畸变、lift/gamma/gain、3D LUT（.cube） | `STYLIZE.lens` / `grade_lgg` / `lut3d`（WebGL1 用 `lut_strip`）；`parseCube` 在 fxchain.js | 7–9 ms | stylize.md §3 |
 | 三维场景、打光、PBR、模型 | three-film（第 7 节） | 基准场景约 8 ms 起 | three.md |
 
 ## 4. 选型判据：2D / SVG 滤镜 / WebGL / three
@@ -118,9 +124,10 @@ GLSL 片段有 `header`（WebGL1）、`header2`（WebGL2）、`hash`、`noise`�
 ```bash
 node <film-core>/scripts/seamcheck.mjs --film <slug> --parallel 4   # 内核门 + 门 4（离屏层合成）
 node <film-webfx>/scripts/texcache-check.mjs --film <slug>          # 用了 texture 的 static/key 时：缓存版 vs 每次上传版逐像素比
+node <film-webfx>/scripts/fxreplay-check.mjs --film <slug>          # 用了 fxchain 的 feedback 时：检查点/重放 vs 从第 0 步算
 ```
 
-`gates.json` 登记了两道"用了才开"的门：片子加载了 `webfx.js` / `stage3d.js` / `post3d.js` 时，`accept --deep` 会跑门 4（`seam4`，与 film-motion 共用，一支片子只跑一次）；加载了 `webfx.js` 时还会跑 `texcache`。deliver 总是开启门 4，另外再跑 texcache。环境基准脚本在仓库 `dev/film-webfx/`（不随安装分发）：`bench.mjs [--quick] [--gpu]`（升级 Playwright 后要重跑；如果失败，说明环境已经不再逐次一致，先不要渲片）、`svgfilter-check.mjs`、`blur2d-check.mjs`、`bench3d.mjs`。
+`gates.json` 登记了三道"用了才开"的门：片子加载了 `webfx.js` / `fxchain.js` / `stage3d.js` / `post3d.js` 时，`accept --deep` 会跑门 4（`seam4`，与 film-motion 共用，一支片子只跑一次）；加载了 `webfx.js` 或 `fxchain.js` 时还会跑 `texcache`；加载了 `fxchain.js` 时跑 `fxreplay`（`scripts/fxreplay-check.mjs`：帧间反馈的缓存版按顺序/倒序/乱序与"每次从第 0 步算"逐像素比，fxchain.md §7）。deliver 总是开启门 4，另外再跑 texcache 和 fxreplay。环境基准脚本在仓库 `dev/film-webfx/`（不随安装分发）：`bench.mjs [--quick] [--gpu]`（升级 Playwright 后要重跑；如果失败，说明环境已经不再逐次一致，先不要渲片）、`svgfilter-check.mjs`、`blur2d-check.mjs`、`bench3d.mjs`。
 
 已知未解决的问题：WebGL1 下非 2 的幂纹理配合 `wrap:'repeat'/'mirror'` 采样结果全黑且不报错（`mipmap` 的同类情况已改成抛错，这一条还没改）；SwiftShader 跨机器一致性没测（§1.5）；`static:true` 察觉不到对源画布的原地重画（只能靠 texcache-check 事后发现）；三维方面的盲区见 three.md §9。
 

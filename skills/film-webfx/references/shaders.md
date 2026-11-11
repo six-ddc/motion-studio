@@ -51,5 +51,10 @@ R、B 通道沿径向反向偏移，G 通道不动，共三次采样。
 ### `bright` — 泛光的亮部提取（4.1 ms）
 用 `smoothstep(thresh, thresh+.1, luma)` 选出亮部。完整的泛光链见 compositing.md：先提取亮部，再在 1/4 分辨率下模糊（T4 档 270×480 只要 2.9 ms），最后用 `lighter` 叠回。
 
+### 风格化、调色、多 pass、帧间反馈
+
+半调、抖动、像素化、Sobel 描边、Kuwahara、ASCII、镜头畸变、lift/gamma/gain、3D LUT 是 `assets/runtime/fxglsl.js` 的 `STYLIZE`（参数与代价见 `stylize.md`）；
+泛光 / halation / 变形镜头拉丝这类多遍效果和反应扩散、墨晕拖影这类"这一帧取决于上一帧"的效果用 `fxchain.js`（见 `fxchain.md`）。
+
 ### `t4_blur25` — 5×5 采样模糊（41 ms）
 同样的视觉半径，在 1/4 分辨率下只要 2.9 ms。2D 的 `ctx.filter='blur(Npx)'` 在半径 4–48px 范围内都约为 13–16 ms（`dev/film-webfx/blur2d-check.mjs`），普通的高斯模糊用它更省事。

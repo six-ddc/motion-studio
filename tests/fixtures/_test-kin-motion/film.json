@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-critique 运动读数夹具（motion）",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 4,
+  "loop": false,
+  "checks": ["motion"]
+}

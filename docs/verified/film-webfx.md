@@ -256,6 +256,10 @@ reset() 单独（303 对象）                           0.4                 0.4
 
 （前两行测于 15:2x 负载 18、第三行 15:3x 负载 10，有别的渲染在跑，偏高。）
 
+**稀疏化**（scratch `test-thin.mjs`，没进夹具）：128×128 Gray-Scott rgba32f、120 步/秒、every 0.5 s、`maxCheckpoints: 3`，
+按 9 / 2.3 / 7.7 / 0.4 / 9.9 / 5.1 / 1.0 / 8.2 / 3.3 / 6.6 s 求值，读回整张浮点状态做哈希，与 `FXCHAIN_NOCACHE` 下每次从第 0 步算的哈希比：**10/10 相同**；
+稀疏化后检查点 3 张、间隔从 60 步翻到 480 步。
+
 **静帧人眼看过**：`tests/fixtures/_test-3d/out/stills.png`（9x16 四张）、`out/stills-16x9.png`；`films/weiqi-fx-open/out/stills.png`、`out/compare-weiqi-ch1-vs-fx-open.mp4`。
 
 **没测 / 没解决**：
@@ -337,3 +341,82 @@ seamcheck 直接报 `three-film: Clock / Timer 读墙钟 违反帧契约……An
   `samples 4, chroma 0.6, grain 0.025` 细环是干净实线。两项改动同时做，没拆开测各自贡献。
 - 0.5x `--preset veryfast` 小样的同一帧放大后整体发糊，用户据此评「边缘不清晰」——判清晰度不能看缩小版。
 - 逐帧增量未在本片单独测；参考 three.md §7 代价表（后期 RT MSAA 4× +53.4 ms @1080×1920）。
+
+## fxchain：多 pass 管线、帧间反馈、风格化后期与调色（2026-11-10）
+
+新增运行时 `assets/runtime/fxchain.js`（`createChain` / `createPass` / `parseCube` / `cubeCanvas` / `HEADER`）与 `assets/runtime/fxglsl.js`（`STYLIZE` 14 个、`FEEDBACK` 5 个片段；`templates.mjs` 转导出）、门脚本 `scripts/fxreplay-check.mjs`。
+环境同上（Chromium 156 headless shell，SwiftShader）。夹具 `tests/fixtures/_test-fxchain`：`scene.html`（上半 Gray-Scott 270×240 rgba32f、240 步/仿真秒；下半墨晕 540×480 rgba16f、30 步/秒；12 s）、
+`scene-stylize.html`（一条链 34 个 pass：12 种效果各写一个命名目标，mosaic pass 拼 3×4 宫格；6 s）、阴性对照 `scene-bad-noreplay.html`（`leak:'noreplay'` 往回 seek 不重放）、`scene-bad-ref.html`（`leak:'ref'` 检查点存引用）。
+
+**能力探测**（本机 WebGL2）：`EXT_color_buffer_float`、`EXT_color_buffer_half_float`、`OES_texture_float_linear` 都有；RGBA16F / RGBA32F 帧缓冲 complete；MAX_TEXTURE_SIZE 8192，纹理单元 32。降级路径（`floatFallback:'rgba8'`）在本机没有触发条件，**没实测**。
+
+**门**（`node skills/film-core/scripts/seamcheck.mjs --film _test-fxchain --films-dir tests/fixtures [--entry …]`）：
+
+| 入口 | 1a | 2 | 1b | 探针 | 其它 | exit |
+|---|---|---|---|---|---|---|
+| scene.html | ✓ 8/8 | ✓ 8/8 | ✓ 8/8 | ✓ | `--parallel 2`：门 4 全片 360 帧 0 帧不同（墙钟 89.5 s，负载高时） | 0 |
+| scene-stylize.html | ✓ | ✓ | ✓ | ✓ | Kuwahara 改写后复跑仍全过 | 0 |
+| scene-bad-noreplay.html | ✓ | **✗ 7/8**（54–68 万像素，最大 229/255） | ✓ | ✓ | 「结果依赖求值顺序」 | 1 |
+| scene-bad-ref.html | ✓ | **✗ 8/8**（64–85 万像素，最大 220/255） | ✓ | ✓ | 同上 | 1 |
+
+两个阴性对照都**只有门 2 红**：同 t 两次（第二次 n == curN，不回退）和全新页面（同样的顺序）都看不出。
+
+**fxreplay-check**（参照 = `FXCHAIN_NOCACHE`，每次 render 从第 0 步算；三个全新页面按顺序 / 倒序 / 乱序，各 12 个时刻）：
+
+```
+$ node skills/film-webfx/scripts/fxreplay-check.mjs --film _test-fxchain --films-dir tests/fixtures
+反馈 rd / ink
+  顺序  ✓ 12/12 与"从第 0 步算"逐像素一致（rd: 走 2872 步、回退 0 次、检查点 12 个；ink: 走 359 步、回退 0 次、检查点 12 个）
+  倒序  ✓ 12/12 与"从第 0 步算"逐像素一致（rd: 走 4032 步、回退 11 次、检查点 12 个；ink: 走 504 步、回退 11 次、检查点 12 个）
+  乱序  ✓ 12/12 与"从第 0 步算"逐像素一致（rd: 走 7432 步、回退 4 次、检查点 12 个；ink: 走 929 步、回退 4 次、检查点 12 个）
+✓ 通过：检查点与重放在外部观测不到                                    (exit 0)
+--entry scene-bad-noreplay.html：顺序 ✓ 12/12，倒序 ✗ 11/12，乱序 ✗ 9/12   (exit 1)
+--entry scene-bad-ref.html：     顺序 ✓ 12/12，倒序 ✗ 11/12，乱序 ✗ 10/12  (exit 1)
+```
+
+`accept.mjs --deep --film _test-fxchain`：`seam✓ fontsrc✓ fxreplay✓ texcache✓ seam4✓`，其余 –（gates.json 的 uses 触发如预期）。
+`texcache-check --entry scene-stylize.html`：两边上传次数 24 / 24，"没有命中过纹理缓存，门为空"（夹具每帧上传源画面，没用 static）。
+
+**反馈耗时**（scratch 基准，页面内 `performance.now()` + `finish()`；8:28 测，1 分钟负载 3–8）：
+
+| 状态 | 每步 |
+|---|---:|
+| 64×64 空步（一次取样） | 0.19 ms |
+| 270×240 rgba32f 空步 | 0.25 ms |
+| 270×240 rgba32f Gray-Scott | 0.58 ms |
+| 270×240 rgba16f Gray-Scott | 1.10 ms（半精度反而慢一倍） |
+| 540×960 rgba32f Gray-Scott | 2.65 ms |
+| 540×480 rgba16f 墨晕 | 2.73 ms |
+| 1080×1920 rgba16f 墨晕 | 19.1 ms |
+
+夹具冷启动（全新页面第一次 seek）：1 s 396 ms、3 s 742 ms、5 s 1121 ms、**10 s 2119 ms、30 s 5945 ms**（线性，≈0.2 s/仿真秒）；
+接着顺序下一帧 17 ms、往回半秒 107 ms、跳回 0.2 s 48 ms；全部目标与检查点显存 10 s 时 38.6 MB（22 张检查点）、30 s 时 97.9 MB（62 张）。
+同样的测量在 8:20 负载 42 时：10 s 冷启动 11.4 s、30 s 34.4 s——同机并发渲染对 SwiftShader 的影响是 3–6 倍，换机器或并发渲染时先复测。
+
+**单 pass 效果**（每项 7 次取中位，静态输入纹理，不含 2D 上传）：
+
+```
+效果           1080×1920 / 540×960 ms
+halftone     27.6 / 7      dither       7.5 / 2       pixelate     8.7 / 2.4     outline      13.9 / 3.6
+kuwahara_r2  60.9 / 15.5   kuwahara_r4  156.4 / 39    kuwahara_r6  301.1 / 73.2
+ascii        6.5 / 1.8     lens         7.9 / 2.1     grade_lgg    7.4 / 1.9     lut3d        9 / 2.4
+lut_strip(WebGL1 createShaderLayer) 7.7 / 2.1     extract 4.2 / 1.2     blur9 13.7 / 3.6
+bloom 链 rgba16f 17.7 / 4.9   rgba8 11 / 3.2      streak 链 12.7 / 3.6
+4 遍 blur9：fxchain 一个 context 54 / 13.8，4 个 createShaderLayer 经 2D 中转 83.6 / 22.5
+lut3d vs lut_strip（256×256，17³ LUT）：逐通道最大差 1/255，平均 0.073/255
+```
+
+Kuwahara 第一版（−r..r 双重循环 + 四个 if 分象限）在负载 20–40 时 r=2 / 4 / 6 为 126.9 / 346.4 / 690.9 ms，改成每圈同时取 4 个对称点后（同一负载段）61.6 / 167.2 / 312.2 ms；表里是改后低负载的数。
+
+**静帧人眼看过**（`stills.mjs`，`out/stills-feedback.png`、`out/stills-stylize.png`）：
+- 反应扩散：t=0 是 24 个种子圆点，2 s 起开始分裂成成对的斑点，11.9 s 时长成大片分裂斑（f=0.0367、k=0.0649 的"mitosis"区）。墨晕：笔迹在流场里平流、晕开、按 0.996/步衰减，抬笔段留下渐淡的拖尾。
+- 风格化宫格：12 格都不是全黑 / 全白。半调暗部点连成片、亮部点变小；抖动是 5 色调色板的棋盘过渡；Sobel 只剩圆和方块的轮廓线；ASCII 字形按亮度分级；镜头格是桶形（边缘外凸、四角黑）带 R/B 色边；halation 是亮圆外圈红晕；拉丝是横向光条。
+- 细线放大（1px / 2px 线）：半调下并进点阵、抖动 3px 格把 1px 线打成虚线、像素化 12px 把六条线并成两条糊带、Sobel 把每条线变双线、Kuwahara r4 几乎抹掉、ASCII 变字符行、畸变弯曲带色边；LGG / LUT 不动线形。写进 references/stylize.md §5。
+
+**没测 / 没解决**：
+- `floatFallback:'rgba8'` 降级路径：本机浮点扩展全有，没有触发过。
+- Metal 后端、跨机器的逐位一致性；GPU 后端下反馈重放的确定性。
+- halation 链、down4 单独的耗时（只在宫格里看过画面、在泛光链里计过总时）。
+- `maxCheckpoints` 稀疏化没有进夹具，fxreplay 覆盖不到；只在 scratch 测过一次（见上「稀疏化」）。
+- 循环片 + 反馈：不支持（门 3 必红），没做淡回的配方。
+- 反馈 step 读随时间变化的 2D 画面（按步号重画上传）没做。

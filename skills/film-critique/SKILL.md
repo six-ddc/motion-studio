@@ -1,6 +1,6 @@
 ---
 name: film-critique
-description: 代码渲染影片（films/<slug>/）的自检与评审：静帧闸门（写完代码先出几张关键静帧拼图）、成片对照图（接触印相表 contact sheet、连续帧特写条、360px 手机尺寸、循环接缝、海报帧）、客观检查（时长与音画流对账、事件对词、360px 字号与对比度、死拍/静止、旁白在说而画面已空、关键事件太短、分镜断言的画面实测、遮挡与出画）、按本片 docs/style_guide.md 判本片法律、倾向性提醒、带时间戳列出最弱的几处、写 docs/review_log.md。用户说"看看效果""出几张静帧""渲出来检查一下""自检""评审""打分""挑问题""哪里不对""有点平""接触表""review"，以及写完代码要渲、渲完要交付之前加载。只指出问题和证据帧，修法在各能力 skill；数字与出处的严格对账归 film-story；不替人做审美判断。
+description: 代码渲染影片（films/<slug>/）的自检与评审：静帧闸门（写完代码先出几张关键静帧拼图）、成片对照图（接触印相表 contact sheet、连续帧特写条、360px 手机尺寸、循环接缝、海报帧）、客观检查（时长与音画流对账、事件对词、360px 字号与对比度、死拍/静止、旁白在说而画面已空、关键事件太短、分镜断言的画面实测、遮挡与出画、运动读数：起停突变/同屏几样在动/镜头构图变没变/卡拍偏差/开头几秒）、按本片 docs/style_guide.md 判本片法律、倾向性提醒、带时间戳列出最弱的几处、写 docs/review_log.md。用户说"看看效果""出几张静帧""渲出来检查一下""自检""评审""打分""挑问题""哪里不对""有点平""缓动太硬""镜头不够变""卡点不准""接触表""review"，以及写完代码要渲、渲完要交付之前加载。只指出问题和证据帧，修法在各能力 skill；数字与出处的严格对账归 film-story；不替人做审美判断。
 ---
 
 # film-critique
@@ -74,6 +74,7 @@ node <film-critique>/scripts/transitions.mjs --film <slug>             # 每个�
 
 **看什么**（stills 和 transitions 的图都要用 Read 真的打开）：没看过脚本的人能不能说出片子在讲什么；画面有没有被读成别的东西（T7/T8，模型描述后交给人）；镜头有没有设计，即景别有没有变化、运动有没有动机（T9；镜头平铺且 style_guide 没写理由的，记为待改）；
 关键事件有没有出现（没出现可能是时刻挑错了，也可能是事件太短，交给 check.mjs 判）；style_guide 里能从静帧看出来的法律（色彩、构图、字体）。
+**运动在静帧上看不见**：缓动硬不硬、同屏几样东西在动、镜头之间构图变没变、卡点准不准、开头几秒有没有东西，要看 check.mjs 的 `motion` / `variety` / `beatsync` / `hook` 读数，并用 Read 打开它们拼的证据条（起停前后 5 帧、各镜头代表帧、拍点对事件帧、开头五帧）。读数只说明量到了什么，好不好由本片 style_guide 判。
 
 截帧用 film-core `lib/browser.mjs`（`openScene`），和渲染器是同一份代码。WAAPI 场景要设 `playbackRate=0` 冻住动画，否则 Playwright 的 `animations:'disabled'` 会调用 `finish()` 跳到终态，四个时刻截出同一帧且不报错。
 
@@ -89,11 +90,11 @@ node <film-critique>/scripts/check.mjs --film <slug> --mp4 films/<slug>/out/fina
 **查哪些项由本片声明**：这里没有一项属于页面契约（契约在 `<film-core>/references/kernel.md`）。每个子判据都要片子在 film.json 的 `checks` 里声明了才会开启；`checks` 是扁平的 id 数组，
 需要阈值时写成单键对象，如 `{"contrast": {"min": 4.5}}`。下面这些 id 只登记在 `gates.json` 里，accept --deep 和 deliver 发现声明了其中任何一个，就会跑 check.mjs：
 
-`narration mp4 truepeak loop readability contrast facts.screen style-guide laws still empty cover marks claims tilt page continuity rhythm legible`
+`narration mp4 truepeak loop readability contrast facts.screen style-guide laws still empty cover marks claims tilt page continuity rhythm legible motion variety beatsync hook mute`
 
 每个 id 会报出哪些发现（`duration.*`、`law.*`、`cover.empty`、`mark.*`、`claims.*` 等）见 `references/checks.md` 第 0 节；结论等级见第 1 节；做法、阈值、出处和局限见第 4 节。
 **跨能力依赖**：`narration` / `marks` 需要 film-narration，`tilt` 需要 film-motion，`claims` 需要 film-story。声明了却没装对应 skill 时，报「缺能力 film-X」并 exit 1，不会静默跳过。
-`legible` 必须带阈值对象；`continuity` / `rhythm` **只报 LOOK，永远不报 FAIL**；`determinism`、`mp4.asr` 列为 TODO（分别归 film-core `seamcheck.mjs` 和 film-narration `align.py --verify`）。
+`legible` 必须带阈值对象；`continuity` / `rhythm` 和运动读数 `motion` / `variety` / `beatsync` / `hook` / `mute` **只报 LOOK，永远不报 FAIL**（阈值是报疑点的起点，在 checks 对象参数里改；读数写进 checks.json 的 `kinetics`，量法、来历、代价和误报见 checks.md 第 4 节）；`determinism`、`mp4.asr` 列为 TODO（分别归 film-core `seamcheck.mjs` 和 film-narration `align.py --verify`）。
 **不支持局部运行**：`--only` / `--law` / `--claim` / `--from` / `--to` 会报"未实现"并 exit 2，要验证一条法律也得整片跑。并行跑出的结论与 `--workers 1` 逐字节相同。
 如果运行途中改了 scene.html、shotlist 或 style_guide，结论可能是新旧两版混出来的，需要重跑（`inputs.changed` 指纹已经写好，但还没接进流程）。
 带时间戳的发现会在 `out/critique/` 下保存证据帧，**要去看证据帧**；结果写在 `out/critique/checks.json`。
@@ -193,7 +194,7 @@ node <film-critique>/scripts/review_log.mjs --film <slug> --seen-by 杜 --note "
 | `scripts/fresh.mjs` | 派生品新鲜度（只提示；`--selftest` 是阴性/阳性对照） |
 | `scripts/check.mjs` | 客观检查和本片机读法律，输出 checks.json 与证据帧 |
 | `scripts/review_log.mjs` | 把 checks.json 写成 review_log 的一节，主观项默认"未经人眼确认" |
-| `scripts/_film.mjs` `_pool.mjs` `_pixels.mjs` `_anchors.mjs` `_flow.mjs` `_legible.mjs` `_inputs.mjs` | check.mjs 的内部模块，依次负责找片和截帧（用 film-core lib）、并行池、原生分辨率像素统计、锚点判定、衔接与节奏、画面中的文字、输入指纹（**尚未接入流程**）；`_cuts.mjs` 负责剪辑点来源与取帧规则，`_fresh.mjs` 负责派生品 meta 读写与过期判定 |
+| `scripts/_film.mjs` `_pool.mjs` `_pixels.mjs` `_anchors.mjs` `_flow.mjs` `_kinetics.mjs` `_legible.mjs` `_inputs.mjs` | check.mjs 的内部模块，依次负责找片和截帧（用 film-core lib）、并行池、原生分辨率像素统计、锚点判定、衔接与节奏、运动读数、画面中的文字、输入指纹（**尚未接入流程**）；`_cuts.mjs` 负责剪辑点来源与取帧规则，`_fresh.mjs` 负责派生品 meta 读写与过期判定 |
 
 所有脚本都能从任意 cwd 调用（`--film <slug>`；找片顺序为 `--films-dir` > `$FILMS_DIR` > 从 cwd 向上找 `films/`，与 film-core 相同），
 失败时 exit 非 0，并在 stderr 说明原因。依赖 Playwright（仓库根 node_modules）和 ffmpeg。

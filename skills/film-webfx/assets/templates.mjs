@@ -127,3 +127,6 @@ uniform sampler2D u_src; uniform float u_thresh;
 void main(){ vec4 c = TEX(u_src, v_uv); float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
   OUT = vec4(c.rgb * smoothstep(u_thresh, u_thresh + 0.1, l), 1.0); }`,
 };
+
+// 风格化后期 / 调色 / 多 pass 积木 / 帧间反馈的模板在运行时 fxglsl.js（片子可直接 import），这里转导出一份，名字相同
+export { STYLIZE, FEEDBACK } from './runtime/fxglsl.js';

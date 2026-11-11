@@ -145,6 +145,8 @@ WebGL 自己栅格化的字都检查不到；`new FontFace(name, ArrayBuffer)` �
 | 换 Chromium 版本后所有片子一加载就失败 | — | favicon 404 被当成了场景错误（已修复） | #14 |
 | 场景报错只显示"ffmpeg 退出码 null" | — | 被杀掉的 ffmpeg 产生的 Promise 拒绝没有被处理，盖住了真正的错误（已修复） | #42 |
 | `getContext('webgl2')` 返回 null | — | 同一个 canvas 上先取过 `webgl` | 每种 context 用各自的 canvas |
+| 三维 / 着色器画面换了机器或系统更新后变了，渲染时告警 backend/gpu/gpuDriver 不同 | — | 片子声明了 `"backend": "gpu"`，像素跟显卡和驱动走 | `render.md`「渲染后端」 |
+| 渲染直接报「缺能力：…没有起来硬件 GPU 的 WebGL」 | — | 声明了 gpu 后端，本机没有可用 GPU（不会退回软件） | 同上 |
 | 所有门全部通过，画面播放的时刻却不对 | physcheck E / 人工查看 | 影片时间到仿真时间的映射传反了，或者忘了传 | 盲区 |
 
 ## 6. 不在这里的东西（全部可选）
@@ -158,3 +160,4 @@ WebGL 自己栅格化的字都检查不到；`new FontFace(name, ArrayBuffer)` �
 - **风格与思路**：只是菜单，不是规定，见 `style-menu.md`。
 - **三画幅共用一条时间线**（`L.place()` / `L.size()`）：需要同时出多个画幅时值得用，单画幅片不需要。见 SKILL.md「画幅」。
 - 运行时怎么挂载与冻结、浏览器怎么固定版本、层间数据通道：见 `runtime.md`。
+- **渲染后端**：一次渲染（以及守它的全部门）只用一个后端，由 film.json `backend` 声明，缺省是软件的 SwiftShader。`"gpu"` 让 WebGL 走本机硬件 GPU，第 4 节的门在这个后端下照样适用，而且都在同一个后端下运行。代价是像素只能在同款显卡上复现，起不来时直接报错。什么时候值得用见 `render.md`「渲染后端」。

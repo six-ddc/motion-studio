@@ -36,7 +36,8 @@
 | `duration` | 正数或 `null` | `null` | 报错 |
 | `stage` | CSS 选择器 | `#stage` | 报错；页面里找不到对应元素也报错 |
 | `crf` | 整数 0–51 | `16` | 报错 |
-| `renderer` | `{chromium, playwright, args, ffmpeg, x264Threads}` | 首次**成功**渲染后由 render.mjs 写入；缺字段时只补缺少的部分。`chromium` 记录版本号，完整 Chrome（非 headless shell）会加上后缀 ` (full Chrome)` | 不校验；任一项与当前环境不一致时给出警告 |
+| `backend` | `"swiftshader"` / `"gpu"`，或不写 | 不写 = `swiftshader`（软件 WebGL，改动前的唯一行为，启动参数逐字不变） | 报错。`"gpu"` 的含义、代价、什么时候值得用，见 `render.md`「渲染后端」。render、seamcheck、fontsrc、preflight、freeze、kitcheck 以及所有经 `openScene` 打开本片的工具都读它，用同一组启动参数 |
+| `renderer` | `{chromium, playwright, args, ffmpeg, x264Threads}`；`backend: "gpu"` 时再加 `{backend, gpu, gpuDriver}` | 首次**成功**渲染后由 render.mjs 写入；缺字段时只补缺少的部分（后端三项不补，换后端要 `--pin-renderer`）。`chromium` 记录版本号，完整 Chrome（非 headless shell）会加上后缀 ` (full Chrome)`；`gpu` 是实测的 WebGL `UNMASKED_RENDERER`，`gpuDriver` 是驱动版本 | 不校验；任一项与当前环境不一致时给出警告（后端、显卡、驱动也算） |
 
 ## 内核读、不在 resolveFilm 里校验的字段
 

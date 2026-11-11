@@ -71,9 +71,15 @@ await main(async () => {
   const renderCmd = [node, [join(HERE, 'render.mjs'), ...base, ...(F.formats.length > 1 ? ['--all'] : [])]];
   const seamCmd = [node, [join(HERE, 'seamcheck.mjs'), ...base, '--parallel', '4', '--relaunch', '2', ...(every ? ['--every', every] : [])]];
   const show = ([b, a]) => `${b === node ? 'node' : b} ${a.join(' ')}`;
+  // 硬件 GPU 后端（film.json backend）：代价在交付输出里看得见（references/render.md「渲染后端」）
+  const backendNote = F.config.backend === 'gpu'
+    ? '⚠ 本片声明 "backend": "gpu"：WebGL 跑在本机硬件 GPU 上。像素与软件后端不同，换显卡 / 驱动 / 系统就可能不同；'
+      + '没有硬件 GPU 的机器（Linux CI、无 GPU 的容器）渲不了这支片子；收据只在同款显卡、同驱动上可复现（accept 只对账输入哈希，不重渲）\n'
+    : '';
 
   if (args.has('phone') || args.has('compare')) { platform(F); return; }
 
+  if (backendNote) process.stdout.write(backendNote);
   if (args.has('list')) {
     console.log(`交付 ${F.slug} 会依次跑：`);
     console.log(`  1 渲染     ${show(renderCmd)}`);
@@ -174,7 +180,9 @@ await main(async () => {
       manifest: `out/.render/${F.config.format}.frames.json`, outputs },
     gates: results.map(({ id, kind, result, ms, cmd, why }) => ({ id, kind, result, ...(ms != null ? { ms } : {}), ...(cmd ? { cmd } : {}), ...(why ? { why } : {}) })),
     checks: F.raw.checks ?? [],
-    env: envFingerprint(m.renderer ? { chromium: m.renderer.chromium, playwright: m.renderer.playwright, args: m.renderer.args, x264Threads: m.renderer.x264Threads } : null),
+    // 硬件后端多记 backend / gpu / gpuDriver（软件后端的收据形状与改动前相同）：收据只在同款显卡、同驱动上可对账
+    env: envFingerprint(m.renderer ? { chromium: m.renderer.chromium, playwright: m.renderer.playwright, args: m.renderer.args, x264Threads: m.renderer.x264Threads,
+      ...(m.renderer.backend ? { backend: m.renderer.backend, gpu: m.renderer.gpu, gpuDriver: m.renderer.gpuDriver } : {}) } : null),
   };
   writeReceipt(F.dir, receipt);
   const ran = results.filter((x) => x.result === 'pass').map((x) => x.id);

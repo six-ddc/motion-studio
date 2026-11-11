@@ -15,7 +15,7 @@
 //
 // 退出码：0 一致（或没用缓存）；1 有差异 / 页面报错；2 用法错误
 import { resolveFilm, parseArgs, main, fail, FILM_OPTS } from '../../film-core/lib/film.mjs';
-import { openScene, makeComparer, launchBrowser } from '../../film-core/lib/browser.mjs';
+import { openScene, makeComparer, launchBrowser, filmBackend } from '../../film-core/lib/browser.mjs';
 import { serve } from '../../film-core/lib/serve.mjs';
 
 const args = parseArgs({
@@ -43,7 +43,7 @@ await main(async () => {
   const format = args.flag('format', F.config.format);
   const fps = F.config.fps;
   const { port, close: closeServer } = await serve(F.dir);
-  const browser = await launchBrowser();
+  const browser = await launchBrowser({ backend: filmBackend(F) });
   try {
     const A = await openScene(F, format, { browser, port, initScripts: [COUNT] });
     const B = await openScene(F, format, { browser, port, initScripts: [COUNT, NOCACHE] });

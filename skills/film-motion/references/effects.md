@@ -1,6 +1,6 @@
 # 按效果检索：效果 → 运行时函数
 
-目录：转场与镜头 · 文字 · 2D 动效与编排 · 三维与后期 · 物理与粒子 · 声音与时间
+目录：转场与镜头 · 文字 · 2D 动效与编排 · 矢量形状 · 三维与后期 · 物理与粒子 · 声音与时间
 用途：从「想要的效果」反查套件里已有的实现。手写任何有名字的效果（转场、擦除、乱码解码、数字滚动、粒子、景深、辉光……）之前，先查这张表；表里已经有的就直接用或在它的基础上修改，不要重写。
 这张表只是索引，不排优劣，也不给默认选择；代价一列摘自各 skill 的代价表（ms 为 SwiftShader 下的实测值）。文件列的格式为 `skill（省略 film-）· 运行时文件`。
 
@@ -18,6 +18,11 @@
 | 透视斜看平面、2.5D 斜俯视 | `camera3d({S, elevation, distance, look, screen, yaw})` `distanceForFov` `CAMERA3D_GLSL` | motion · camera3d.js | 见 `references/camera3d.md`（用正交代替的代价是平行线不收拢） |
 | 3D 环绕、推轨、样条运镜、跟拍、手持抖、镜头切换混合；2D 标注贴 3D | `orbit` `dolly` `spline` `track` `follow` `aim` `shake` `blendTargets` → `applyShot(camera, shot, size)`；`fromCamera3d(cam, W, H)` | webfx · camrig.js | 都是 t 的纯函数；见 webfx three.md §3 |
 | 产品界面重建、放大到可读 | `placeReplica` `localRect` `zoomFor` `screenPx` `strings` | motion · uirebuild.js | 见 `references/ui-rebuild.md` |
+| 柱状图竞赛、排名交换 | `barRace(frames, {top, ease, swap, fade, fill})` → `R.at(t)`（`pos` 喂 `scaleBand().at`）、`R.maxAt(t)` | motion · chart.js | 加载期建表 20 条×30 s 约 50–70 ms；交换密集（每秒几十次）时观众跟不上任何一条 |
+| 折线/面积生长、末端跟标签 | `curvePoints(pts, 'monotone', {samples})` + `lineGrower(pts).at(p, 'x'\|'length')` → `{points, end, angle}` | motion · chart.js | monotone 要求 x 递增；按 x 推进时陡坡段笔尖变快 |
+| 坐标轴随数据伸缩、刻度淡入淡出 | `axisTicks(scale(t), n, {blend, edge})`；静态刻度 `ticks` `nice`；数值格式 `grouped si cjk percent` | motion · chart.js | 只支持 linear/pow；blend 大则同屏刻度多、标签易挤 |
+| 地图、地球自转、航线 | `projection(kind, …)` + `fit` + `geoShapes` + `greatCircle(a, b).points(n, p)` | motion · chart.js | 正射 2000 点含裁剪约 1–2 ms/帧；mercator 高纬面积放大约 1/cos²φ |
+| 关系图、力导向布局展开 | `forceLayout(nodes, links, {seed, iterations, distance, charge, record})` → `G.at(k)` + `fitPoints` | motion · chart.js | O(n²)：n=500 300 步 150–230 ms，上千个节点离线算好写成 JSON |
 | **文字** | | | |
 | 逐字交错入场/出场、kinetic typography | `layoutText` + `drawUnits` + `IN.fade/rise/drop/scale/spin/skew/track`（出场 `OUT(IN.xxx({…}))`）+ `unitProgress` | typography · textfx.js | 0.4 ms；每一句都交错的话，观众会一直在等字出完 |
 | 遮罩升起 | `drawRiseIn(ctx, glyphs, t, {progress, rise, …})` | typography · text.js | 需要行遮罩；中文超过 15 个字逐字升起会显得拖沓 |
@@ -41,6 +46,11 @@
 | 跟随某个元素的位置（锚点） | `createAnchors(canvas)` | core · anchors.js | 见 core SKILL.md |
 | 确定性随机、抖动取值 | `seeded(seed)` `hash01(...keys)` `hashRange` | core · rand.js | 纯函数 |
 | 多画幅自适应布局 | `makeLayout(formatKey)` / `layoutFromURL` → `L.size()` `L.place()` | core · layout.js | 多一层坐标换算 |
+| **矢量形状** | | | |
+| 描边生长、线条描出来、路径动画（trim path）、两端收、跑动光段 | `trim(path, start, end, offset, {each})` + `tracePath(ctx, shape)`；采样器 `pathSampler(d)` | motion · shapes.js | 每次 < 0.01 ms（Node）；整条路径匀速生长时，弧长短的子路径一闪就过 |
+| 形状变形、图形变成另一个图形（flubber 式 morph）、一个分裂成几个 | `morph(a, b, {samples, align, winding, pair, orphans})` → `m(p)` | motion · shapes.js | 建表 0.2–2.4 ms，每帧 < 0.01 ms（Node，32–1000 点）；只是逐点直线插值，差异大的形状中段会"揉"，见 `references/shapes.md` |
+| 沿路径运动并自动朝向 | `along(path, p, {orient, lookahead})` | motion · shapes.js | 纯查表；lookahead 平滑拐角的代价是急弯里切内道 |
+| 圆、圆角矩形、正多边形、星形（给 morph 当起止） | `circle` `ellipse` `roundRect` `polygon` `star` → d 字符串 | motion · shapes.js | 只给几何 |
 | **三维与后期** | | | |
 | 着色器背景、烟/云/墨流、置换、色差、调色颗粒 | `createShaderLayer(o)` + `GLSL.noise/hash`；模板 `TEMPLATES.t1_fbm/t2_warp/displace/chroma/grade/bright` | webfx · webfx.js、templates.mjs | 1080×1920 下：T0 3.6 / T1 5.3 / T2 21 / T3 40 / T5 144 ms |
 | 2D 大半径模糊、2D 景深 | `ctx.filter='blur(Npx)'` 或 `TEMPLATES.t4_blur25` | webfx · templates.mjs | 13–16 ms / 41 ms |

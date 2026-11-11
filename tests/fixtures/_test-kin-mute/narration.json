@@ -1,0 +1,22 @@
+{
+ "_note": "手写的测试时间轴（没有真跑 TTS，没有 wav 字段）。mute 只用句子的起止。",
+ "duration": 5.5,
+ "lines": [
+  {
+   "id": "s1",
+   "text": "第一句旁白在这里。",
+   "start": 0.5,
+   "end": 2.8,
+   "duration": 2.3,
+   "words": []
+  },
+  {
+   "id": "s2",
+   "text": "第二句旁白在这里。",
+   "start": 3.0,
+   "end": 5.5,
+   "duration": 2.5,
+   "words": []
+  }
+ ]
+}

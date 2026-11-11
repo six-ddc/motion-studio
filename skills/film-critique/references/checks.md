@@ -8,7 +8,7 @@
 1. 结论等级
 2. 场景要暴露什么
 3. style_guide 的 critique 块
-4. 逐项说明：采样 / 并行 / 局部运行 / inputs.changed / duration / mp4 / loop / readability / facts.screen / law pixels / law occlude·inframe / claims / tilt.ortho / continuity·rhythm / legible / law.palette / still / empty.vo / cover / hold / mark / page.errors
+4. 逐项说明：采样 / 并行 / 局部运行 / inputs.changed / duration / mp4 / loop / readability / facts.screen / law pixels / law occlude·inframe / claims / tilt.ortho / continuity·rhythm / motion·variety·beatsync·hook·mute / legible / law.palette / still / empty.vo / cover / hold / mark / page.errors
 5. 不归本 skill 的两条门
 
 ---
@@ -40,13 +40,19 @@
 | `page` | `page.errors` | |
 | `continuity`（可选疑点） | `continuity`：镜头交接处有没有元素延续下来。写 `"continuity"`，或写成 `{ "continuity": { "cuts": ["MARK label", "label.end", 12.3] } }` 声明有意的切点（这些切点不计分） | |
 | `rhythm`（可选疑点） | `rhythm.cv`（镜头长度的变异系数）、`rhythm.still`（静止占比与最长静止段）。写 `"rhythm"`，或用 `{ "rhythm": { "cuts": [...] } }` 指定镜头切点 | |
+| `motion`（可选疑点） | `motion.jerk`（非切点处的突然起停）、`motion.step`（瞬间出现 / 消失的跳变，只计数）、`motion.regions`（同时在动的互不相连区域）、`motion.uniform`（匀速段占比）、`motion`（整片运动读数）。参数见第 4 节 motion | |
+| `variety`（可选疑点） | `variety`：连续 N 个镜头构图几乎相同（景别、重心、填充率，可选主色） | |
+| `beatsync`（可选疑点） | `beatsync`：画面事件（切点、MARKS 起点、运动起步）与最近拍点的偏差分布；没有 beats.json / music.json 时 SKIP | |
+| `hook`（可选疑点） | `hook`：开头 N 秒（默认 3）里空画面持续多久、有没有变化，并拼 0 / 0.5 / 1 / 2 / 3 秒五帧 | |
+| `mute`（可选疑点） | `mute`：旁白在说、画面却既没截到文字也没变化的占比 | |
 | `legible`（要片子给阈值） | `legible`、`legible.pure`：三维场景里的文字在阅读时间窗内投影后的字高与压扁比。必须写成 `{ "legible": { "min_px": <原生像素>, "min_squash": <0–1> } }`（至少给一个阈值）；只写 `"legible"` 会直接 FAIL，因为套件没有默认阈值 | |
 
 - 「依赖的能力」一列：声明了某项检查但对应的 skill 没有安装时，check.mjs 会在启动浏览器之前报「缺能力 film-X」并 exit 1。
 - `claims.source` 疑点通过读取服务器的加载记录，判断本片加载了哪些 film-physics 运行时（film-physics 没有安装时，只认记录里标为 `from: film-physics` 的条目）。
 - 本片法律里的 HUMAN 条目写了 `from` / `to` 时，check.mjs 会保存时间窗中点的帧 `evidence-human-<id>-<t>s.png`，指明人该看哪一帧（结论仍是 HUMAN）；
   check.mjs 还会在 checks.json 旁写一份 `checks.json.meta.json` 记录新鲜度（见 `references/sampling.md` §4）。`duration.film`（film.json 的 duration 与 DURATION 对账）和 `determinism` 的 TODO 不受 `checks` 开关控制。
-- `continuity` 和 `rhythm` **只报 LOOK / PASS / SKIP，永远不会 FAIL**；`explainer` 配方不会替片子声明这两项和 `legible`。
+- `continuity`、`rhythm`、`motion`、`variety`、`beatsync`、`hook`、`mute` **只报 LOOK / PASS / SKIP，永远不会 FAIL**，`--strict` 时 LOOK 照常算失败（与其他 LOOK 同一语义）；`explainer` 配方不会替片子声明它们和 `legible`。
+  要把其中某个量当本片法律，写进 style_guide 的 critique 块（如 `max_still`）或 `laws[]` 的像素判据，走第 3 节的法律机制，这几项本身不升级。
 
 ## 1. 结论等级
 
@@ -72,7 +78,7 @@ LOOK 不是"轻一点的 FAIL"：脚本只负责把那一秒指出来（附证�
 | `window.USES_WAAPI` | 用了 WAAPI/CSS 动画时 | 截帧时冻结 playbackRate |
 | `window.probe(t)` | shotlist 有 `source: scene` 的曲线时 | 返回 `{曲线名: 数}`，用于分镜断言的画面实测（见 claims.*） |
 | `window.anchors(t)` | style_guide 有 `occlude` / `inframe` 法律，或 shotlist 有 `source: anchor` 曲线时 | 画出第 t 秒并返回本帧锚点表 `{t, items:{名:{x,y,w,h,cx,cy,n}}}`（坐标归一化、不裁剪）。由 film-core `runtime/anchors.js` 的 `A.install(seek)` 安装，语义见 film-core `references/runtime.md` §6 |
-| `window.CUT_WINDOWS` / `window.CUTS` | 有转场或硬切时建议提供 | 转场窗口 `[{label,start,end,cut}]`（film-motion `TL.transitionMarks()`）与硬切时刻。不参与任何判据，只供 transitions.mjs 取帧、contact.sh 确定特写起点（`references/sampling.md`） |
+| `window.CUT_WINDOWS` / `window.CUTS` | 有转场或硬切时建议提供 | 转场窗口 `[{label,start,end,cut}]`（film-motion `TL.transitionMarks()`）与硬切时刻。供 transitions.mjs 取帧、contact.sh 确定特写起点（`references/sampling.md`）；`motion` / `variety` / `beatsync` 用它分镜头、排除切点处的整屏变化（不参与任何 FAIL） |
 | `window.legible(t)` | checks 声明了 `legible` 时 | 画出第 t 秒并返回本帧三维场景中文字的测量表 `{t, items:{名:{em, emMax, squash, aspect, cx, cy, depth, behind, shown, opacity}}}`；`.windows()` 返回 `[{name, from, to}]`。由 film-webfx `stage3d.js` 的 `S.legible(name, obj, {from, to, em})` 安装（在加载期登记） |
 
 MARKS 各字段：`load: true` 表示该事件在叙事上是关键事件（check.mjs 输出和本节标题里叫「承重事件」）；`hold: "<理由>"` 表示这段里的疑点是故意保留的（见第 4 节 hold）；`word` 是绑定的旁白词；`text` 是事件附带的屏幕文字（用于计算阅读时间）；`nth` / `line` 见 mark.sync。**脚本只能检查已声明的事件**。MARKS 应当从同一份数据计算出来（例如年份到秒的映射函数），手抄的数值会和画面各自漂移。
@@ -249,6 +255,45 @@ MARKS 各字段：`load: true` 表示该事件在叙事上是关键事件（chec
 - `rhythm.cv`：镜头长度的来源按优先级依次为 `rhythm.cuts` 声明的切点、shotlist.md 的时间表（「起/止」列）、`window.MARKS` 的起点（事件不等于镜头，报告中会写明来源）。不足 3 个镜头时 SKIP。变异系数 < 0.25 时报 LOOK「像节拍器」。
 - `rhythm.still`：静止判定与 `still` 共用同一份结果。静止帧占比 < 25%，或者没有 ≥ 1s 的静止段时，报 LOOK「没有呼吸」。
 - 代价与何时值得：等长镜头让观众能预判下一次剪切，教学步骤、卡拍配乐要的正是这种效果；画面一直在动会让观众没有空档消化内容，而高密度、快节奏的片子可能正需要这样。
+
+### motion / variety / beatsync / hook / mute：运动读数（可选疑点）
+实现在 `scripts/_kinetics.mjs`，声明了才运行，只报 LOOK / PASS / SKIP。模型看不见运动，这几项把运动量成数字、把证据条拼出来给人看；**它们不判断好不好**，读数含义和代价写在报告里，是不是本意由本片 style_guide 决定。
+所有阈值都是"报疑点的起点"，在 checks 里写成对象修改：`{ "motion": { "jerk": 0.7, "regions": 8 } }`。读数整体写进 checks.json 的 `kinetics`（两次渲染之间可以直接比较）。
+
+**共用的量**（都在主采样上算，声明了任一项才多算）：
+- **能量**：相邻两个采样帧在 180px 缩略亮度图上的平均绝对差（0–255）。对平移的实心物体，能量正比于速度 × 边缘长度 × 反差，所以它是速度的代理，不是速度：淡入淡出、变色、出现消失都有能量，同速的两个物体大的那个能量高。逐元素的真实轨迹用 film-story 的 `motionprint.mjs --film`。
+- **静止阈值**：全片能量的 10% 分位数（噪声底）加上 max(0.01, 4% × (98% 分位数 − 噪声底))；`rest` 参数直接给绝对值。
+- **前景**：90px 宽 RGB 缩略图上与背景色（出现最多的量化色）相差 > 28 的像素，膨胀一格后找 8 邻接连通块，小于画面 0.05% 的块不计。纯色、近纯色底上准；渐变底、照片底、满屏纹理会把背景算进前景。
+- **切点**：checks 参数 `cuts`（数组，写法同 continuity）> `window.CUT_WINDOWS` / `window.CUTS` > MARKS 首尾相接处（推测）> 能量尖峰（推测：≥ 10/255、≥ 中位 ×6、≥ 两侧 2 倍）。切点前后一帧内的整屏变化不算起停。报告写明用的是哪个来源。
+
+**motion**
+- `motion.jerk`：每段"从静到动 / 从动到静"的边界，在成片帧格上细取 0.45s（成片 fps），算起停那两帧的帧差与这 0.45s 内最大帧差之比。≥ `jerk`（0.5）报 LOOK，拼 5 帧证据条（`evidence-motion-jerk-<t>s.png`，橙框是第一帧在动 / 最后一帧在动）。
+  来历：线性缓动从静止直接到全速，比值 ≈ 1（夹具实测 1.00）；cubic.inOut 1.5s 实测 0.18–0.27，0.3s 约 0.19。expo.out 的起步、弹出、急停本身就是速度不连续，也会被报出来，是不是本意由人判断。
+- `motion.step`：起停那一帧的帧差是孤立尖峰（相邻一帧 < 它的 35%），即东西瞬间出现、消失或换字，只计数，不算突变（字幕弹出实测 7.15 → 0.34，线性起步 1.21 → 1.82）。只占一个采样的瞬变同样只计数。
+- `motion.regions`：在动的前景块数（块内 ≥ 2 个像素在相邻采样间变化）。连续 ≥ 2 个采样有 ≥ `regions`（5）块同时在动时报 LOOK，并在最满的那一帧上画出青框（`evidence-motion-regions-<t>s.png`）。来历：多目标追踪的容量约 4 个（Pylyshyn & Storm 1988）。读数包括块数分布、中位数、p90、运动面积。
+- `motion.uniform`：运动段里能量保持在 ±`uniform_tol`（12%）内、持续 ≥ `uniform_min`（1.0s）的段落算匀速；匀速段占运动时间 ≥ `uniform_share`（30%）时报 LOOK。恒速读起来像机械，传送带、滚动字幕、恒速旋转要的正是这种效果。
+- `motion`：整片读数（静止帧占比与 still 同一判定、在动占比、能量中位 / p90 / 峰值及时刻、整条能量曲线 `kinetics.motion.series`）。
+- 参数：`jerk` `regions` `uniform_tol` `uniform_min` `uniform_share` `rest` `cuts` `max_points`（细取的起停点上限，默认 40，超出的记 `skipped`）。
+
+**variety**：按切点分镜头，每个镜头取中段 70% 里能量最低的一帧作代表，量前景包围盒的线性尺度（景别的代理）、前景重心、填充率、64 格主色直方图；与一串镜头的第一个比，`features` 里的每项都在阈值内（尺度 < 1.25×、重心 < 0.08、填充 < 1.3×，颜色 < 0.3 要写进 `features` 才比），镜头内也没有推拉横移（同样的阈值），就算"几乎相同"。连续 ≥ `run`（4）个这样的镜头报 LOOK，拼出这些镜头的代表帧（`evidence-variety-<t>s.png`）。
+来历：景别跳一档约是 1.5× 线性尺度，1.25 只抓明显没变的；其余几个数是起点，夹具上同构图的读数是 1.00× / 0 / 1.00×，换构图的相邻镜头最小 1.27× / 0.25 / 1.61×。不足 `run` 个镜头时 SKIP。切点来源是推测时，只有它确实是镜头分段，读数才成立。默认不比颜色，所以"同一构图只换颜色和文字"会被报出来。
+
+**beatsync**：拍点依次从 `file` 参数、`out/beats.json`、`out/music.json`、`music.json`、`beats.json` 读（字段见 film-narration `references/schemas.md`），默认 `grid: "beats"`，可改 `downbeats` / `hits`；`offset` 是加到拍点上的秒数（拍点文件按音乐文件计时、音乐不从 0 秒开始时用）。都没有时 SKIP。
+事件是声明的切点、MARKS 起点、运动起步（每段"从静到动"在成片帧格上细取到第一帧在动，分辨率 1/fps）。读数为偏差（事件 − 最近拍点）的带符号中位数、绝对值中位数、±`tol` 内的占比，每个事件一行写进 checks.json。
+"每个事件都卡拍"不是目标，只报两类离群：**整体偏移**（≥ 3 个事件且带符号中位数的绝对值 > `tol`，多半是时间轴整体错位）；**差一点卡上**（`tol` < |偏差| ≤ `near` × 拍间隔，而且本片 ≥ 50% 的事件在 `tol` 内）。证据图每行是"拍点那一帧 / 事件前一帧 / 事件第一帧"。
+`tol` 默认 0.1s，取 ITU-R BT.1359 视听不同步可察觉阈（约 +45 / −125ms）之间；`near` 默认 0.4，落在半拍附近的事件算切分，不算差一点。缓入的起步要走一段才看得出来，测到的起步会晚于设计时刻（缓得越慢晚得越多），读成"晚"之前先看证据图。
+
+**hook**：开头 `seconds`（3）秒里，第一个有内容的采样在几秒（内容量口径同 empty.vo / cover）、有几个采样在变、边缘量和前景填充从 0 秒到峰值的增长、有没有截到文字；拼 0 / N/6 / N/3 / 2N/3 / N 五帧（默认 0 / 0.5 / 1 / 2 / 3 秒，`evidence-hook-<N>s.png`）。
+空画面持续 ≥ `empty_max`（1.0s）或这 N 秒里一帧都没变时报 LOOK。首帧是不是空的归 `cover.empty`，这里只量"空多久"。来历：短视频平台以"前 3 秒"作为完播的第一道筛；1.0s 给从黑场淡入的开场留出余地。有意的黑场开场在 MARKS 上写 hold。
+
+**mute**：旁白在说的采样里，探针没截到任何文字（canvas fillText / DOM 文本）、画面也没变（与 still 同一判定）的占比。占旁白时间 ≥ `share`（25%）或连续 ≥ `run`（2.0s）时报 LOOK，证据帧取最长那段的第一帧。
+与 `empty.vo` 不重复：empty.vo 只抓"画面已空"，这里抓"画面不空，但关掉声音得不到新东西"。没有 narration.json 时 SKIP。
+
+**代价**（16 核机器，默认 `--sample-fps 10`、8 个页面）：15 秒 1920×1080 合成片只声明 `page` 时整次运行 2.0–2.3s，五项全开 3.5–4.0s；ghost-jam（23.6s）7.3s → 13.6s，demo-tls（10.9s）7.4s。主采样多出来的 RGB 缩略图和逐帧分割几乎不增加耗时，增量几乎都在 motion 的细取上（每个起停点约 14 次成片帧截图），所以起停点越多越慢，`max_points` 封顶。`--sample-fps 5` 让主采样减半，细取的成本不变，而且尖峰推测的切点会变（ghost-jam 实测 variety 由 4 个镜头变成不足 4 个而 SKIP）。
+
+**已知误报 / 漏报**：
+- 误报：文字流、粒子、群体每一行 / 每一颗都算一个运动区域（demo-tls 的 HTTP 头文字流中位 24 块）；满屏噪声或颗粒让能量一直高于静止阈值，起停一个都量不到；渐变底和照片底上前景分割失真，variety 的尺度读数随之失真。
+- 漏报：两个物体间距小于约 40px@1920（膨胀一格）会并成一块；运动重叠时，后一个动作的起步不在"从静到动"的边界上，jerk 不判；慢于静止阈值的运动、成片帧格上逐帧差都在阈值内的起停记为"没量到"；预渲染进位图、路径或 WebGL 的字，mute 看不见。
 
 ### legible / legible.pure：三维里的字读不读得出（要片子给阈值）
 fillText 拦截看不到贴图平面和 TextGeometry 里的文字，而这些文字恰恰最容易读不出来（投影后字高 ≈ 字高 × sin(夹角) / 距离，还会沿基线被挤扁）。

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-motion shapes.js + film-core 镜头组合子夹具",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 6,
+  "loop": false,
+  "checks": []
+}

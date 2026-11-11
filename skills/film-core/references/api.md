@@ -70,11 +70,12 @@
 
 | 导出 | 签名 | 说明 |
 |---|---|---|
-| `launchBrowser` | `async ({extraArgs=[]}={}) → Browser` | 启动参数固定为 `LAUNCH_ARGS`；遵循 `FILM_CHROMIUM` 环境变量。`extraArgs` 只给 dev/ 下的基准脚本用，**门和渲染都不能传** |
-| `openScene` | `async (film, format, {browser?, port?, probe=false, initScripts=[], capture='cdp', scale=1, png='fast', record=true, query={}}) → {page, context, shot(t)→PNG, advance(t), info:{duration, usesWaapi, …}, errors, probeCalls(), close(), width, height, outWidth, outHeight}` | 打开场景，等待 ready 和字体就绪，处理 USES_WAAPI。不传 port 时自带一个 serve（`record:false` 时不写加载记录，用于只读地查看别的片子）；`initScripts` 在场景脚本之前注入（探针放在这里）；`query` 是额外的 URL 参数（如 `{variant}`） |
+| `launchBrowser` | `async ({backend='swiftshader', extraArgs=[]}={}) → Browser` | 启动参数固定为 `LAUNCH_ARGS` + `BACKENDS[backend]`；遵循 `FILM_CHROMIUM` 环境变量。打开某支片子的工具传 `backend: filmBackend(F)`；`backend:'gpu'` 起不来硬件 WebGL 时抛错（`code: 'BACKEND_UNAVAILABLE'`），不退回软件。`extraArgs` 只给 dev/ 下的基准脚本用，**门和渲染都不能传** |
+| `openScene` | `async (film, format, {browser?, port?, probe=false, initScripts=[], capture='cdp', scale=1, png='fast', record=true, query={}}) → {page, context, shot(t)→PNG, advance(t), info:{duration, usesWaapi, …}, errors, probeCalls(), close(), width, height, outWidth, outHeight}` | 打开场景，等待 ready 和字体就绪，处理 USES_WAAPI。传入的 browser 后端与本片 film.json `backend` 不符时不用它，自起一个对的（stderr 提示一次）。不传 port 时自带一个 serve（`record:false` 时不写加载记录，用于只读地查看别的片子）；`initScripts` 在场景脚本之前注入（探针放在这里）；`query` 是额外的 URL 参数（如 `{variant}`） |
 | `makeComparer` | `async (browser) → {compare(pngA, pngB) → {diff, max, total, identical}, close()}` | 逐像素比较 |
-| `rendererFingerprint` | `async (browser) → {chromium, playwright, args}` | 记录进 film.json 的 renderer 字段和收据 |
-| `LAUNCH_ARGS` `CHROMIUM_ENV` `chromiumOverride` `PNG_MODES` `pngModeOf` `scaledSize` `FORMATS` | | `FORMATS` 就是 `runtime/layout.js` 里的画幅表 |
+| `rendererFingerprint` | `async (browser) → {chromium, playwright, args}`（gpu 后端另加 `backend, gpu, gpuDriver`） | 记录进 film.json 的 renderer 字段和收据 |
+| `filmBackend` / `browserBackend` / `backendMismatch` | `(F) → 'swiftshader'\|'gpu'` / `(browser) → 同上` / `(记录a, 记录b) → 原因\|null` | 本片声明的后端；某个浏览器由哪个后端起；两份渲染器记录（后端、显卡、驱动）可不可比 |
+| `LAUNCH_ARGS` `BACKENDS` `DEFAULT_BACKEND` `CHROMIUM_ENV` `chromiumOverride` `PNG_MODES` `pngModeOf` `scaledSize` `FORMATS` | | `FORMATS` 就是 `runtime/layout.js` 里的画幅表 |
 
 ### `lib/frames.mjs` · `lib/pngmix.mjs` · `lib/fontcss.mjs`
 
@@ -96,7 +97,7 @@
 | 文件 | 导出 |
 |---|---|
 | `rand.js` | `seeded(seed) → () → [0,1)`、`hash01(...keys) → [0,1)`、`hashRange(lo, hi, ...keys)`。**全套件唯一的随机实现** |
-| `motion.js` | `sat lerp clamp norm win wrap settle spring springInfo zetaForOvershoot follow SPRING pill labelAlpha camera applyCamera beatGrid`，并转导出 `seeded hash01`。`win(t, start, dur, ease)` 等于 `ease(sat((t-start)/dur))`（ease 是函数，dur ≤ 0 时为阶跃），film-motion 的 `envelope` 与 film-typography 的 `unitProgress` 都建立在它之上 |
+| `motion.js` | `sat lerp clamp norm win wrap settle spring springInfo zetaForOvershoot follow SPRING pill labelAlpha camera applyCamera beatGrid`、镜头组合子 `sequence series loopT rate freeze`，并转导出 `seeded hash01`。`win(t, start, dur, ease)` 等于 `ease(sat((t-start)/dur))`（ease 是函数，dur ≤ 0 时为阶跃），film-motion 的 `envelope` 与 film-typography 的 `unitProgress` 都建立在它之上。`sequence(list, {start, end, overlap, align, marks}) → {at(t), cuts, boundaries, windows, marks, bounds(name), list, duration}`；`series(durations, start) → {at(t), cuts, end}`；`loopT(t, period, {from, times})`、`rate(t, k, from)`、`freeze(t, at, dur)` 返回局部时间 |
 | `layout.js` | `FORMATS makeLayout(key) layoutFromURL(fallback) pick(L, by)` |
 | `anchors.js` | `createAnchors(canvas) → A`（`A.ctxRect / A.box / A.get / A.install(draw)`，语义见 runtime.md §6） |
 | `content.js` | `loadContent() → Promise<C>`（`C.text/slot/asset/color/font/param/strings`、`C.id`），纯函数 `resolveContent validateContent parseVariant variantId expandMatrix stableStringify`。Node 侧的包装在 `lib/content.mjs`（`readContentDoc contentHash muxVariant writeVariantManifest`）。schema 见 content-json.md |
@@ -226,7 +227,7 @@ Python 侧：`film.capability('film-x') → Path`（没装时 die 1）。运行�
 | `render` | 定稿渲染的参数与产物 sha256（`via: freeze` 时为 null） |
 | `gates` | 每一步的记录：`kind` 取 render / kernel / uses / checks 之一；`result` 取 pass / fail / na 之一；只有全部步骤都不是 fail 时，deliver 才写收据。`cmd` 只作记录，accept 不比对；其中不含本机绝对路径：仓库根（films/ 的父目录）下的路径写成相对路径，装 skill 那一层下的写成 `{skills}/…`，家目录下的写成 `~/…` |
 | `checks` | 交付时 film.json checks 的原样副本 |
-| `env` | 环境指纹 |
+| `env` | 环境指纹；`backend: "gpu"` 的片子另有 `backend`、`gpu`（WebGL UNMASKED_RENDERER）、`gpuDriver`，这样的收据只在同款显卡、同驱动上可复现像素（accept 只比输入哈希，不受影响） |
 | `via` / `note` | 取值为 `deliver`；或者为 `freeze`，表示由 `freeze.mjs --receipt "<理由>"` 补写、不过门的收据，理由记在 `note`，accept 显示「✓收据·免门」 |
 
 accept 的判定方法：有收据时重算 `inputs.digest`，相同显示 ✓，不同显示 ✗（列出修改、新增、删除了哪些文件，并计入退出码）；没有收据但 git 跟踪着它（索引或 HEAD 里有）时显示「✗收据被删」，计入退出码；没有收据也没有入库（或者不是 git 仓库）时显示「未交付」，不计入退出码；`--deep` 会跑全部门。

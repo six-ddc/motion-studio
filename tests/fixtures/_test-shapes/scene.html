@@ -1,0 +1,85 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>shapes.js 夹具：trim + morph + along + sequence</title>
+<style>html,body{margin:0;background:#101318;overflow:hidden}canvas{display:block}</style>
+<canvas id="stage"></canvas>
+<script type="module">
+// 一个场景同时用：sequence（镜头表，一处硬切 + 一处交棒）、trim（描边生长、两端收、循环光段）、
+// morph（方→五角星；2 个圆→3 个圆，孤儿就地长出）、along（沿路径运动并朝向）。颜色只是夹具里为了看清，不是任何默认值。
+import { sequence, win } from './runtime/motion.js';
+import { layoutFromURL } from './runtime/layout.js';
+import { pathSampler, trim, morph, along, tracePath, circle, star, polygon, roundRect } from './runtime/shapes.js';
+
+const L = layoutFromURL();
+const cv = document.getElementById('stage');
+cv.width = L.width; cv.height = L.height;
+const c = cv.getContext('2d');
+const W = L.width, H = L.height, U = L.short / 1080;
+const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
+
+// 具名时刻表：真片子里是 vo.at('字') 或节拍栅格，这里写死
+const MARK = { 长成: 2.0, 变形: 4.2 };
+const Q = sequence([
+  { name: 'grow', until: '长成' },                       // 硬切
+  { name: 'morph', until: '变形', overlap: 0.6, align: 0.5 }, // 交棒 [3.9, 4.5]
+  { name: 'split' },
+], { end: 6, marks: MARK });
+window.DURATION = Q.duration;
+window.CUTS = Q.cuts;
+window.CUT_WINDOWS = Q.windows;
+window.MARKS = Q.marks;
+
+// ---- 加载期：所有采样器和 morph 建一次 ----
+const cx = W / 2, cy = H / 2;
+const ORBIT = pathSampler(roundRect(cx - 520 * U, cy - 300 * U, 1040 * U, 600 * U, 160 * U));
+const WAVE = pathSampler(`M${cx - 600 * U} ${cy + 380 * U} C${cx - 300 * U} ${cy + 200 * U} ${cx - 200 * U} ${cy + 520 * U} ${cx} ${cy + 380 * U} S${cx + 400 * U} ${cy + 240 * U} ${cx + 600 * U} ${cy + 380 * U}`);
+const RING = pathSampler(circle(cx, cy, 230 * U));
+const STAR = star(cx, cy, 260 * U, 110 * U, 5, -Math.PI / 2);
+const SQ = polygon(cx, cy, 230 * U, 4, Math.PI / 4);
+const M1 = morph(SQ, STAR);
+const TWO = circle(cx - 220 * U, cy, 120 * U) + circle(cx + 220 * U, cy, 120 * U);
+const THREE = circle(cx - 330 * U, cy, 95 * U) + circle(cx, cy, 95 * U) + circle(cx + 330 * U, cy, 95 * U);
+const M2 = morph(TWO, THREE, { orphans: 'self' });
+const M0 = morph(STAR, TWO, { orphans: 'self' });
+
+function stroke(shape, color, w) { c.beginPath(); tracePath(c, shape); c.strokeStyle = color; c.lineWidth = w; c.lineCap = 'round'; c.lineJoin = 'round'; c.stroke(); }
+function fill(shape, color) { c.beginPath(); tracePath(c, shape); c.fillStyle = color; c.fill('nonzero'); }
+function dart(q, color) {
+  c.save(); c.translate(q.x, q.y); c.rotate(q.angle);
+  c.beginPath(); c.moveTo(34 * U, 0); c.lineTo(-20 * U, 18 * U); c.lineTo(-10 * U, 0); c.lineTo(-20 * U, -18 * U); c.closePath();
+  c.fillStyle = color; c.fill(); c.restore();
+}
+
+const PAINT = {
+  grow(e) {
+    const p = ease(win(e.local, 0.1, 1.4, (x) => x));
+    stroke(trim(RING, 0, p), '#f2c14e', 18 * U);                                   // 0→1 生长
+    const k = ease(win(e.local, 0.2, 1.6, (x) => x));
+    stroke(trim(ORBIT, k / 2, 1 - k / 2), '#5fa8d3', 6 * U);                         // 两端同时收（从满到空）
+    stroke(trim(WAVE, 0, 0.18, e.local * 0.6), '#f25f5c', 10 * U);                  // 循环光段
+    dart(along(ORBIT, e.local * 0.35, { lookahead: 60 * U }), '#e8e8e8');            // 沿圆角矩形运动
+  },
+  morph(e) {
+    const p = ease(win(e.local, 0.3, 1.6, (x) => x));
+    fill(M1(p), '#f2c14e');
+    stroke(M1(p), '#101318', 4 * U);
+    const q = along(WAVE, e.progress, { lookahead: 40 * U });
+    dart(q, '#e8e8e8');
+  },
+  split(e) {
+    const p = ease(win(e.local, 0.2, 1.2, (x) => x));
+    const sh = p < 0.5 ? M0(p * 2) : M2((p - 0.5) * 2);
+    fill(sh, '#5fa8d3');
+    stroke(trim(sh, 0, 1), '#e8e8e8', 3 * U);
+  },
+};
+
+window.seek = (t) => {
+  c.globalAlpha = 1; c.fillStyle = '#101318'; c.fillRect(0, 0, W, H);
+  for (const e of Q.at(t)) {
+    c.globalAlpha = e.enter * (1 - e.exit);
+    PAINT[e.name](e);
+  }
+  c.globalAlpha = 1;
+};
+</script>

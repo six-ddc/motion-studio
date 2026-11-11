@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>_test-fxchain scene-bad-noreplay</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style></head>
+<body><canvas id="stage"></canvas>
+<script type="module">
+// 阴性对照：leak='noreplay'（往回 seek 不重放，直接用上一次 seek 留下的纹理）
+import { build } from './fb.js';
+build('noreplay');
+</script></body></html>

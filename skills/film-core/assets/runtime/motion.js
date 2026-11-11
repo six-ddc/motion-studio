@@ -177,3 +177,137 @@ export function beatGrid(bpm, offset = 0, beatsPerBar = 4) {
     index: (t) => Math.floor((t - offset) / spb),         // 当前是第几拍
   };
 }
+
+// ---------------------------------------------------------------------------
+// 镜头组合子：把"第几秒归哪个镜头、镜头内走到哪"从手写 if 里拿出来（Remotion Sequence/Series/Loop/Freeze 的纯函数版）。
+// 只管时间，不管怎么画、怎么转场：转场 kind、缓动、离屏合成在 film-motion 的 timeline()/createStage()。
+// 全部在加载时建一次，seek 里只查表。
+// ---------------------------------------------------------------------------
+
+/**
+ * sequence(list, { start, end, overlap, align, marks }) → Q
+ *   list 每项 { name, dur } 或 { name, until }（可带任意自定义字段，比如 paint；可带 overlap/align 覆盖它**结尾那个边界**）
+ *     dur    这个镜头的名义时长（秒）
+ *     until  名义终点的绝对时刻：数字（vo.at('字')、beat.bar(4)）或字符串（交给 marks 解析）
+ *     最后一项两者都不给时，终点取 end
+ *   overlap  边界处的交棒时长（秒，默认 0 = 硬切）。窗口 = [边界 − align·overlap, 边界 + (1−align)·overlap]，窗口内两个镜头都活着
+ *   align    0..1（默认 0.5 骑在边界上；1 = 交棒在边界时刻完成；0 = 从边界开始）
+ *   marks    具名时刻表：对象 { 名: 秒 } 或函数 名 → 秒（如 (w) => vo.at(w)）
+ *
+ * Q.at(t) → [{ name, index, shot, local, progress, enter, exit }]（按镜头顺序；t 在片外时夹到首/末镜头）
+ *   local     从这个镜头第一帧可见算起的秒数（交棒窗口的起点算 0）
+ *   progress  名义区间内的进度 sat((t − 名义起点) / 名义时长)
+ *   enter     入场窗口的线性进度 0..1（没有交棒时恒为 1）；exit 出场窗口的线性进度（不在出场时为 0）。要缓动自己套
+ * Q.cuts      硬切时刻（overlap = 0 的边界），直接 window.CUTS = Q.cuts
+ * Q.boundaries 全部名义边界；Q.windows [{label, start, end, cut}]（交棒窗口，格式同 window.CUT_WINDOWS）；Q.marks [{label, start, end}]（给 window.MARKS）
+ * Q.bounds(name) → { start, end, cutIn, cutOut }；Q.list、Q.start、Q.end、Q.duration
+ * 校验不过就抛错：边界必须严格递增、有限；窗口不能越过相邻镜头的名义边界。
+ */
+export function sequence(list, { start = 0, end, overlap = 0, align = 0.5, marks } = {}) {
+  if (!Array.isArray(list) || !list.length) throw new Error('sequence: 至少一个镜头 { name, dur | until }');
+  const resolve = (v, i) => {
+    if (typeof v === 'number') return v;
+    if (typeof v === 'string') {
+      const x = typeof marks === 'function' ? marks(v) : marks?.[v];
+      if (!Number.isFinite(x)) throw new Error(`sequence: 第 ${i} 项的 until「${v}」在 marks 里找不到（或不是有限数）`);
+      return x;
+    }
+    return null;
+  };
+  const c = [start];
+  list.forEach((it, i) => {
+    let e = resolve(it.until, i);
+    if (e == null && it.dur != null) e = c[i] + it.dur;
+    if (e == null && i === list.length - 1 && end != null) e = end;
+    if (e == null) throw new Error(`sequence: 第 ${i} 项（${it.name ?? '#' + i}）要给 dur 或 until`);
+    if (!Number.isFinite(e) || !(e > c[i])) throw new Error(`sequence: 边界必须严格递增且有限，第 ${i} 项止于 ${e}，起点 ${c[i]}`);
+    c.push(e);
+  });
+  const n = list.length, T1 = c[n];
+  if (end != null && Math.abs(end - T1) > 1e-9) throw new Error(`sequence: 镜头表止于 ${T1}，与 end=${end} 不一致`);
+  const names = new Set();
+  const wins = [];
+  for (let k = 0; k < n - 1; k++) {
+    const o = list[k].overlap ?? overlap, al = list[k].align ?? align;
+    if (!(o >= 0) || !(al >= 0 && al <= 1)) throw new Error(`sequence: 边界 ${k} 的 overlap 要 ≥ 0、align 在 [0,1]`);
+    const w0 = c[k + 1] - al * o, w1 = c[k + 1] + (1 - al) * o;
+    if (w0 < c[k] - 1e-9 || w1 > c[k + 2] + 1e-9) throw new Error(`sequence: 边界 ${c[k + 1]} 的交棒窗口 [${w0}, ${w1}] 越过了相邻镜头的名义边界`);
+    wins.push({ w0, w1, cut: c[k + 1], o });
+  }
+  const shots = list.map((it, k) => {
+    const name = it.name ?? `#${k}`;
+    if (names.has(name)) throw new Error(`sequence: 镜头名「${name}」重复`);
+    names.add(name);
+    const s = { name, index: k, shot: it, cutIn: c[k], cutOut: c[k + 1],
+      start: k ? wins[k - 1].w0 : c[0], enterEnd: k ? wins[k - 1].w1 : c[0],
+      exitStart: k < n - 1 ? wins[k].w0 : T1, end: k < n - 1 ? wins[k].w1 : T1 };
+    s.dur = s.end - s.start;
+    return s;
+  });
+  const entry = (s, t) => ({
+    name: s.name, index: s.index, shot: s.shot, local: t - s.start,
+    progress: sat((t - s.cutIn) / (s.cutOut - s.cutIn)),
+    enter: s.enterEnd > s.start ? sat((t - s.start) / (s.enterEnd - s.start)) : 1,
+    exit: s.end > s.exitStart ? sat((t - s.exitStart) / (s.end - s.exitStart)) : 0,
+  });
+  const byName = new Map(shots.map((s) => [s.name, s]));
+  return {
+    list: shots, start, end: T1, duration: T1 - start,
+    boundaries: c.slice(1, -1),
+    cuts: wins.filter((w) => w.o === 0).map((w) => w.cut),
+    windows: wins.filter((w) => w.o > 0).map((w, i) => ({ label: `${shots.find((s) => s.cutOut === w.cut).name}→${shots.find((s) => s.cutIn === w.cut).name}`, start: w.w0, end: w.w1, cut: w.cut })),
+    marks: shots.map((s) => ({ label: s.name, start: s.cutIn, end: s.cutOut })),
+    bounds(name) {
+      const s = byName.get(name);
+      if (!s) throw new Error(`sequence: 没有镜头「${name}」`);
+      return { start: s.start, end: s.end, cutIn: s.cutIn, cutOut: s.cutOut };
+    },
+    at(t) {
+      if (t < shots[0].start) return [entry(shots[0], t)];
+      if (t >= T1) return [entry(shots[n - 1], t)];
+      const out = [];
+      for (const s of shots) if (t >= s.start && t < s.end) out.push(entry(s, t));
+      return out;
+    },
+  };
+}
+
+/**
+ * series(durations, start = 0) → { cuts, end, duration, at(t) → { index, local, progress } }
+ * 首尾相接的一串时长（镜头内的小节、逐条出现的列表），只有一个活跃段；t 在外面时夹到首/末段（local 不夹）。
+ * 有名字、要交棒、边界要引用旁白时刻时用 sequence。
+ */
+export function series(durations, start = 0) {
+  if (!Array.isArray(durations) || !durations.length || !durations.every((d) => d > 0 && Number.isFinite(d)))
+    throw new Error('series: durations 必须是非空的正数数组');
+  const b = [start];
+  for (const d of durations) b.push(b[b.length - 1] + d);
+  const n = durations.length;
+  return {
+    cuts: b.slice(1, -1), end: b[n], duration: b[n] - start,
+    at(t) {
+      let k = 0;
+      while (k < n - 1 && t >= b[k + 1]) k++;
+      return { index: k, local: t - b[k], progress: sat((t - b[k]) / durations[k]) };
+    },
+  };
+}
+
+/** 局部时间循环：from 之前停在 0；每 period 秒绕回；循环满 times 次后停在 period（最后一帧）。 */
+export function loopT(t, period, { from = 0, times = Infinity } = {}) {
+  if (!(period > 0)) throw new Error('loopT: period 必须 > 0');
+  const l = t - from;
+  if (l <= 0) return 0;
+  if (l >= period * times) return period;
+  return l - Math.floor(l / period) * period;
+}
+
+/** 变速：from + (t − from)·k。k = 0.5 慢放、2 快放、−1 倒放（from 处时间连续）。 */
+export const rate = (t, k, from = 0) => from + (t - from) * k;
+
+/** 定格：t 走到 at 后停 dur 秒，再接着走（之后整体晚 dur 秒）；dur 省略 = 从 at 起永远停住。 */
+export function freeze(t, at, dur = Infinity) {
+  if (t < at) return t;
+  if (t < at + dur) return at;
+  return t - dur;
+}

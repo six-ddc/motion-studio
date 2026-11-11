@@ -1,0 +1,24 @@
+{
+ "_note": "手写的 120bpm 拍点栅格（没有真跑 beats.py），字段同 film-narration references/schemas.md 的 out/beats.json",
+ "source": null,
+ "duration": 4,
+ "bpm": 120,
+ "confidence": 1,
+ "beats": [
+  0.0,
+  0.5,
+  1.0,
+  1.5,
+  2.0,
+  2.5,
+  3.0,
+  3.5,
+  4.0
+ ],
+ "downbeats": [
+  0.0,
+  2.0,
+  4.0
+ ],
+ "hits": []
+}

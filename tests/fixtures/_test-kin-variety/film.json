@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-critique 镜头变化夹具（variety）",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 6,
+  "loop": false,
+  "checks": ["variety"]
+}

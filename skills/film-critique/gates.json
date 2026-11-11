@@ -3,9 +3,10 @@
   "gates": [
     {
       "id": "critique",
-      "about": "check.mjs：页面报错、循环、可读性与对比度、画面数字对账、本片法律、静止/空画面/空封面、故意保留（MARKS hold）、承重事件、分镜断言实测、压扁、衔接与节奏、世界文字、成片时长与真峰。只查片子声明了的那几项",
+      "about": "check.mjs：页面报错、循环、可读性与对比度、画面数字对账、本片法律、静止/空画面/空封面、故意保留（MARKS hold）、承重事件、分镜断言实测、压扁、衔接与节奏、运动读数（突变/同时运动/匀速、镜头变化、卡拍、开头、静音可懂）、世界文字、成片时长与真峰。只查片子声明了的那几项",
       "when": { "checks": ["narration", "mp4", "truepeak", "loop", "readability", "contrast", "facts.screen", "style-guide",
-                           "laws", "still", "empty", "cover", "marks", "claims", "tilt", "page", "continuity", "rhythm", "legible"] },
+                           "laws", "still", "empty", "cover", "marks", "claims", "tilt", "page", "continuity", "rhythm", "legible",
+                           "motion", "variety", "beatsync", "hook", "mute"] },
       "run": ["node", "{skill}/scripts/check.mjs", "--film", "{slug}", "--films-dir", "{films}"],
       "mp4": "optional",
       "needs": ["scene"],

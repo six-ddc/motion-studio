@@ -737,3 +737,62 @@ FLIP 叠化用 plus-lighter 是照 VT 给 `::view-transition-old/new` 默认加 
 
 **camera3d.md 的来历**：weiqi-intro 的棋盘面在着色器里反投影取木纹和线，棋子、厚度、影子、气泡在 JS 里 `project()`；远处线宽加 `0.5·fp` 是它的做法。
 "提前约 0.1s 跟拍、甩镜先定落点"两条手法借自 onetake。正交 vs 透视判据表的数字见上文 §14。
+
+## shapes.js 矢量形状层（trim / morph / along / pathSampler，2026-11-10）
+
+**测了什么、怎么测**：
+- Node 数值断言 `node tests/fixtures/_test-shapes/tests/unit.mjs`（51 条，同时覆盖 film-core 的镜头组合子，见 film-core.md 同日一节）：**51 通过 0 失败**。
+  - 弧长：正方形 400、相对命令 `m l h z` 120、退化三次曲线 100、多子路径空跳不计长度、粘连数字 `M1.5.5L-1-2e1`、紧凑弧标志 `a50 50 0 01100 0`。
+  - 压平误差（tolerance 0.25）：r=100 圆周短 0.488 px（相对 0.078%），r=50 半圆 156.827 vs 157.080（0.16%），二次曲线 147.762 vs 解析值 147.894；
+    tolerance 0.01 时圆周差 0.021 px、二次曲线 147.888。相对误差与 tolerance/(3r) 的估计一致。
+  - trim：`trim(0,0.25)` 终点 (100,0)；`(0.125,0.375)` 端点 (50,0)→(100,50)；闭合路径 offset 绕过起点接成一条 (0,50)→(50,0)、长 100；开放路径绕回拆两段共 30；
+    start=end 返回空；0→1 返回闭合整条；多子路径整体模式与 each 模式的长度分别为 20 和 5+15。
+  - along：(0.625) = (50,100) 朝左；闭合路径 1.125 绕回；lookahead 在直角处给 45°（0.7854）。
+  - morph：p=0/1 与原形状偏差 0；p=1e-9 / 1−1e-9 偏差 1.0e-7 / 9.7e-8 px（角点吸附）；方→五角星 19 个中间态自交 0（对照 `align:'none', winding:'keep'` 13 处，平均位移² 27351 vs 4588）；
+    圆→逆时针方自动反转、自交 0；子路径数不同且没给 orphans 抛错；`orphans:'self'` 孤儿 p=0.5 时是以自身质心 (200,300) 为心、半径 20.000 的圆（原 40）；
+    `'nearest'` 从对面已配对子路径的质心 (100,100) 长出；带孔形状外框配外框、孔配孔；开放路径反向更近时反转。
+- 难例（scratchpad 脚本，39 个中间态 p=k/40，selfCrossings 计数）：凸↔凸、五角→八角（N=64 与 283）0/39；C 形→圆 23/39 帧（每帧 ≤1 处）；细长蛇形→圆 15/39（≤2）；8 字→圆 17/39。数字已写进 shapes.md §7。
+- 耗时（Node 22，Apple Silicon，hrtime）：pathSampler(圆 r=300) 0.031 ms、78 点；trim 0.003–0.007 ms/次；morph 建表 N=64/256/1000 为 0.20/0.38/2.39 ms，m(p) 0.0012/0.0020/0.0078 ms/次。
+- 夹具 `tests/fixtures/_test-shapes`（16x9，6 s，checks []，没有 runtime/）：scene.html 同时用 sequence（一处硬切 2.0、一处交棒窗口 [3.9, 4.5]）、trim（生长、两端收、开放路径循环光段）、
+  morph（方→五角星、五角星→2 圆→3 圆，orphans:'self'）、along（lookahead）。
+  - `node skills/film-core/scripts/seamcheck.mjs --film _test-shapes --films-dir tests/fixtures`：门 1a/1b/2 各 8 个时刻逐像素一致，探针无，**全部通过**；`--parallel 4`：180 帧 0 帧不同；`--entry strip.html`：全部通过。
+  - `node skills/film-critique/scripts/stills.mjs … --at 0.4,0.9,1.6,2.9,3.3,4.2,4.9,5.6` 与 `--entries strip.html` 出图，Read 打开逐张看：
+    strip.html 第 1、2、4 行（对齐后的 morph）七个 p 都没有翻折/打结，第 3 行（不对齐对照）中段拧成一团并自交；第 5 行 trim 描边末端与 along 打的点重合；
+    scene 里 1.6 s 开放波浪路径的光段绕回时是首尾两截，4.0–4.9 s 交棒窗口内两个镜头按 enter/exit 叠化，孤儿圆从自己的位置长出。
+  - 第一版夹具 split 镜头从 morph 的 p=0.5 起步（夹具自己的错），看图发现后改成从 0 起。
+
+**没测到**：浏览器里的逐帧耗时（只在 Node 量过）；`toPath2D` 只在夹具页面里间接走过（scene 用的是 tracePath）；与 DOM SVG `getTotalLength()` 的逐条对账；
+`'nearest'` 的视觉效果（只有数值断言）；Magic Move 里接 morph 的写法（transitions.md §4 写了接法，标注未实测）；自交路径与孔洞包含关系的更多形态；9x16/1x1 画幅。
+
+## chart.js 数据图表几何（比例尺 / 格式 / 序列 / 竞赛 / 刻度进出 / 地理 / 力导向，2026-11-10）
+
+测了什么、怎么测：Node 断言脚本 `tests/fixtures/_test-dataviz/tests/unit.mjs`（95 条，最后一段起 Chromium 比对逐位一致）；
+夹具 `tests/fixtures/_test-dataviz`（16x9，8 s，checks []，没有 runtime/）四格同屏：柱状图竞赛 + axisTicks、monotone 折线生长 + 末端点、
+内联 GeoJSON（不对称"F"形带洞 + 线 + 点）的墨卡托与旋转正射球面 + 大圆航线、力导向布局展开（40 节点，按迭代步插值）。
+
+- `node tests/fixtures/_test-dataviz/tests/unit.mjs` → `chart 单测全部通过（95 条）`。关键数字：
+  - 8 种比例尺 × 51 点 invert(s(x)) 最大相对误差 8.13e-14；clamp 两个方向截断。
+  - ticks：[0,1]×5 = 0,0.2,…,1 精确（无 0.30000000000000004）；300 个随机域步长都是 {1,2,5}×10^k、刻度都在域内；时间刻度年（每 5 年 1 月 1 日）/季度/3 小时/日、utcOffset=480 的日刻度落在当地零点；nice 线性、log、时间。
+  - band 几何（step 25 / bandwidth 20 / 首 2.5 / 末 77.5）、小数下标、反向 range；格式 千分位/万位分组/SI 进位（999950→'1.0M'）/万亿（9999.6→'1万'）/百分比/'-0.00'。
+  - stack 四种 offset 求和与相接；pie 覆盖整圈与 pad；bin 总数守恒且 =hi 进最后一箱；monotone 单调输入 32 点/段回退 0 次、不越最大值。
+  - barRace（smoothstep、duration 0.8、30 fps）：相邻两帧位置差最大 0.0624 名次（理论上界 1.5/(0.8·30)=0.0625）；pos 之和逐帧恒定（误差 < 1e-9）；
+    交换中点两条 pos 相等；二分出的交换时刻与解析解差 < 1e-3 s；Top-N 截断处 alpha 逐帧变化同一上界。
+  - axisTicks 域 [0,100]→[0,1000] 600 帧：相邻帧 alpha 最大变化 0.0804、位置 3.22 px、任何时刻 ≥ 2 个全不透明刻度。
+  - 地理：mercator (0,0)→translate、45°N 与公式一致、北在上东在右；orthographic rotate [−100,−30] 把 (100E,30N) 放到中心、对跖点 null、invert 往返 1e-9；
+    跨地平线方块裁剪后最大半径 = R；albers 1°格面积比/球面比 = 1 ± 2e-3；mercator 60°N 格子投影面积是赤道 2.03 倍（球面 0.49 倍）；fit 撑满矩形居中；北京—伦敦 8142 km、中点 62.5°N。
+  - forceLayout 同种子两次逐位相同、换种子不同、record/at 插值、fx/fy 钉住；60 节点树 300 步末步平均位移 < 0.05。
+- **跨引擎发现**：第一版用 Math.sin/cos/atan2/log/exp/`**`，Node 与 Chromium 比对不过（力导向 300 步后差 1e-13，球面裁剪点差 1 ULP）。
+  逐函数扫 4000 个输入，Node 22.23.4 与 Chromium 156.0.8078.4 不一致的比例：sin 118、cos 99、tan 143、atan 362、asin 161、atan2 549、log 320、exp 414、pow 426、`10**整数` 119、log10 692；sqrt、hypot 0。
+  改为 chart.js 内的 `dmath`（只用四则与 sqrt，系数照 fdlibm；整数次幂 10^k 用 `Number('1e'+k)`）后：对照 Node Math 最大 ULP 差 sin 1、cos 1、tan 2、atan 1、asin 2、atan2 1、log 1、exp 1、pow 5、log10 3；
+  dmath 40000 个值、以及力导向/球面裁剪/交换名次/时间刻度/单调曲线 363 个数在 Node 与 Chromium **逐位相同**。
+- `node skills/film-core/scripts/seamcheck.mjs --film _test-dataviz --films-dir tests/fixtures`：门 1a/1b/2 各 8 个时刻逐像素一致，探针无，**全部通过**（门 3 不判：非循环）。
+- `node skills/film-critique/scripts/stills.mjs --film _test-dataviz --films-dir tests/fixtures --at 0,1.6,3.333,5.333,8 --cols 2 --tile 960`，Read 打开逐张看：
+  1.6 s（B 超 A，解析解 70+15t = 90+2.5t → t=1.6）两条在 pos 0.5 完全重合；3.333 s F 与 C 在 pos≈3.5 重合、alpha 0.5，正越过 Top-4 截断；5.333 s D 与 B 在 0.5 重合、F 在 2、E 在 3、A 已淡出（与 `R.at(5.333)` 数值一致）；
+  墨卡托与球面上的 F 都正向（北上东右）、洞按 evenodd 挖空；8 s 球转到 135°E，F 只剩地平线处一条、航线起点段被地平线截断；刻度间距 183.5 px = 50×880/240；单调曲线平台段保持水平。
+  第一版夹具没把竞赛格裁剪到本格，出榜的条滑进了地图格（夹具自己的错，补了 clip）。
+- 耗时（高负载机器，load average ≈ 21，中位数；Node / Chromium）：forceLayout 300 步 n=50 1.8/2.9 ms、200 27.5/39.7、500 152/230、1000 578/872 ms；
+  barRace 20 条 × 30 s 建表 67/46 ms（扫出 1084 次交换），at(t) 8/6 µs；geoShapes 2000 点环 正射含裁剪 1.8/0.6 ms、墨卡托 0.8/0.3 ms；axisTicks 5.4/1.4 µs/次；dmath.sin 10 万次 2.3/2.2 ms（Math.sin 1.6/1.2）。
+
+**没测到**：9x16/1x1 画幅；`--parallel 4` 门 4（chart.js 不做离屏合成，没跑）；axisTicks 对 pow 比例尺的连续性（只测了 linear）；
+包住整个可见半球边缘的大多边形（已知会补错方向，写进 dataviz.md §8）；跨日界线环的"画两遍 + 裁剪"只有数值断言、没在夹具里画；
+albers 背面经线；collide 碰撞的效果；dmath 在 |x| > 1e6 的三角函数精度（Cody–Waite 约简只覆盖到这个量级）；非 V8 引擎（Firefox/Safari）的逐位一致只是按 IEEE 推断，没跑。

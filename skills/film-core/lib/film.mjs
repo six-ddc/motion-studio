@@ -37,6 +37,8 @@ export const DEFAULTS = Object.freeze({
 });
 
 const FORMAT_KEYS = ['9x16', '1x1', '16x9'];
+// 渲染后端（取值与 browser.mjs BACKENDS 的键一致；film.mjs 不 import browser.mjs，免得只读工具也拉起 playwright 解析）
+export const BACKEND_KEYS = ['swiftshader', 'gpu'];
 
 export function validateConfig(c, where) {
   const errs = [];
@@ -53,6 +55,8 @@ export function validateConfig(c, where) {
   want(c.duration === null || (typeof c.duration === 'number' && c.duration > 0), `duration 必须是正数或 null（收到 ${c.duration}）`);
   want(typeof c.stage === 'string' && c.stage.length > 0, `stage 必须是 CSS 选择器（收到 ${JSON.stringify(c.stage)}）`);
   want(Number.isInteger(c.crf) && c.crf >= 0 && c.crf <= 51, `crf 必须是 0-51 的整数（收到 ${c.crf}）`);
+  // backend 不进 DEFAULTS：缺省时 config 里就没有这个键（与改动前逐字相同），读的地方一律 browser.mjs filmBackend(F)
+  want(c.backend === undefined || BACKEND_KEYS.includes(c.backend), `backend 必须是 ${BACKEND_KEYS.join(' / ')} 之一，或不写（= swiftshader）（收到 ${JSON.stringify(c.backend)}）`);
   if (errs.length) throw new Error(`${where} 不合法：\n  - ${errs.join('\n  - ')}`);
 }
 

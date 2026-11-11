@@ -1,6 +1,6 @@
 ---
 name: film-core
-description: 用代码做视频的总入口与内核。一支片子是 films/<slug>/ 里暴露 window.seek(t) 的网页，由 Playwright 逐帧截图、ffmpeg 编码成 MP4（可再转 GIF）。本 skill 建骨架（可选配方），给出 seek(t) 纯函数契约和运动基元（弹簧、follow、种子随机、相机、节拍栅格）、三画幅布局、空间锚点，负责预览、渲染（并行、缓存、运动模糊、画幅与 fps）、确定性验收 seamcheck、字体来源门、交付 deliver 与验收 accept，并指出其他能力该找哪个 film-* skill。用户说做个视频、生成视频、GIF 动图、做段动画、短片、解说片、科普片、数据故事片、产品演示片、片头、MV、竖版短视频，改一支已有的片子，写或改 scene.html，重渲某几秒、改画幅，排查"两次渲染不一样/成片闪烁/循环接缝跳/每帧截出来一样/CSS 动画或 WAAPI 截图不动"，或交付、验收一支片子时加载，哪怕没提代码、canvas、渲染等词。
+description: 用代码做视频的总入口与内核。一支片子是 films/<slug>/ 里暴露 window.seek(t) 的网页，由 Playwright 逐帧截图、ffmpeg 编码成 MP4（可再转 GIF）。本 skill 建骨架（可选配方），给出 seek(t) 纯函数契约和运动基元（弹簧、follow、种子随机、相机、节拍栅格、镜头表组合子）、三画幅布局、空间锚点，负责预览、渲染（并行、缓存、运动模糊、画幅与 fps）、确定性验收 seamcheck、字体来源门、交付 deliver 与验收 accept，并指出其他能力该找哪个 film-* skill。用户说做个视频、生成视频、GIF 动图、做段动画、短片、解说片、科普片、数据故事片、产品演示片、片头、MV、竖版短视频，改一支已有的片子，写或改 scene.html，重渲某几秒、改画幅，排查"两次渲染不一样/成片闪烁/循环接缝跳/每帧截出来一样/CSS 动画或 WAAPI 截图不动"，或交付、验收一支片子时加载，哪怕没提代码、canvas、渲染等词。
 ---
 
 # film-core：用代码渲染视频的内核
@@ -77,7 +77,7 @@ window.ready = (async () => { /* await 字体、图片、narration.json */ })();
 </script>
 ```
 
-**组织长片。** 把时间轴拆成镜头表 `[{ start, end, paint(localT, L) }]`，seek 里找出覆盖 t 的镜头并传入 `t - start`；区间可以重叠，重叠时两个镜头同时画，用来交棒。
+**组织长片。** 把时间轴拆成镜头表（§4 的 `sequence()`），seek 里找出覆盖 t 的镜头并传入它的局部时间；区间可以重叠，重叠时两个镜头同时画，用来交棒。
 镜头边界从时间的数据来源读取（旁白时间戳、节拍栅格、仿真），不手填秒数。先把 t 映射成一个有意义的量（年份、进度、温度），画面只依赖这个量，能让长片保持可读，代价是调某一秒时要先算出它对应的量。
 
 **seek 可以返回 Promise**（例如等待 `<video>` 的 `seeked` 事件），渲染器会 await 它；代价是每帧多一次往返，能同步就同步。
@@ -99,6 +99,8 @@ window.ready = (async () => { /* await 字体、图片、narration.json */ })();
   这两个函数只在 `rand.js` 里实现一次，全套件共用。
 - **`camera(t, [[t, zoom, x, y], …], sp)` 和 `applyCamera(ctx, cam, w, h)`**：zoom 在对数空间插值（从 1 到 2 与从 2 到 4 一样快）。相机运动和画面内的运动都用弹簧时，容易让人看晕。
 - **`beatGrid(bpm, offset, beatsPerBar)`** 返回 `{ spb, at(beat), bar(n), phase(t), index(t) }`，bpm 和 offset 来自节拍检测（film-narration）。每个事件都卡在拍上会显得机械。
+- **镜头组合子**：`sequence([{ name, dur | until }], { overlap, align, marks })` 把镜头表变成 `at(t) → [{ name, local, progress, enter, exit }]`，`until` 可以写旁白时刻、节拍或 `marks` 里的名字；`overlap` 是交棒窗口，两个镜头同时活着。
+  `Q.cuts` 直接给 `window.CUTS`，`Q.windows`/`Q.marks` 给 `CUT_WINDOWS`/`MARKS`。`series(durs)` 首尾相接，`loopT` `rate` `freeze` 是局部时间映射。它们只管时间；要转场 kind、缓动和离屏合成，用 film-motion 的 `timeline()`。
 - 其他：`sat lerp clamp norm(t, from, to) win(t, start, dur, ease) wrap(t, len) labelAlpha()`。`win` 等于 `ease(sat((t-start)/dur))`，ease 传一个函数（缓动词汇表在 film-motion 的 `choreo.js`，也可以自己写）。
 
 ## 5. 画幅（`runtime/layout.js`）
@@ -141,6 +143,7 @@ node <core>/scripts/render.mjs --film <slug> --all                              
 **并行**默认开启，因为帧与帧之间没有依赖。**逐帧哈希清单**让再次渲染时打印"哪些时间段的像素变了"，用来反查一处改动影响到了哪几秒。
 **分片缓存**只重新编码像素变了的分片，缓存键里包含挂载运行时的哈希，所以运行时改动一个字节就会全部重编。
 **渲染器固定版本**：首次渲染时把浏览器和编码器的指纹写进 film.json 的 `renderer`，之后不一致就警告。全部参数和实测数字见 `references/render.md`。
+**渲染后端**默认是软件的 SwiftShader。重着色器、三维的片子可以在 film.json 写 `"backend": "gpu"`，让 WebGL 改走本机硬件 GPU（实测三维截图快 3–4 倍）。代价是像素和软件后端不同，只能在同款显卡上复现，没有 GPU 的机器渲不了，见 `references/render.md`「渲染后端」。
 **时长**以 `window.DURATION` 为准；film.json 的 `duration` 只在场景没给出时兜底。
 **GIF 动图**要先渲出 mp4 再转，用两遍调色板：`ffmpeg -i out/silent-<format>.mp4 -vf "fps=15,scale=540:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse" out/<slug>.gif`（帧率和宽度按体积取舍；GIF 每帧最多 256 色，大面积渐变会出现色带）。
 

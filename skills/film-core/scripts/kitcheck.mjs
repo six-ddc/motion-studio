@@ -17,7 +17,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveFilm, parseArgs, main, fail, FILM_OPTS, filmsDir, listFilms } from '../lib/film.mjs';
 import { serve } from '../lib/serve.mjs';
-import { launchBrowser, openScene } from '../lib/browser.mjs';
+import { launchBrowser, openScene, filmBackend } from '../lib/browser.mjs';
 import { decodePng } from '../lib/pngmix.mjs';
 import { filmKits, kitsRoot, listKits, declaredKits, frozenKitInfo } from '../lib/kits.mjs';
 
@@ -68,7 +68,7 @@ await main(async () => {
       const want = readFileSync(join(kit.dir, s.png));
       const fmt = s.format ?? F.config.format;
       const srv = await serve(F.dir, { record: false });
-      const browser = await launchBrowser();
+      const browser = await launchBrowser({ backend: filmBackend(F) });
       try {
         const S = await openScene(F, fmt, { browser, port: srv.port, record: false });
         try {

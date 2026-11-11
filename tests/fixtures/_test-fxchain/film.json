@@ -1,0 +1,11 @@
+{
+  "slug": "_test-fxchain",
+  "title": "film-webfx fxchain 验收片",
+  "format": "9x16",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 12,
+  "loop": false,
+  "checks": []
+}

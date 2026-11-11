@@ -17,7 +17,7 @@ import { resolveFilm, parseArgs, main, fail, FILM_OPTS } from '../lib/film.mjs';
 import { serve, readRuntimeRecord } from '../lib/serve.mjs';
 import { planFreeze, applyFreeze } from '../lib/freeze.mjs';
 import { kitsReceipt } from '../lib/kits.mjs';
-import { openScene, launchBrowser } from '../lib/browser.mjs';
+import { openScene, launchBrowser, filmBackend } from '../lib/browser.mjs';
 import { manifestOf } from '../lib/gates.mjs';
 import { receiptInputs, writeReceipt, envFingerprint } from '../lib/receipt.mjs';
 
@@ -47,7 +47,7 @@ await main(async () => {
     list = [...m.values()];
   } else {
     const srv = await serve(F.dir);
-    const browser = await launchBrowser();
+    const browser = await launchBrowser({ backend: filmBackend(F) });
     try {
       const S = await openScene(F, F.config.format, { browser, port: srv.port });
       await S.shot(0);

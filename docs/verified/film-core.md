@@ -177,3 +177,118 @@ film.json: slug=l1-alt variantOf=weiqi2-l1
 - 哈希清单：只改 t>1.5 的指针颜色 → `14 帧像素变了 → 1.53–2.00s`；ghost-jam 改刹车灯辉光半径 → `206 帧 → 6.83–13.70s`（24 片里编码 8 片、复用 16 片，30 秒）。
 - 分片缓存：改 0.5s 内容，4 片里编码 2 片、复用 2 片；sub=1 与 sub=4 混合拼接 vs 全量重编都是 120/120 解码相同。
   x264 线程：1 vs 16 线程最大差 61/255、4.8% 像素；4 vs 8 线程 88/120 帧不同。
+
+## 镜头组合子 sequence / series / loopT / rate / freeze（motion.js，2026-11-10）
+
+来由：docs/oss-borrowings.md #6（Remotion Sequence/Series/Loop/Freeze 的纯函数版）。只新增导出，`git diff` 对 motion.js 只有 134 行插入、0 行删除，已有函数行为不变。
+名字避开了已有运行时的导出：film-webfx camrig.js 已有 `shots()`（相机关键帧）、film-physics chain.js 已有 `chain()`，所以这里叫 `sequence` / `series`，同一场景一起 import 不撞名。
+与 film-motion `timeline()`/`cutsFrom()` 的分工：core 只回答"t 时刻哪些镜头活着、各自的局部时间和进度、交棒窗口进度"，不认转场 kind、缓动和 paint；
+timeline 要求镜头与转场交替、必须给 kind/ease，交给 createStage 做离屏合成。cutsFrom 只返回累计时刻数组，series 多了 at(t)。
+
+**测了什么**（`node tests/fixtures/_test-shapes/tests/unit.mjs` 中的 14 条，全部通过）：
+- 边界来自具名时刻：`marks: { 起: 1.2, 落: 3.0 }`、`until: '起'` → boundaries [1.2, 3]、end 5；边界直接用 `beatGrid(120, 0.5).bar(n)` → cuts [2.5]、end 4.5。
+- `cuts` 只含 overlap=0 的边界（[1.2]）；交棒窗口 b→c = [2.8, 3.2]（overlap 0.4，align 0.5），格式同 CUT_WINDOWS。
+- 硬切 t=1.2 只有 b 且 local=0；交棒中点 t=3.0：b.exit=0.5、c.enter=0.5、c.local=0.2；窗口右端开（3.2 只有 c）；片外夹到首/末镜头；progress 是名义区间进度（2.1 → 0.5）。
+- 抛错：边界非递增、具名时刻找不到、窗口越过相邻镜头名义边界、重名，4/4。
+- series([1,2,0.5], 1)：cuts [2,4]、end 4.5、at(3) = 第 1 段 local 1；loopT / rate / freeze 各 4、2、4 个取值。
+- 在浏览器里：夹具 `_test-shapes/scene.html` 的镜头表用 sequence 驱动，并把 `Q.cuts`/`Q.windows`/`Q.marks` 挂到 window.CUTS/CUT_WINDOWS/MARKS；seamcheck 门 1a/1b/2 全部通过、门 4 180 帧 0 不同（数字见 film-motion.md 同日一节）。
+- film-critique `transitions.mjs --film _test-shapes --films-dir tests/fixtures`：exit 0，输出「剪辑点来源：window.CUT_WINDOWS + window.CUTS · 2 个窗口」，#1 硬切 2.000s（中 f60），#2 转场 3.900–4.500s（cut 4.200s）· morph→split，说明 `Q.cuts`/`Q.windows` 的格式被下游原样识别。
+
+**没测到**：render.mjs 读取 `Q.cuts` 做子帧截断的实际效果（夹具 sub=1，没开运动模糊）；三个以上镜头同时活着（窗口互相重叠，代码允许）的画面；长片（> 2 分钟）镜头表的查表耗时（at(t) 是 O(镜头数) 线性扫描）。
+
+## GPU 后端：film.json `backend: "gpu"`（2026-11-10）
+
+环境：macOS 26.2（Darwin 25.2），Apple M3 Max（16 线程），Chromium 156.0.8078.4 **headless shell**（Playwright 1.64.1 默认那个，不是完整 Chrome）。
+实验脚本放在 scratchpad 里，没有入库：`launchBrowser({extraArgs})` 打开夹具，取 16 个均匀时刻，检查同 t 两次、乱序、同浏览器新页面重载、4 页并行交错、关掉浏览器重启这五项，逐帧比较截图 PNG 的 md5；后端之间的差异用 `makeComparer` 解码后逐像素比较。
+
+### 1. headless shell 认哪些参数（WebGL UNMASKED_RENDERER + CDP SystemInfo featureStatus）
+
+| 参数 | WebGL / WebGL2 renderer | 2D 光栅 / 合成 |
+|---|---|---|
+| 不加（默认） | SwiftShader（Playwright 自己就带了 `--enable-unsafe-swiftshader`） | 软件 / 软件 |
+| `--use-angle=metal`（加不加 `--use-gl=angle`、`--ignore-gpu-blocklist`、`--disable-software-rasterizer` 结果都一样） | **ANGLE Metal: Apple M3 Max** | **GPU / GPU** |
+| `--enable-gpu` | ANGLE Metal | GPU / GPU |
+| `--ignore-gpu-blocklist`、`--use-angle=gl` | SwiftShader | 软件 / 软件 |
+| `--use-angle=swiftshader` | SwiftShader | GPU 进程里的软件实现 |
+| `--use-angle=metal --disable-gpu` | SwiftShader（**静默退回**） | 软件 / 软件 |
+| `--use-angle=metal --disable-gpu-rasterization --disable-accelerated-2d-canvas` | ANGLE Metal | 软件 / GPU |
+| 上一行再加 `--disable-gpu-compositing`（**采用**） | ANGLE Metal（featureStatus `webgl=enabled_readback`） | 软件 / 软件 |
+
+结论：headless shell 能用上硬件 GPU，不需要换完整 Chrome。最后一行的 SystemInfo 设备串是 `ANGLE Metal Renderer: Apple M3 Max, Version 26.2 (Build 25C56)`，`driverVersion` 是 26.2；
+UNMASKED_RENDERER 里写的是 "Unspecified Version"，所以指纹另记 `gpuDriver`。
+
+### 2. 同机确定性（16 个时刻，五项分别是 同t / 乱序 / 重载 / 并行4 / 重启，数字是 16 帧里不同的帧数）
+
+| 夹具 | 软件（默认） | 只加 `--use-angle=metal` | 采用的四参数 |
+|---|---|---|---|
+| `_test-kernel`（纯 2D） | 0/0/0/0/0 | 0/0/0/0/0 | 0/0/0/0/0 |
+| `_test-typography`（2D 文字） | 0/0/0/0/0 | **0/1/10/9/0**，又跑两次：0/1/10/10/0、0/1/10/10/0 | 0/0/0/0/0（跑了 3 次） |
+| `_test-webfx`（片元着色器） | 0/0/0/0/0 | 0/0/0/0/0 | 0/0/0/0/0 |
+| `_test-3d`（three 场景 + 粒子 + 泛光/景深） | 0/0/0/0/0 | 0/0/0/0/0 | 0/0/0/0/0 |
+| weiqi-fx-open 拷贝（本仓库样例，三维重片） | 0/0/0/0/0 | 没测 | 0/0/0/0/0 |
+
+只开 Metal 时，2D 文字在 GPU 光栅下**不确定**：同一个浏览器里换个新页面重载、或者并行开页，结果就不一样，而跨浏览器重启反而一致。门 1b 和门 4 会报红。所以 GPU 光栅和 GPU 合成必须关掉。
+只关 GPU 光栅、保留 GPU 合成的那组参数，四个夹具的像素与采用的参数**逐位相同**；采用的参数多关一条 GPU 合成，图的是截图路径与软件后端一致。
+
+### 3. 和软件后端比像素（同一批 16 个时刻）
+
+| 夹具 | 不同帧 | 像素差 | 最大通道差 |
+|---|---|---|---|
+| `_test-kernel`，采用的参数 | 0/16 | 0 | 0 |
+| `_test-typography`，采用的参数 | 0/16 | 0 | 0 |
+| `_test-kernel`，只加 Metal | 16/16 | 0.02% | 61 |
+| `_test-typography`，只加 Metal | 12/16 | 0–1.34% | 189 |
+| `_test-webfx`，采用的参数 | 16/16 | 3.63–6.51% | 8 |
+| `_test-3d`，采用的参数 | 16/16 | 23.0–46.0% | 254 |
+| weiqi-fx-open，采用的参数 | 16/16 | 8.2–24.7% | 202 |
+
+肉眼对比 weiqi-fx-open t≈13s、`_test-3d` t=3.73s 的两张截图：是同一张图，粒子亮度和泛光边缘有细微差别，没有错位，也没有缺东西。
+
+### 4. 耗时
+
+单页测量（16 个时刻取中位数；seek = `advance(t)`，截一帧 = seek + CDP 截图 + PNG fast）：
+
+| | seek 软件 → GPU | 截一帧 软件 → GPU |
+|---|---|---|
+| `_test-3d` | 0.7 → 0.8 ms（three 的 seek 只提交命令，GPU 的活落在截图里） | 211 → 79 ms |
+| weiqi-fx-open | 288 → 19 ms | 395 → 108 ms |
+| `_test-webfx` | 49.5 → 37 ms（WebGL 读回到软件合成） | 82 → 67 ms |
+| `_test-kernel`（2D） | 0.4 → 0.4 ms | 16.7 → 16.6 ms（第一次测得 33 ms，是同时有别的负载，复测持平） |
+
+整片测量（`render.mjs --preset veryfast`，默认 worker 数）：
+
+| | 截图阶段 软件 → GPU | 墙钟 软件 → GPU |
+|---|---|---|
+| `_test-3d` 210 帧 | 20.1 → 5.9 s | 31.0 → 14.1 s |
+| weiqi-fx-open 763 帧 | 149.9 → 21.9 s | 184.8 → 41.0 s |
+| `_test-webfx` 120 帧 | 3.3 → 3.1 s | 5.0 → 5.1 s（瓶颈在编码） |
+| `_test-3d` 的 `seamcheck --parallel 4 --relaunch 2` | — | 165.4 → 40.5 s |
+
+### 5. 门（GPU 后端，用的是真实脚本，片子是声明了 `"backend": "gpu"` 的 scratch 拷贝）
+
+- `_test-3d`：`seamcheck --parallel 4 --relaunch 2`，1a/1b/2 各 8/8 ✓，门 4 210 帧 0 帧不同，门 5 与渲染清单 210 帧逐帧相同，exit 0。
+- `_test-webfx`：同样的参数，门 4 120/120 一致，门 5 一致，exit 0。
+- weiqi-fx-open 拷贝：`--parallel 4 --relaunch 3`，门 4 763 帧 0 帧不同，门 5 新跑 2 遍彼此相同，与清单也相同，exit 0（158 s）。
+- 渲染拓扑：`_test-3d` 9x16 分别用 workers 7（4 个浏览器）、1、16（每个浏览器 1 页）渲染，都是「所有帧像素不变」；16x9 用默认拓扑和 `--workers 16 --pages-per-browser 4 --no-cache` 渲染，结果也相同。
+- `deliver` 交付 `_test-webfx` 的 gpu 拷贝：render、seam、fontsrc、texcache 全部通过，收据 `env` 带上了 `backend`/`gpu`/`gpuDriver`，输出开头是代价提示。
+- 在 GPU 后端下，门 4 和门 5 实测都稳定，所以 **deliver 不强制单 worker**。
+
+### 6. 声明了但起不来
+
+把 `FILM_CHROMIUM` 指向一个包装脚本，脚本给 headless shell 加上 `--disable-gpu` 再 exec，模拟没有 GPU 的机器（表 1 里实测这种情况会**静默退回** SwiftShader）：
+render、seamcheck、font_source、preflight，以及 film-critique 的 stills（它经 openScene 打开片子），都输出「✗ 缺能力：本片 film.json 声明 "backend": "gpu"，但本机浏览器没有起来硬件 GPU 的 WebGL（webgl: ANGLE (Google, Vulkan … SwiftShader driver) …）」并以 exit 1 退出。
+同一个包装脚本跑缺省后端的片子时，seamcheck 照常全部通过。
+
+### 7. 默认路径零回归
+
+`LAUNCH_ARGS` 没有变；缺省后端下 `launchBrowser()` 拼出的参数与改动前逐字相同（包装脚本记下的实际命令行里，套件只加了 `--font-render-hinting=none`）；`rendererFingerprint` 的形状也与改动前相同。
+`node dev/test.mjs --quick` 全部符合期望；`accept.mjs` 通过，已交付片子的收据都是 ✓；`selfcheck` 通过。
+
+### 没测到
+
+- **Linux、Windows、别的显卡**（AMD、Intel、NVIDIA、其他代的 Apple 芯片）一定没测到；跨机器的像素一致性也没测，预期不一致，所以收据只在同款显卡上可复现。
+- 同一台机器换 macOS 版本（Metal 驱动随系统更新）之后像素会不会变：没测，只做了告警（`gpuDriver`）。
+- 只测了 Metal。Linux 上对应的 `--use-angle=vulkan` / `--use-gl=egl` 没实现，声明了 gpu 会报「缺能力」。
+- 长时间渲染时 GPU 降频、温控，以及显存压力下的确定性：只测过 ≤ 25 s 的片子。
+- `sub > 1` 运动模糊、`--scale` 缩小版在 GPU 后端下的表现：没单独测（截图路径与软件后端相同，预期没有差别）。
+- 其他 skill 自己起浏览器、不经 openScene 的检查（film-physics physcheck、film-typography legibility、film-assets font_proof、film-story siblings 的拼图页）仍然用软件后端。physcheck 自己和自己比，结论不受影响，但它看到的不是 gpu 像素。

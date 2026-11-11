@@ -1,7 +1,7 @@
 # render.mjs / seamcheck.mjs / preview.mjs 参数全集
 
 目录：render.mjs 参数 · seamcheck.mjs · preview.mjs · lib/browser.mjs ·
-渲染细节（缩小版、并行、截图、逐帧哈希清单、分片缓存、自适应子帧）· 渲染器钉版本
+渲染细节（缩小版、并行、截图、逐帧哈希清单、分片缓存、自适应子帧）· 渲染器钉版本 · 渲染后端（软件 / 硬件 GPU）
 
 所有脚本都可以在任意 cwd 下调用；影片目录依次取 `--films-dir`、`$FILMS_DIR`、从 cwd 向上找到的 `films/`。
 只有一部影片时可以省略 `--film <slug>`（有多部时报错并列出全部，不会自动挑选一部）。
@@ -189,10 +189,41 @@ tmix 在 sRGB（gamma）空间做平均，亮暗交界处的拖影会略微偏�
 之后任何一项不一致都会发出警告。`--pin-renderer` 主动把记录改为当前环境（应在新环境下重新检查过静帧之后再做）。
 `FILM_CHROMIUM=<可执行文件>` 用来更换浏览器构建。它是供验证用的入口，不是日常开关（理由见 `lib/browser.mjs`）。
 启动参数固定为 `--font-render-hinting=none`：**在 macOS 上实测没有差别**（CoreText 不做 hinting，none/full/medium 三档的哈希相同），
-它防的是换到 Linux（FreeType）上渲染的情况，而 Linux 和真实 GPU 恰好都还没有测过。
+它防的是换到 Linux（FreeType）上渲染的情况，而 Linux 恰好还没有测过（真实 GPU 只在一台 Mac 上测过，见下文「渲染后端」）。
 要真正固定版本，还需要项目的 `package.json` 写明确切的 playwright 版本（不带 `^`）。那是项目自己负责的事，本 skill 只负责发现不一致。
 
 像素由两层外部版本决定：浏览器（版本号**和**构建形态）与编码器（ffmpeg/x264 的版本与线程数）。实测结论如下（数字见仓库 docs/verified/film-core.md）：
 - 换浏览器**版本**时，画面通常会发生肉眼看不出的变化，但 PNG 字节会变，于是哈希全部改变、分片缓存整体重编。固定版本是为了缓存命中和可复现，与视觉保真无关。
 - headless shell 和完整 Chrome 之间唯一看得出的差异，来自**字体没有随片打包**时的系统字体回退（4–14% 的像素）；打包字体后，差异降到亚像素级。
   根本的解决办法是打包字体，渲染前用 `font_source.mjs --film <slug>` 检查；`browser.version()` 区分不出两种形态，所以指纹里把完整 Chrome 记为 `… (full Chrome)`。
+
+## 渲染后端（film.json `backend`）
+
+默认（不写 `backend`，或写 `"swiftshader"`）：WebGL 跑在 SwiftShader 上，也就是 CPU 软件光栅。这条路径在同一台机器上逐位确定，也是所有已交付片子用的后端。
+写 `"backend": "gpu"` 后，**只有 WebGL/WebGL2** 换到本机硬件 GPU（macOS 上是 ANGLE Metal），2D canvas、DOM 文字的光栅和页面合成仍然走软件。
+启动参数是 `BACKENDS.gpu`（`lib/browser.mjs`）：`--use-angle=metal --disable-gpu-rasterization --disable-accelerated-2d-canvas --disable-gpu-compositing`。
+后面三条不能省。只开 Metal 时，2D 文字光栅也会搬到 GPU 上，而 GPU 上的 2D 光栅**不确定**：同一个浏览器里换个页面重载，16 帧里有 10 帧不同，门 1b 和门 4 都会报红。
+
+**谁读它**：render、seamcheck（门 1–5）、font_source、preflight、freeze、kitcheck 都按 `launchBrowser({ backend: filmBackend(F) })` 起浏览器；
+其他 skill 的工具经 `openScene` 打开片子时，如果传进来的浏览器后端不符，openScene 会自己起一个对的后端（stderr 提示一次）。所以门、静帧、评审和渲染看到的都是同一个后端。
+preview 在你自己的浏览器里播放，任何后端下都不是渲染条件，只用来看节奏。
+
+**声明了 gpu 但起不来**（没有 GPU、Linux CI、驱动被拉黑、远程桌面）：`launchBrowser` 读取 WebGL 的 `UNMASKED_RENDERER`，发现是 SwiftShader 或其他软件实现时，
+直接报「缺能力」并以退出码 1 退出。它**不会退回软件渲染**，否则同一支片子在两台机器上像素不同，门却都通过。
+
+**指纹**：film.json `renderer`、渲染清单、收据 `env` 会多记 `backend`、`gpu`（UNMASKED_RENDERER）和 `gpuDriver`（驱动版本，macOS 上随系统更新）。
+这三项任一变化，render 都会像浏览器版本变化那样告警；门 5 遇到"清单与现在的后端、显卡或驱动不同"时不对账，只验证跨启动的一致性，并写明原因。软件后端的记录形状与以前相同。
+
+**代价**（实测：Apple M3 Max、macOS 26.2、Chromium 156 headless shell，数字见仓库 docs/verified/film-core.md「GPU 后端」）：
+
+| 代价 | 实测 / 说明 |
+|---|---|
+| 与软件后端像素不同 | 同一画面肉眼看是同一张图，但逐像素不同：着色器夹具差 3.6–7.5% 的像素，三维夹具差 23–46%，本仓库样例 weiqi-fx-open 差 8–25%，最大通道差 202–254/255。从软件后端换过来等于换了一支片子的像素，要重看静帧，用 `--pin-renderer` 改记 |
+| 跨机器不可复现 | 只在一台机器上测过。显卡、驱动、系统版本变了，像素就可能变；收据只在同款显卡、同驱动上能复现像素（accept 只对账输入哈希，不受影响） |
+| 有的机器根本跑不了 | 只实现了 macOS 的 ANGLE Metal。Linux、Windows、无 GPU 的容器会报「缺能力」 |
+| 纯 2D 片子没有收益 | 2D 光栅仍走软件，像素与软件后端逐位相同，截图耗时也持平（`_test-kernel` 单页 16.7 对 16.6 ms，`_test-typography` 33.4 对 33.6 ms）；只是平白背上上面几条代价 |
+
+**什么时候值得付**：着色器重、或者三维的片子（光线步进、体积效果、景深、大量粒子），只在这一台机器上出片，并且接受"换机器就要重新定稿"。
+实测整片截图耗时：`_test-3d` 从 20.1 s 降到 5.9 s，weiqi-fx-open（763 帧）从 149.9 s 降到 21.9 s；`_test-3d` 的 `seamcheck --parallel 4 --relaunch 2` 从 165 s 降到 40 s。
+轻着色器片子省下的时间被编码吃掉了（`_test-webfx` 整片 5.0 s 对 5.1 s），不值得付这些代价。
+

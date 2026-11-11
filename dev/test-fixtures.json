@@ -12,7 +12,8 @@
     "music": ["python", "film-narration/scripts/music.py"],
     "fontsrc": ["node", "film-core/scripts/font_source.mjs"],
     "subset": ["python", "film-assets/scripts/subset_font.py"],
-    "kitcheck": ["node", "film-core/scripts/kitcheck.mjs"]
+    "kitcheck": ["node", "film-core/scripts/kitcheck.mjs"],
+    "fxreplay": ["node", "film-webfx/scripts/fxreplay-check.mjs"]
   },
   "cases": [
     { "film": "_test-motion", "entry": "scene.html", "gate": "seamcheck", "expect": "green", "match": ["全部通过"], "source": "docs/verified/film-motion.md §1" },
@@ -80,6 +81,32 @@
     { "dir": "_test-preflight", "film": "fmt-variant", "entry": "scene.html", "gate": "preflight", "args": ["--static-only"], "expect": "red", "match": ["✗ overflow", "\\[9x16\\] content\\.json text\\.title：44 字 > maxChars 20"], "absent": ["\\[16x9\\] content\\.json text\\.title"], "why": "formats [16x9,9x16]、只有 variants.format.9x16 把标题撑到 44 字：不带 --format 要逐画幅合并查，报告标明画幅（旧版只按第一个画幅查，判绿）", "source": "film-core scripts/preflight.mjs content.json 段" },
     { "dir": "_test-preflight", "film": "fmt-variant", "entry": "scene.html", "gate": "preflight", "args": ["--static-only", "--format", "16x9"], "expect": "green", "match": ["预检通过"], "why": "给了 --format 16x9 就只查该画幅：9x16 的超长标题不拦 16x9 的渲染", "source": "film-core scripts/preflight.mjs content.json 段" },
     { "dir": "_test-preflight", "film": "pf-src", "entry": "scene.html", "gate": "preflight", "args": ["--static-only", "--variant", "hook-b"], "expect": "red", "code": 2, "match": ["没有 content\\.json", "--variant"], "absent": ["预检通过"], "why": "片子没有 content.json 却带 --variant：用法错，不能报“变体…预检通过”", "source": "film-core scripts/preflight.mjs content.json 段" },
-    { "dir": "_test-audiocheck", "film": "noaudio", "gate": "audiocheck", "expect": "red", "code": 2, "match": ["没有音轨"], "absent": ["Traceback"], "why": "成片只有画面没有音轨：输入不全，友好报错 exit 2，不抛 traceback", "source": "film-narration scripts/_audio.py decode" }
+    { "dir": "_test-audiocheck", "film": "noaudio", "gate": "audiocheck", "expect": "red", "code": 2, "match": ["没有音轨"], "absent": ["Traceback"], "why": "成片只有画面没有音轨：输入不全，友好报错 exit 2，不抛 traceback", "source": "film-narration scripts/_audio.py decode" },
+    { "film": "_test-shapes", "entry": "scene.html", "gate": "seamcheck", "expect": "green", "match": ["全部通过"], "why": "shapes.js（trim/morph/along）+ motion.js sequence 镜头表按 t 求值", "source": "docs/verified/film-motion.md「shapes.js 矢量形状层」" },
+    { "film": "_test-shapes", "entry": "scene.html", "gate": "seamcheck", "args": ["--parallel", "4"], "expect": "green", "match": ["0 帧不同"], "why": "门 4：morph/trim 每帧新建数组，无跨帧状态", "source": "docs/verified/film-motion.md「shapes.js 矢量形状层」" },
+    { "film": "_test-shapes", "entry": "strip.html", "gate": "seamcheck", "expect": "green", "match": ["全部通过"], "why": "morph 中间态排开的静态检查页", "source": "docs/verified/film-motion.md「shapes.js 矢量形状层」" },
+    { "film": "_test-shapes", "entry": "scene.html", "gate": "transitions", "expect": "green", "match": ["剪辑点来源：window\\.CUT_WINDOWS \\+ window\\.CUTS", "转场 3\\.900–4\\.500s"], "why": "sequence 的 Q.cuts / Q.windows 被下游原样识别", "source": "docs/verified/film-core.md「镜头组合子」" },
+    { "film": "_test-dataviz", "entry": "scene.html", "gate": "seamcheck", "expect": "green", "match": ["全部通过"], "why": "chart.js 的竞赛、折线、地图、力导向按 t 求值", "source": "docs/verified/film-motion.md chart.js 节" },
+    { "film": "_test-kin-motion", "entry": "scene.html", "gate": "check", "args": ["--strict"], "expect": "green", "match": ["PASS\\s+motion\\.jerk", "PASS\\s+motion\\.regions", "PASS\\s+motion\\.uniform", "LOOK 0"], "why": "cubic 缓入缓出 + 声明的切点（3.0s 整屏换底色）：起停有渐变、切点不算突变", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-motion", "entry": "bad-linear.html", "gate": "check", "args": ["--strict"], "expect": "red", "match": ["LOOK\\s+motion\\.jerk\\s+2/2 处起停是突变.*0\\.53s 起步.*2\\.00s 停住", "LOOK\\s+motion\\.uniform", "FAIL 0\\b"], "why": "线性硬起硬停：点名 0.53s 起步（f16 第一帧在动）、2.00s 停住；1.5s 匀速", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-motion", "entry": "bad-linear.html", "gate": "check", "expect": "green", "match": ["LOOK\\s+motion\\.jerk", "FAIL 0\\b"], "why": "不加 --strict 时 LOOK 不改退出码：运动读数永不 FAIL", "source": "film-critique references/checks.md 第 0 节" },
+    { "film": "_test-kin-motion", "entry": "bad-swarm.html", "gate": "check", "args": ["--strict"], "expect": "red", "match": ["LOOK\\s+motion\\.regions.*最满 1\\.60s：6 块", "PASS\\s+motion\\.jerk"], "why": "六块同时在动（缓入缓出）：只报同时运动区域", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-variety", "entry": "scene.html", "gate": "check", "args": ["--strict"], "expect": "green", "match": ["PASS\\s+variety\\s+6 个镜头", "LOOK 0"], "why": "六个镜头景别 / 位置相邻都不同", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-variety", "entry": "bad-same.html", "gate": "check", "args": ["--strict"], "expect": "red", "match": ["LOOK\\s+variety.*#1–#6 0\\.00s–6\\.00s", "FAIL 0\\b"], "why": "六个镜头构图完全相同、只换颜色：连续 6 个镜头几乎相同", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-beat", "entry": "scene.html", "gate": "check", "args": ["--strict"], "expect": "green", "match": ["PASS\\s+beatsync\\s+7 个画面事件.*偏差中位 \\+0ms", "LOOK 0"], "why": "七个方块都在拍上出现", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-beat", "entry": "bad-late.html", "gate": "check", "args": ["--strict"], "expect": "red", "match": ["LOOK\\s+beatsync.*偏差中位 \\+167ms.*整体偏移"], "why": "全部晚 150ms（帧格上第一帧在 +167ms）：整体偏移", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-beat", "entry": "bad-miss.html", "gate": "check", "args": ["--strict"], "expect": "red", "match": ["LOOK\\s+beatsync.*差一点.*2\\.17s 运动起步（拍 2\\.00s，\\+167ms）"], "why": "只有第 4 个事件晚 150ms：点名那一个", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-hook", "entry": "scene.html", "gate": "check", "args": ["--strict"], "expect": "green", "match": ["PASS\\s+hook\\s+开头 3s：首帧即有内容", "LOOK 0"], "why": "首帧即有内容且在转", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-hook", "entry": "bad-blank.html", "gate": "check", "args": ["--strict"], "expect": "red", "match": ["LOOK\\s+hook\\s+开头 3s：一直是空画面"], "why": "前 3.2 秒全黑", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-mute", "entry": "scene.html", "gate": "check", "args": ["--strict"], "expect": "green", "match": ["PASS\\s+mute", "LOOK 0"], "why": "旁白在说时有字幕", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-kin-mute", "entry": "bad-dead.html", "gate": "check", "args": ["--strict"], "expect": "red", "match": ["LOOK\\s+mute.*既无字又不动 100%"], "why": "旁白在说时画面既无字也不动", "source": "docs/verified/film-critique.md 运动读数一节" },
+    { "film": "_test-fxchain", "entry": "scene.html", "gate": "seamcheck", "expect": "green", "match": ["全部通过"], "why": "两路帧间反馈（反应扩散、墨晕）按 t 求值", "source": "docs/verified/film-webfx.md fxchain 段" },
+    { "film": "_test-fxchain", "entry": "scene-stylize.html", "gate": "seamcheck", "expect": "green", "match": ["全部通过"], "why": "多 pass + 风格化宫格", "source": "docs/verified/film-webfx.md fxchain 段" },
+    { "film": "_test-fxchain", "entry": "scene-bad-noreplay.html", "gate": "seamcheck", "expect": "red", "match": ["结果依赖求值顺序"], "absent": ["seek 不可重复", "两次加载结果不同"], "why": "反馈往回 seek 不重放、直接用上次 seek 留下的纹理：只有门 2 红", "source": "docs/verified/film-webfx.md fxchain 段" },
+    { "film": "_test-fxchain", "entry": "scene-bad-ref.html", "gate": "seamcheck", "expect": "red", "match": ["结果依赖求值顺序"], "absent": ["seek 不可重复", "两次加载结果不同"], "why": "反馈检查点存引用（下一步就被覆盖）：只有门 2 红", "source": "docs/verified/film-webfx.md fxchain 段" },
+    { "film": "_test-fxchain", "entry": "scene.html", "gate": "seamcheck", "args": ["--parallel", "2"], "expect": "green", "match": ["0 帧不同"], "slow": true, "why": "反馈场景门 4", "source": "docs/verified/film-webfx.md fxchain 段" },
+    { "film": "_test-fxchain", "entry": "scene.html", "gate": "fxreplay", "expect": "green", "match": ["✓ 通过：检查点与重放在外部观测不到"], "why": "检查点与重放对外不可观测", "source": "docs/verified/film-webfx.md fxchain 段" },
+    { "film": "_test-fxchain", "entry": "scene-bad-noreplay.html", "gate": "fxreplay", "expect": "red", "match": ["倒序  ✗", "乱序  ✗", "反馈的检查点 / 重放改变了画面"], "why": "往回 seek 不重放：顺序过、倒序/乱序红", "source": "docs/verified/film-webfx.md fxchain 段" },
+    { "film": "_test-fxchain", "entry": "scene-bad-ref.html", "gate": "fxreplay", "expect": "red", "match": ["倒序  ✗", "乱序  ✗", "反馈的检查点 / 重放改变了画面"], "why": "检查点存引用：顺序过、倒序/乱序红", "source": "docs/verified/film-webfx.md fxchain 段" }
   ]
 }

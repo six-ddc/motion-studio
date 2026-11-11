@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-critique 卡拍读数夹具（beatsync）",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 4,
+  "loop": false,
+  "checks": ["beatsync"]
+}

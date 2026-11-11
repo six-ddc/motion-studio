@@ -6,12 +6,34 @@ import { join } from 'node:path';
 import { serve } from './serve.mjs';
 import { playwright, playwrightVersion } from './env.mjs';
 import { FORMATS } from '../assets/runtime/layout.js';
+import { BACKEND_KEYS } from './film.mjs';
 
 export { FORMATS };
 
 // 固定的启动参数：像素由 Chromium 光栅化决定，参数变了字形抗锯齿就可能变。
 // --font-render-hinting=none 关掉平台相关的字形 hinting（主要影响 Linux；macOS 上无害）。
 export const LAUNCH_ARGS = ['--font-render-hinting=none'];
+
+// 渲染后端：film.json `backend` 声明（film-json.md）。缺省 = 'swiftshader' = 改动前的唯一行为，启动参数逐字不变。
+// 'gpu'：只把 WebGL/WebGL2 换到本机硬件 GPU（macOS 上是 ANGLE Metal），2D 光栅与合成仍走软件。
+// 为什么要关掉 GPU 光栅和 GPU 合成（仓库 docs/verified/film-core.md「GPU 后端」，Chromium 156 headless shell、Apple M3 Max）：
+//   只加 --use-angle=metal 时，Chromium 把 2D 光栅和合成也搬上 GPU：纯 2D 夹具与软件后端差 0.02%、最大 61/255，
+//   _test-typography 在**同一个浏览器里**换页面重载 10/16 帧不同、并行 4 页 10/16 帧不同（3 次复现）——2D 文字的 GPU 光栅不确定，门 1b/4 会红。
+//   加上下面三条后：2D 夹具与软件后端逐像素相同，四支夹具同 t / 乱序 / 重载 / 并行 / 跨启动全部逐字节一致；WebGL 仍在 Metal 上。
+// 换一组参数 = 换了另一支片子的像素：改这里要重跑上述实验并在 verified 里记数字。
+export const BACKENDS = Object.freeze({
+  swiftshader: Object.freeze([]),
+  gpu: Object.freeze(['--use-angle=metal', '--disable-gpu-rasterization', '--disable-accelerated-2d-canvas', '--disable-gpu-compositing']),
+});
+export const DEFAULT_BACKEND = 'swiftshader';
+if (JSON.stringify(Object.keys(BACKENDS)) !== JSON.stringify(BACKEND_KEYS)) throw new Error('browser.mjs BACKENDS 与 film.mjs BACKEND_KEYS 不一致');
+/** 一支片子声明的后端（resolveFilm 已校验取值）。F = resolveFilm 的返回。 */
+export const filmBackend = (F) => F?.config?.backend ?? DEFAULT_BACKEND;
+// launchBrowser 起的每个浏览器记下它的后端与实测 WebGL renderer：openScene 据此核对"这个浏览器是不是这支片子声明的后端"
+const _browserInfo = new WeakMap();
+export const browserBackend = (browser) => _browserInfo.get(browser)?.backend ?? DEFAULT_BACKEND;
+// 软件实现的 renderer 字符串：声明了 gpu 却拿到它们 = 本机没起来硬件 GPU
+const SOFTWARE_GL = /SwiftShader|llvmpipe|softpipe|Software|Basic Render|Microsoft Basic/i;
 
 // FILM_CHROMIUM=<Chromium 可执行文件路径>：换一个浏览器构建来渲染。
 //
@@ -57,29 +79,92 @@ export function chromiumOverride() {
 }
 
 let _warnedOverride = false;
+const _warnedBackend = new Set();
 /**
  * 起一个浏览器。渲染、seamcheck、字体来源、评审、静帧……全部经它，参数一律 LAUNCH_ARGS。
  * extraArgs 只给开发基准（dev/ 下的 bench）用，**门和渲染不许传**——传了"检查的条件"就不再是"渲染的条件"。
  */
-export async function launchBrowser({ extraArgs = [] } = {}) {
+export async function launchBrowser({ extraArgs = [], backend = DEFAULT_BACKEND } = {}) {
+  if (!Object.hasOwn(BACKENDS, backend)) throw new Error(`未知渲染后端 ${JSON.stringify(backend)}（可用：${Object.keys(BACKENDS).join(' / ')}）`);
   const exe = chromiumOverride();
-  const args = [...LAUNCH_ARGS, ...extraArgs];
-  if (!exe) return (await playwright()).chromium.launch({ args });
-  if (!_warnedOverride) {
-    _warnedOverride = true;
-    process.stderr.write(`⚠ ${CHROMIUM_ENV} 已设置：用 ${exe} 而不是 Playwright 默认的 Chromium（验证用，日常渲染不要设）\n`);
+  const args = [...LAUNCH_ARGS, ...BACKENDS[backend], ...extraArgs];
+  let browser;
+  if (!exe) browser = await (await playwright()).chromium.launch({ args });
+  else {
+    if (!_warnedOverride) {
+      _warnedOverride = true;
+      process.stderr.write(`⚠ ${CHROMIUM_ENV} 已设置：用 ${exe} 而不是 Playwright 默认的 Chromium（验证用，日常渲染不要设）\n`);
+    }
+    try {
+      browser = await (await playwright()).chromium.launch({ args, executablePath: exe });
+    } catch (e) {
+      throw new Error(`${CHROMIUM_ENV}=${exe} 启动失败（版本差太多时 Playwright 的协议可能不兼容）：\n  ${String(e.message).split('\n')[0]}`);
+    }
   }
+  if (backend === DEFAULT_BACKEND) { _browserInfo.set(browser, { backend }); return browser; }
+  // 声明了硬件后端：当场核实 WebGL 真跑在硬件上。起不来就报错退出，不静默退回软件渲染——
+  // 那会让同一支片子在两台机器上像素不同却都"通过"。
+  let gl;
+  try { gl = await webglRenderer(browser); }
+  catch (e) { await browser.close().catch(() => {}); throw new Error(`渲染后端 ${backend}：探测 WebGL renderer 失败：${String(e.message).split('\n')[0]}`); }
+  const bad = !gl.webgl || !gl.webgl2 || SOFTWARE_GL.test(gl.webgl) || SOFTWARE_GL.test(gl.webgl2) || gl.webgl !== gl.webgl2;
+  if (bad) {
+    await browser.close().catch(() => {});
+    const e = new Error(`缺能力：本片 film.json 声明 "backend": "${backend}"，但本机浏览器没有起来硬件 GPU 的 WebGL`
+      + `（webgl: ${gl.webgl ?? 'null'}；webgl2: ${gl.webgl2 ?? 'null'}）。\n`
+      + `  不退回软件渲染：那样同一支片子换台机器像素就不同，门却照样通过。\n`
+      + `  这个后端目前只在 macOS + Apple GPU（ANGLE Metal）上实测过；在有 GPU 的那台机器上渲，或把 film.json 的 backend 删掉（= 软件后端，像素会变，重看静帧）`);
+    e.code = 'BACKEND_UNAVAILABLE';
+    throw e;
+  }
+  // 驱动版本（macOS 上随系统更新）：UNMASKED_RENDERER 里没有版本号（"Unspecified Version"），只记它的话系统升级换了 Metal 驱动也不会告警
+  let gpuDriver = null;
   try {
-    return await (await playwright()).chromium.launch({ args, executablePath: exe });
-  } catch (e) {
-    throw new Error(`${CHROMIUM_ENV}=${exe} 启动失败（版本差太多时 Playwright 的协议可能不兼容）：\n  ${String(e.message).split('\n')[0]}`);
-  }
+    const s = await browser.newBrowserCDPSession();
+    const d = (await s.send('SystemInfo.getInfo')).gpu?.devices?.[0];
+    await s.detach().catch(() => {});
+    if (d?.driverVersion) gpuDriver = `${d.driverVendor ?? ''} ${d.driverVersion}`.trim();
+  } catch {}
+  _browserInfo.set(browser, { backend, gpu: gl.webgl, gpuDriver });
+  return browser;
 }
 
-// 渲染环境指纹：写进 film.json 的 renderer 字段，用来发现"换了浏览器版本，像素可能变了"
+// 各取一个独立 canvas 读 UNMASKED_RENDERER（同一个 canvas 先取 webgl 再取 webgl2 返回 null）
+async function webglRenderer(browser) {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    return await page.evaluate(() => {
+      const q = (v) => {
+        const g = document.createElement('canvas').getContext(v);
+        if (!g) return null;
+        const ext = g.getExtension('WEBGL_debug_renderer_info');
+        return ext ? g.getParameter(ext.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER);
+      };
+      return { webgl: q('webgl'), webgl2: q('webgl2') };
+    });
+  } finally { await ctx.close(); }
+}
+
+// 渲染环境指纹：写进 film.json 的 renderer 字段，用来发现"换了浏览器版本，像素可能变了"。
+// 软件后端（缺省）的形状与改动前逐字相同；硬件后端多记 backend 与实测 WebGL renderer（gpu），换后端或换显卡会被漂移告警点名。
 export async function rendererFingerprint(browser) {
   const pw = playwrightVersion();
-  return { chromium: await chromiumBuild(browser), playwright: pw, args: LAUNCH_ARGS };
+  const bi = _browserInfo.get(browser);
+  const backend = bi?.backend ?? DEFAULT_BACKEND;
+  const fp = { chromium: await chromiumBuild(browser), playwright: pw, args: [...LAUNCH_ARGS, ...BACKENDS[backend]] };
+  if (backend !== DEFAULT_BACKEND) { fp.backend = backend; fp.gpu = bi.gpu; fp.gpuDriver = bi.gpuDriver; }
+  return fp;
+}
+/** 渲染器记录（film.json renderer、清单 renderer、收据 env）的后端：没记 = 软件后端 */
+export const recordedBackend = (r) => ({ backend: r?.backend ?? DEFAULT_BACKEND, gpu: r?.gpu ?? null, gpuDriver: r?.gpuDriver ?? null });
+/** 两份渲染器记录的后端是否可比（同后端、同显卡、同驱动）；不可比返回一句原因，可比返回 null */
+export function backendMismatch(a, b) {
+  const x = recordedBackend(a), y = recordedBackend(b);
+  if (x.backend !== y.backend) return `渲染后端不同（${x.backend} vs ${y.backend}）`;
+  if (x.gpu !== y.gpu) return `显卡不同（${x.gpu} vs ${y.gpu}）`;
+  if (x.gpuDriver !== y.gpuDriver) return `显卡驱动不同（${x.gpuDriver} vs ${y.gpuDriver}）`;
+  return null;
 }
 
 // 版本号 + 构建形态。同一个版本号有两种二进制，像素不一样：
@@ -142,7 +227,22 @@ export async function openScene(film, format, { browser, probe = false, port, in
   const own = !browser;
   let srv;
   if (!port) { srv = await serve(film.dir, { record }); port = srv.port; }   // 自带服务器：同样挂运行时、写加载记录（record:false 不写）
-  if (own) browser = await launchBrowser();
+  // 后端：浏览器必须是这支片子声明的那个后端（film.json backend），否则门和渲染测的不是同一支片子。
+  // 调用方传来的浏览器后端不符（多半是没按 filmBackend(F) 起浏览器的旧调用点）：不用它，本页自起一个对的，并提示一次。
+  const want = filmBackend(film);
+  let ownBrowser = own;
+  if (!own && browserBackend(browser) !== want) {
+    if (!_warnedBackend.has(want)) {
+      _warnedBackend.add(want);
+      process.stderr.write(`⚠ 本片声明渲染后端 ${want}，调用方传来的浏览器是 ${browserBackend(browser)}：openScene 改为自起 ${want} 浏览器`
+        + `（调用方应 launchBrowser({ backend: filmBackend(F) })，否则每页多起一个浏览器）\n`);
+    }
+    ownBrowser = true;
+  }
+  if (ownBrowser) {
+    try { browser = await launchBrowser({ backend: want }); }
+    catch (e) { srv?.close(); throw e; }
+  }
 
   const context = await browser.newContext({ viewport: { width: fmt.width, height: fmt.height }, deviceScaleFactor: 1 });
   if (probe) await context.addInitScript(PROBE);
@@ -159,7 +259,7 @@ export async function openScene(film, format, { browser, probe = false, port, in
   page.on('requestfailed', (r) => errors.push(`请求失败 ${r.url()} ${r.failure()?.errorText ?? ''}`));
   page.on('response', (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
-  const close = async () => { await context.close(); if (own) await browser.close(); srv?.close(); };
+  const close = async () => { await context.close(); if (ownBrowser) await browser.close(); srv?.close(); };
 
   try {
     const extra = Object.entries(query ?? {}).filter(([, v]) => v != null).map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');

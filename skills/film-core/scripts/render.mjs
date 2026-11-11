@@ -56,7 +56,7 @@ import { resolveFilm, parseArgs, main, fail, FILM_OPTS, readChecks } from '../li
 import { CORE_DIR } from '../lib/env.mjs';
 import { receiptInputs } from '../lib/receipt.mjs';
 import { readContentDoc, parseVariant, expandMatrix, contentHash, variantDir, muxVariant, writeVariantManifest, templateDigest, fileSha256, CONTENT_FILE } from '../lib/content.mjs';
-import { openScene, launchBrowser, rendererFingerprint, PNG_MODES } from '../lib/browser.mjs';
+import { openScene, launchBrowser, rendererFingerprint, PNG_MODES, filmBackend, backendMismatch } from '../lib/browser.mjs';
 import { frameShooter, inputsFingerprint } from '../lib/frames.mjs';
 import { serve, runtimeDigest } from '../lib/serve.mjs';
 import { mixPool } from '../lib/pngmix.mjs';
@@ -233,15 +233,18 @@ await main(async () => {
   const srv = await serve(F.dir);
   const { port, close: closeServer } = srv;
   const nBrowsers = Math.ceil(workers / perBrowser);
-  const browsers = await Promise.all(Array.from({ length: nBrowsers }, () => launchBrowser()));
+  const browsers = await Promise.all(Array.from({ length: nBrowsers }, () => launchBrowser({ backend: filmBackend(F) })));
   console.log(`影片 ${F.slug}${C.title ? `  「${C.title}」` : ''}   ${F.dir}`);
 
   // 渲染器指纹：像素由 Chromium 光栅化决定。和 film.json 记录的不一致时警告（换了渲染器后重渲，像素可能与上次不再逐个相同）
   const fp = { ...(await rendererFingerprint(browsers[0])), ffmpeg: FFMPEG, x264Threads };
   const pinned = F.raw.renderer;
   const drift = pinned ? ['chromium', 'args', 'ffmpeg', 'x264Threads'].filter((k) => k in pinned && JSON.stringify(pinned[k]) !== JSON.stringify(fp[k])) : [];
+  // 后端 / 显卡 / 驱动：记录里没有 = 软件后端（老记录与缺省片子不受影响）。硬件后端的像素随显卡和驱动变
+  const bdrift = pinned ? backendMismatch(pinned, fp) : null;
+  if (bdrift) drift.push(...['backend', 'gpu', 'gpuDriver'].filter((k) => JSON.stringify(pinned[k] ?? null) !== JSON.stringify(fp[k] ?? null)));
   if (drift.length) {
-    process.stderr.write(`⚠ 本片记录的渲染环境与当前不同：${drift.map((k) => `${k} ${JSON.stringify(pinned[k])} → ${JSON.stringify(fp[k])}`).join('；')}。`
+    process.stderr.write(`⚠ 本片记录的渲染环境与当前不同：${drift.map((k) => `${k} ${JSON.stringify(pinned[k] ?? null)} → ${JSON.stringify(fp[k] ?? null)}`).join('；')}。`
       + `像素可能与当初不同，重渲后重跑 seamcheck 并重看静帧（确认后 --pin-renderer 改记）。\n`);
   }
   // 记进 film.json 放在渲染成功之后：渲染中途失败（场景报错、ffmpeg 挂掉）时不该把"这个环境渲过本片"写下来
@@ -250,11 +253,12 @@ await main(async () => {
       const raw = JSON.parse(readFileSync(join(F.dir, 'film.json'), 'utf8'));
       raw.renderer = fp;
       writeFileSync(join(F.dir, 'film.json'), JSON.stringify(raw, null, 2) + '\n');
-      console.log(`  film.json renderer 记为 Chromium ${fp.chromium} / playwright ${fp.playwright}`);
+      console.log(`  film.json renderer 记为 Chromium ${fp.chromium} / playwright ${fp.playwright}${fp.backend ? ` / 后端 ${fp.backend}：${fp.gpu}（驱动 ${fp.gpuDriver ?? '未知'}）` : ''}`);
     }
     else {
       // 旧记录缺字段（例如 x264Threads 是后加的）：只补缺的，不覆盖已有的 —— 已有的才是"当初渲它的环境"
-      const missing = Object.keys(fp).filter((k) => !(k in pinned));
+      // 后端三项不补：记录是软件后端、现在声明了 gpu 时补上它们会拼出一份"args 是软件、backend 是 gpu"的假记录（上面已告警，--pin-renderer 改记）
+      const missing = Object.keys(fp).filter((k) => !(k in pinned) && !['backend', 'gpu', 'gpuDriver'].includes(k));
       if (missing.length) {
         const raw = JSON.parse(readFileSync(join(F.dir, 'film.json'), 'utf8'));
         raw.renderer = { ...pinned, ...Object.fromEntries(missing.map((k) => [k, fp[k]])) };
@@ -461,6 +465,8 @@ await main(async () => {
             // 哈希是截图 PNG 的字节，不是解码后的像素。同一个浏览器构建下两者等价；换了构建，PNG 编码器本身可能变
             // （实测 Chromium 143 → 151/156：解码后像素全同，PNG 字节全变），这时"变了"只说明字节变了。
             const prevChromium = prev.renderer?.chromium;
+            const prevBackend = backendMismatch(prev.renderer, fp);
+            if (changed.length && prevBackend) console.log(`  注意：${prevBackend}——上次和这次不是同一个 WebGL 实现，着色器/三维像素本来就会变`);
             if (changed.length && prevChromium && prevChromium !== fp.chromium) {
               console.log(`  注意：上次是 Chromium ${prevChromium} 截的，这次是 ${fp.chromium}。上面比的是截图 PNG 字节，`
                 + `换浏览器构建后 PNG 编码会变，"变了"不等于像素变了。要判断像素，解码后比（例如两个 mp4 各跑 ffmpeg -f framemd5）。`);

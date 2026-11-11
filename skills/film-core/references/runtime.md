@@ -54,7 +54,8 @@ scene.html 里写 `import './runtime/motion.js'`，不需要往片子里拷文�
 - 在**版本**这个维度上，几个版本的成片逐字节相同，或差异低于可见阈值。固定版本是为了**可复现性和分片缓存**，不是为了视觉保真。
 - 在**构建形态**（headless shell 与完整 Chrome）这个维度上，`browser.version()` 返回同一个字符串，但渲染差异肉眼可见。根因是**字体没有随片打包**，
   两种构建回退到了不同的字形；打包字体之后差异降到亚像素级。所以根本解法是打包字体（kernel.md §2），固定构建形态只是绕开症状。
-- 没有测过的维度：换到 Linux（FreeType 字体栈）或真 GPU。`--font-render-hinting` 在 macOS 上不起作用，它是为 Linux 预留的保险。
+- 没有测过的维度：换到 Linux（FreeType 字体栈）。`--font-render-hinting` 在 macOS 上不起作用，它是为 Linux 预留的保险。
+- **后端**这个维度：默认是软件的 SwiftShader；film.json 可以声明 `"backend": "gpu"`，让 WebGL 改走本机硬件 GPU。这样像素跟着显卡和驱动走，指纹里多记 `backend`、`gpu`、`gpuDriver`，变了就告警。声明了 gpu 而本机起不来时报错退出，不退回软件。所有工具读同一个声明，见 `render.md`「渲染后端」。
 
 测量这件事时出错过三次，每次都是测量手段干扰了被测对象：比较的是 PNG 字节而不是像素；`getImageData` 回读改变了后续帧；
 测的是渲染管线并不使用的那个二进制。编写门的人要注意：**先确认测的是生产路径上的那个东西，再确认测量手段会不会改变它。**

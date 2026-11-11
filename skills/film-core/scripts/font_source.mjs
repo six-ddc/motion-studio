@@ -37,7 +37,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { GENERIC, SYSTEM_FONT_RE } from '../lib/fontcss.mjs';
 import { FILM_OPTS, parseArgs, resolveFilm as coreResolve, fail } from '../lib/film.mjs';
 import { serve } from '../lib/serve.mjs';
-import { launchBrowser, FORMATS } from '../lib/browser.mjs';
+import { launchBrowser, FORMATS, filmBackend } from '../lib/browser.mjs';
 
 const die = (msg, code = 2) => fail(msg, code);
 const A = parseArgs({
@@ -164,7 +164,9 @@ async function runBrowser() {
   // 与渲染同一种托管（./runtime/* 片内优先、否则套件）和同一种浏览器（launchBrowser）
   const server = await serve(F.dir);
   const origin = server.url;
-  const browser = await launchBrowser();
+  let browser;
+  try { browser = await launchBrowser({ backend: filmBackend(F) }); }
+  catch (e) { server.close(); die(e.message, 1); }
   try {
     const { width, height } = FORMATS[format] ?? die(`未知画幅 ${format}`);
     const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });

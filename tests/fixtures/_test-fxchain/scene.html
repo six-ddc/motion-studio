@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>_test-fxchain scene</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style></head>
+<body><canvas id="stage"></canvas>
+<script type="module">
+// 正片：反馈按定步重放 + 检查点，任意 seek 结果只取决于 t
+import { build } from './fb.js';
+build(undefined);
+</script></body></html>

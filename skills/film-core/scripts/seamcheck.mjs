@@ -26,7 +26,7 @@
 //
 // 退出码：0 全过；1 有门没过或页面报错；2 用法错误
 import { resolveFilm, parseArgs, main, fail, FILM_OPTS } from '../lib/film.mjs';
-import { openScene, makeComparer, launchBrowser, scaledSize, rendererFingerprint, pngModeOf } from '../lib/browser.mjs';
+import { openScene, makeComparer, launchBrowser, scaledSize, rendererFingerprint, pngModeOf, filmBackend, backendMismatch } from '../lib/browser.mjs';
 import { frameShooter, inputsFingerprint } from '../lib/frames.mjs';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -69,7 +69,7 @@ await main(async () => {
 
   const srv = await serve(F.dir);
   const { port, close: closeServer } = srv;
-  const browser = await launchBrowser();   // 与 render.mjs 同一套启动参数，像素才可比
+  const browser = await launchBrowser({ backend: filmBackend(F) });   // 与 render.mjs 同一套启动参数（含 film.json backend），像素才可比
   const cmp = await makeComparer(browser);
   let bad = 0;
   const allErrors = [];
@@ -274,6 +274,7 @@ async function relaunchGate(F, format, { port, srv, fps, D, hasMotion, runs, eve
     hint = '—— 不是参数传错。常见原因是旁白重录后 film.json 的时长回写了；out/ 里那条成片按旧时间轴渲的，已经过期，重渲一次再对账';
   }
   else if (m.renderer?.chromium !== fp.chromium) why = `浏览器构建不同（${m.renderer?.chromium} vs ${fp.chromium}），PNG 字节不可比`;
+  else if (backendMismatch(m.renderer, fp)) why = `${backendMismatch(m.renderer, fp)}，像素不可比`;
   else if (k.adapt && !hasMotion) why = '清单是按自适应子帧（window.MOTION）渲的，现在的场景没有 MOTION';
   else if (!Array.isArray(m.hashes) || m.hashes.length !== k.frames) why = `${mrel} 的 hashes 有 ${m.hashes?.length} 个，key.frames 是 ${k.frames}`;
   const recon = !why;
@@ -312,7 +313,7 @@ async function relaunchGate(F, format, { port, srv, fps, D, hasMotion, runs, eve
   const shoot = frameShooter({ fps: P.fps, sub: P.sub, shutter: P.shutter, adapt: P.adapt });
   const runOnce = async (r) => {
     const t0 = Date.now(); // 只用于打印耗时
-    const browsers = await Promise.all(Array.from({ length: nB }, () => launchBrowser()));
+    const browsers = await Promise.all(Array.from({ length: nB }, () => launchBrowser({ backend: filmBackend(F) })));
     const hashes = new Map();
     const odd = [];
     try {

@@ -28,7 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { FILM_OPTS, parseArgs, resolveFilm, fail, checkParam } from '../lib/film.mjs';
 import { hasCapability } from '../lib/env.mjs';
 import { serve } from '../lib/serve.mjs';
-import { launchBrowser, FORMATS } from '../lib/browser.mjs';
+import { launchBrowser, FORMATS, filmBackend } from '../lib/browser.mjs';
 import { importRuntime } from '../lib/runtime-node.mjs';
 
 const A = parseArgs({
@@ -265,7 +265,9 @@ if (staticOnly) {
   for (const k of ['fonts', 'overflow']) info(k, '仅静态（--static-only）：页面层没查');
 } else {
   const server = await serve(F.dir, { record: false });
-  const browser = await launchBrowser();
+  let browser;
+  try { browser = await launchBrowser({ backend: filmBackend(F) }); }
+  catch (e) { server.close(); fail(e.message, 1); }
   try { for (const fmt of formats) await inBrowser(fmt, server.url, browser); }
   finally { await browser.close(); server.close(); }
 }

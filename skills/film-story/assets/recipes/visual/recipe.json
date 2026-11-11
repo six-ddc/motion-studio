@@ -10,7 +10,7 @@
     { "dest": "docs/style_guide.md", "skill": "film-story", "from": "assets/style_guide.md" },
     { "dest": "docs/review_log.md", "skill": "film-critique", "from": "assets/review_log.md" }
   ],
-  "checks": ["divergence", "page", "mp4", "readability", "contrast", "style-guide", "laws", "still", "cover", "rhythm", "continuity"],
+  "checks": ["divergence", "page", "mp4", "readability", "contrast", "style-guide", "laws", "still", "cover", "rhythm", "continuity", "motion", "variety", "hook", "beatsync"],
   "next": [
     "1. 填 docs/brief.md —— 时长、画幅、参考锚、时间从哪来",
     "2. 风格帧比稿：2–3 个方向各写一页 look/<名>.html，stills.mjs --entries 拼图，交给用户选（film-story references/lookdev.md §2）",

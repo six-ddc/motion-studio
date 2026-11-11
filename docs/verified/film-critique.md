@@ -610,3 +610,43 @@ check.mjs 按"无值（"这串字改写成 probe 的说法；根子应由 film-s
 实测（两个各 1 秒的单帧页面，9x16）：不给 `--at` 时每个入口取中点，出 1×2；`--at 0.1,0.9` 出 2×2，每格下方标「入口名 时刻」，图看过，行列正确；
 入口不存在 exit 2；不带 `--entries` 的原有行为不变（`--at 0.5` 出 1×1，meta 的 `points` 仍是 `{t, file}`）；`--help` exit 0，未知参数 exit 2。
 没测到：入口是 WAAPI 场景、WebGL 场景时的比稿；入口名含中文时的标签（非字母数字和汉字的字符会被替换成下划线）。
+
+## 运动读数 motion / variety / beatsync / hook / mute（`scripts/_kinetics.mjs`，2026-11-10）
+
+**测了什么、怎么测。** 五个夹具 `tests/fixtures/_test-kin-{motion,variety,beat,hook,mute}`，各自只声明一项，每项一对阳性 / 阴性入口，用 `check.mjs --films-dir tests/fixtures --entry <x> --strict` 跑；
+证据图都用 Read 打开看过，点名的帧就是出问题的帧。
+
+| 夹具 · 入口 | 场景 | 结论（--strict 退出码） | 点名 |
+|---|---|---|---|
+| motion · scene.html | 方块 0.5–2.0s cubic 缓入缓出，3.0s 整屏换底色（声明 window.CUTS） | PASS ×4（0） | 起停比值 0.27 / 0.18；切点不算突变 |
+| motion · bad-linear.html | 同上改线性 | LOOK jerk + uniform（1；不加 --strict 时 0） | 0.533s（f16，第一帧在动）起步、2.000s（f60，之后帧差 0）停住，比值 1.00；匀速 1.5s / 1.5s |
+| motion · bad-swarm.html | 六块同时缓入缓出 | LOOK regions（1） | 0.80s 起连续 12 个采样 ≥5 块，最满 1.60s 6 块（证据图 6 个青框各框住一块） |
+| variety · scene.html / bad-same.html | 6 个 1s 镜头，景别位置各异 / 构图相同只换颜色 | PASS（0）/ LOOK #1–#6（1） | 同构图相邻读数 1.00× / 0 / 1.00×；换构图相邻最小 1.27× / 0.25 / 1.61× |
+| beat · scene.html / bad-late.html / bad-miss.html | 120bpm，方块在拍上 / 全部晚 150ms / 第 4 个晚 150ms | PASS +0ms（0）/ LOOK 整体偏移 +167ms（1）/ LOOK 差一点 2.17s（1） | 150ms 落在成片帧格上第一帧是 +167ms；证据图"拍点 2.000s / 前一帧 2.133s / 事件 2.167s"正确 |
+| hook · scene.html / bad-blank.html | 首帧即转动的方块 / 前 3.2s 全黑 | PASS（0）/ LOOK 一直是空画面（1） | 五帧拼图 0/0.5/1/2/3s 全黑 |
+| mute · scene.html / bad-dead.html | 静止方块，旁白时有字幕 / 无字幕 | PASS（0）/ LOOK 既无字又不动 100%（1） | 最长 2.5s @3.00s（s2） |
+
+没有节拍文件（scratch 拷贝删掉 beats.json）→ `SKIP beatsync`，exit 0。`--workers 1` 与默认 8 个页面的 findings 和 kinetics（去掉耗时与证据路径）md5 相同。
+
+**实测里改过的判据。** 第一版在两支真实片上把"字幕弹出 / 字块换字"报成硬起步（ghost-jam 8.53s 帧差 7.15 → 0.34，demo-tls 7.33s 3.90 → 0.88）。
+改为：起停那一帧的帧差是孤立尖峰（相邻一帧 < 35%）记作跳变 `motion.step`，只计数；线性起步相邻两帧 1.21 / 1.82 不受影响。
+第一版还把一行字的每个字算成一个运动区域（demo-tls 最满 38 块）；改为在膨胀一格的前景上找连通块后降到 31 块（文字流每一行仍是一块，如实）。
+ghost-jam 有 4 个起停点在成片帧格上逐帧差都在静止阈值内（慢速运动），第一版记成"比值 0.00、有渐变"，改为单列"没量到，未判"。
+
+**真实片子（只读：拷到 scratch，只改拷贝的 film.json checks 为 page cover motion variety beatsync hook mute）。**
+- demo-tls（9x16，10.9s）：jerk 4/4（7.00s 乱码带闪烁结束、10.00/10.33s），跳变 11 处（7.33–8.83s 每 0.17–0.33s 一次的换字）；regions 中位 24、最满 6.50s 31 块（HTTP 头文字流每行一块）；匀速 61%（文字流恒速滚动）；hook PASS（首帧有内容、31 个采样有字）；mute 既无字又不动 0%；variety SKIP（MARKS 边界只推出 2 个镜头）；beatsync SKIP（无节拍文件）。
+- ghost-jam（16x9，23.6s）：jerk 0 处（4 处渐变已量、4 处没量到），跳变 5 处（字幕弹出）；regions 中位 1、p90 3、最满 12.10s 4 块；匀速 33%（9.9–10.9s、11.7–13.3s 车流）；variety PASS（尖峰推测出 4 个镜头，尺度跨度 1.05×——全片同一个俯视环路）；hook、mute PASS。
+这些读数和片子的实际内容对得上；demo-tls 的 regions / uniform LOOK 是"文字流"这种画面本身的读数，是不是本意由它的 style_guide 判。
+
+**耗时**（16 核，默认 10fps、8 个页面）：15s 1920×1080 合成片（5 个镜头、线性与缓动交替）只声明 page 2.0–2.3s，五项全开 3.5–4.0s（kinetics 1.5s，其中 motion 细取 1.2s、hook 0.3s）；
+ghost-jam 只声明 page 7.3s → 全开 13.6s（kinetics 6.2s）；demo-tls 全开 7.4s（kinetics 2.5s）。主采样阶段两种声明耗时相同（ghost-jam 6.4s / 6.4s）。
+`--sample-fps 5` 时 ghost-jam 主采样 6.4 → 3.6s，kinetics 不变（细取按成片帧格），尖峰推测的切点变少，variety 由 PASS 变 SKIP。
+
+**没测到 / 没解决。**
+- 运动能量是帧差，不是光流：多个物体反向运动、缩放、旋转都只给一个总量；`_flow.mjs` 是锚点衔接度，不是光流，没有复用。逐元素速度仍要 film-story 的 motionprint `--film`。
+- 运动重叠时，后一个动作的起步不在"从静到动"的边界上，jerk 不判；缓入起步测到的时刻晚于设计时刻，beatsync 会读成"晚"，晚多少没在夹具上量过。
+- 前景分割在渐变底、照片底、满屏纹理上没有实测；满屏颗粒 / 噪声着色器片没有跑过（推测：能量一直高于静止阈值，起停一个都量不到）。
+- variety 的阈值只在纯色夹具上看过两端，真实片上只有 ghost-jam 一支跑出了 4 个镜头（且切点是推测的）；没有在声明了 CUT_WINDOWS 的多镜头真实片上跑过。
+- beatsync 只在手写的 120bpm 栅格上测过，没在 beats.py 实测的拍点、music.json 的 sections / hits 上跑过；`offset` 参数没有夹具。
+- mute 看不见预渲染进位图 / 路径 / WebGL 的字；DOM 字幕以文本节点计，不判断字是否被遮挡。
+- 期望条目还没并进 dev/test-fixtures.json（本轮按约定只交出条目），所以 `dev/test.mjs` 暂不覆盖这五个夹具。

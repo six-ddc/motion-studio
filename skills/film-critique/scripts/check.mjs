@@ -33,6 +33,8 @@ import { writeMeta } from './_fresh.mjs';
 import { isAnchorLaw, runAnchorLaw, anchorClaims } from './_anchors.mjs';
 // 衔接度 / 节奏（只报 LOOK，判据借自 onetake）：只有 checks 声明了 continuity / rhythm 才调用，见第 9 节。
 import { runContinuity, runRhythm } from './_flow.mjs';
+// 运动读数（motion / variety / beatsync / hook / mute，只报 LOOK）：声明了其中任何一项，主采样才多算每帧的粗特征，见第 9b 节。
+import { KIN_IDS, RGB_W, kineticsAccumulator, runKinetics } from './_kinetics.mjs';
 
 // 局部运行（--only / --law / --claim / --from --to）写进过文档但没有实现：明确拒绝，不静默整片跑。
 const wantsHelp = process.argv.includes('--help') || process.argv.includes('-h');
@@ -153,7 +155,7 @@ const ANALYSIS = () => {
     W: 180,
     async load(b64) {
       const bm = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob());
-      this.H = Math.round((bm.height * this.W) / bm.width);
+      this.H = Math.round((bm.height * this.W) / bm.width); this.bm = bm;
       const c = new OffscreenCanvas(this.W, this.H).getContext('2d');
       c.drawImage(bm, 0, 0, this.W, this.H);
       return c.getImageData(0, 0, this.W, this.H).data;
@@ -173,11 +175,16 @@ const ANALYSIS = () => {
           const e = (ap[0] - u * ab[0]) ** 2 + (ap[1] - u * ab[1]) ** 2 + (ap[2] - u * ab[2]) ** 2; if (e < best) best = e; }
         if (best > tol * tol) off++; }
       return off / n; },
-    // 一帧的无状态部分：边缘密度、色板外占比（pal 给了才算）、缩略亮度图（Float32 字节 → base64）
-    async thumb(b64, pal, tol) {
+    // 一帧的无状态部分：边缘密度、色板外占比（pal 给了才算）、缩略亮度图（Float32 字节 → base64）、
+    // rgbW > 0 时另给一张 rgbW 宽的 RGB 缩略图（运动读数的前景分割用，_kinetics.mjs；不影响上面几项）
+    async thumb(b64, pal, tol, rgbW) {
       const d = await this.load(b64), L = this.lum(d);
       const r = { edge: this.edge(L) };
       if (pal) r.off = this.offPalette(d, pal, tol);
+      if (rgbW) { const h = Math.max(1, Math.round((this.bm.height * rgbW) / this.bm.width)), c = new OffscreenCanvas(rgbW, h).getContext('2d');
+        c.drawImage(this.bm, 0, 0, rgbW, h); const q = c.getImageData(0, 0, rgbW, h).data, u = new Uint8Array(rgbW * h * 3);
+        for (let i = 0, j = 0; i < q.length; i += 4, j += 3) { u[j] = q[i]; u[j + 1] = q[i + 1]; u[j + 2] = q[i + 2]; }
+        let t = ''; for (let i = 0; i < u.length; i += 0x8000) t += String.fromCharCode(...u.subarray(i, i + 0x8000)); r.rgb = btoa(t); }
       const u8 = new Uint8Array(L.buffer); let s = '';
       for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
       r.L = btoa(s);
@@ -205,6 +212,9 @@ const N = Math.floor(D * sfps - 1e-9) + 1;
 const ts = Array.from({ length: N }, (_, i) => +(i / sfps).toFixed(4));
 const samples = [];
 const evidence = new Map();
+// 运动读数：声明了才在 consume 里按时间顺序算（帧差能量、前景、运动区域），没声明的片子这里什么都不多做
+const KIN = KIN_IDS.some(on), kinRGB = on('motion') || on('variety') || on('hook');
+const kinAcc = KIN ? kineticsAccumulator() : null;
 let firstPng, lastPng;
 process.stdout.write(`采样 ${N} 帧 @ ${sfps}fps（${F.width}×${F.height}，时长 ${D}s；${pool.info.workers} 个页面 / ${pool.info.browsers} 个浏览器）`);
 // 每个分片在自己的页面里逐帧：开探针 → seek+截图 → 收文字 → 分析页算缩略统计。
@@ -233,9 +243,10 @@ const lumDiff = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (Ma
       if (r.moved) anchorL = L;
       prevL = L;
       if ('off' in x) r.off = x.off;
+      if (kinAcc) r.k = kinAcc(L, x.rgb ? Buffer.from(x.rgb, 'base64') : null);
       samples.push({ t: x.t, ...r, texts: x.texts });
       evidence.set(x.t, x.png);
-      x.L = null; x.png = null; x.texts = null;
+      x.L = null; x.png = null; x.texts = null; x.rgb = null;
     }
   };
   await phase('sample', () => pool.chunks(ts, async (w, part, i0) => {
@@ -246,7 +257,7 @@ const lumDiff = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (Ma
       const png = await w.S.shot(t);
       const texts = await w.S.page.evaluate(COLLECT);
       const usePal = pal && (i % Math.max(1, Math.round(sfps)) === 0);
-      const r = await w.ap.evaluate(([b, p, tol]) => window.A.thumb(b, p, tol), [png.toString('base64'), usePal ? pal : null, palTol]);
+      const r = await w.ap.evaluate(([b, p, tol, rw]) => window.A.thumb(b, p, tol, rw), [png.toString('base64'), usePal ? pal : null, palTol, kinRGB ? RGB_W : 0]);
       out.push({ t, png, texts, ...r });
     }
     return out;
@@ -857,6 +868,11 @@ if (on('tilt')) {
 if (on('continuity')) { const t0 = Date.now(); await phase('continuity', () => runContinuity({ S, pool, D, F, add, fmt, sfps, lastT, markRef, cfg: declared.get('continuity') })); cost.continuity_ms = Date.now() - t0; }
 if (on('rhythm')) runRhythm({ D, F, add, fmt, samples, stills, sfps, marks, markRef, cfg: declared.get('rhythm') });
 
+// ---------- 9b. 运动读数（_kinetics.mjs）：motion / variety / beatsync / hook / mute，声明了才跑，只报 LOOK ----------
+let kinetics = null;
+if (KIN) { kinetics = await phase('kinetics', () => runKinetics({ S, pool, F, D, fps: F.fps, sfps, ts, lastT, samples, evidence, marks, markRef, lines, emptyTh,
+  coverOn: on('cover'), add, fmt, outDir, on, cfg: (k) => declared.get(k) })); cost.kinetics_ms = kinetics.cost.total; }
+
 // ---------- 10. 世界文字可读性（_legible.mjs）：只在 checks 里 legible 声明了阈值时跑 ----------
 // fillText 拦截看不见贴图 / 几何里的字，所以三维里的字由场景在渲染后自己量（window.legible），这里只读表、按本片阈值判。
 if (on('legible')) Object.assign(cost, await phase('legible', () => runLegible({ S, pool, F, D, add, fmt, outDir, writeFileSync, join, cfg: declared.get('legible'), fps: num('claim-fps', F.fps) })));
@@ -889,7 +905,7 @@ cost.parallel = { ...pool.info, pixelThreads: pix.size };
 
 // ---------- 报告 ----------
 const timeline = samples.map((s) => ({ t: s.t, edge: +s.edge.toFixed(4), moved: s.moved, dPrev: s.dPrev }));
-writeFileSync(join(outDir, 'checks.json'), JSON.stringify({ film: F.slug, entry: F.entry, duration: D, sampleFps: sfps, laws, findings, cost, timeline }, null, 1));
+writeFileSync(join(outDir, 'checks.json'), JSON.stringify({ film: F.slug, entry: F.entry, duration: D, sampleFps: sfps, laws, findings, cost, timeline, ...(kinetics ? { kinetics } : {}) }, null, 1));
 writeMeta(join(outDir, 'checks.json'), { tool: 'check', dir: F.dir, entry: F.entry, extra: { duration: D, sampleFps: sfps, samples: samples.length } });   // 新鲜度（_fresh.mjs）：只供 review_log 提示，不影响结论
 const order = ['FAIL', 'LOOK', 'HUMAN', 'HOLD', 'TODO', 'PASS', 'SKIP'];
 for (const layer of ['客观', '本片法律', '疑点']) {

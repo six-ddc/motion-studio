@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>_test-fxchain scene-bad-ref</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style></head>
+<body><canvas id="stage"></canvas>
+<script type="module">
+// 阴性对照：leak='ref'（检查点存引用，下一步就被覆盖）
+import { build } from './fb.js';
+build('ref');
+</script></body></html>

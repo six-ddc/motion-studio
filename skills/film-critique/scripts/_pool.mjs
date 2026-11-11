@@ -14,7 +14,7 @@
 //      纯函数检查（顺序取一遍、倒序取一遍）在**每个分片自己的页面里**做，所以"同一个 t 换个求值顺序"
 //      这件事在并行下照样成立；--workers 1 时只有一个分片，和改之前的串行逐次相同。
 import { cpus } from 'node:os';
-import { launchBrowser } from '../../film-core/lib/browser.mjs';
+import { launchBrowser, filmBackend } from '../../film-core/lib/browser.mjs';
 import { serve } from '../../film-core/lib/serve.mjs';
 import { openScene } from './_film.mjs';
 
@@ -34,7 +34,7 @@ export async function openPool(F, { workers: W, perBrowser: P, initScript, analy
   let browsers = [];
   const close = async () => { await Promise.allSettled(browsers.map((b) => b.close())); srv.close(); };
   try {
-    browsers = await Promise.all(Array.from({ length: nB }, () => launchBrowser()));
+    browsers = await Promise.all(Array.from({ length: nB }, () => launchBrowser({ backend: filmBackend(F) })));   // 和渲染器同一个后端，否则每页都要另起浏览器
     // 0 号先开：拿时长、做加载期检查；其余并行开（长片加载期要渲木纹、字体，串行开 8 个也要十几秒）
     const open = async (i) => {
       const b = browsers[i % nB];

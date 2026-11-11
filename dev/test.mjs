@@ -85,6 +85,12 @@ export async function syntaxSmoke() {
 
 // ── 各 skill 自带的回归测试 ────────────────────────────────────
 const UNITS = [
+  { id: 'unit/_test-shapes tests/unit.mjs', why: 'shapes.js 弧长/trim/morph/along 与 motion.js 镜头组合子的数值断言',
+    async go() { const r = await run(process.execPath, [join(FIXTURES, '_test-shapes/tests/unit.mjs')]);
+      return { ok: r.code === 0 && /0 失败/.test(r.out), expect: 'exit 0，0 失败', got: `exit ${r.code}`, r }; } },
+  { id: 'unit/_test-dataviz tests/unit.mjs', why: 'chart.js 数值断言 + Node/Chromium 逐位一致',
+    async go() { const r = await run(process.execPath, [join(FIXTURES, '_test-dataviz/tests/unit.mjs')]);
+      return { ok: r.code === 0 && /chart 单测全部通过/.test(r.out), expect: 'exit 0，单测全部通过', got: `exit ${r.code}`, r }; } },
   { id: 'unit/film-story selftest', why: 'factcheck 的红/绿用例（含幽灵堵车真实 facts.md 变体）',
     async go() {
       const dir = join(ROOT, 'out', 'test', 'research-selftest');   // 仓库根 out/ 已忽略；用例留着，失败时进去看

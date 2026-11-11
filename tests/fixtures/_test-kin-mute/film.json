@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "title": "film-critique 静音可懂读数夹具（mute）",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 6,
+  "narrationOffset": 0,
+  "loop": false,
+  "checks": ["mute"]
+}
