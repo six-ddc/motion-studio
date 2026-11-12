@@ -1,5 +1,7 @@
 # 三维：three.js 舞台、镜头、后期、粒子（按帧契约）
 
+做程序化场景时，按需读 `modeling.md`（造型/装配/合批）、`sky.md`（天空/PMREM/雾/PCSS）、`surfaces.md`（材质层/风化）、`world-surfaces.md`（贴图/湿地面/反射/烟火花）。显式后期扩展与离线曝光见 `post-chain.md`；本页保留原舞台、镜头与后期基础 API。
+
 本页是 SKILL.md 第 7 节的展开。三维代价的完整表格只在 §7 维护。实测记录在仓库 docs/verified/film-webfx.md §8–9。
 
 目录：1. three-film 补丁表 / 2. 舞台 `stage3d.js`（复位、锚点、世界文字可读性 `S.legible`）/ 3. 镜头 `camrig.js` / 4. 后期 `post3d.js` / 5. 粒子 `particles3d.js` / 6. 程序化表面（onBeforeCompile）/ 7. 代价表 / 8. 阴性对照 / 9. 盲区与没解决的
@@ -203,4 +205,4 @@ uniform 放进一个共享对象 `U = { uT: {value} }`，在 `onBeforeCompile` �
 - 锚点只说明「画在哪里」，不说明「看不看得见」（见 film-core `references/runtime.md` §6）：被挡住或被景深糊掉时，框照样存在。
 - 预乘 alpha 的舞台叠在 2D 上时，色调映射作用在预乘色上，半透明边缘的亮度会略有偏差。夹具都使用不透明的舞台，没有测量过。
 - `AnimationMixer.setTime` 配合带淡入淡出权重的 action、SkinnedMesh、morph 动画：都没有夹具测试过。
-- 没有测过的还有：Metal 下的三维代价、PCFSoft 和 PMREM 在不同后端之间的差异（一次渲染只固定使用一个后端），以及后期 RT 开 MSAA 并带深度纹理时，景深边缘是否正确。
+- 本机 Metal 的局部天空/表面/模型/扩展后期代价已测，见上述参考页与仓库 verified 记录；其他显卡/驱动未测，PCFSoft 和 PMREM 跨后端不承诺同像素。后期 RT 开 MSAA 并带深度纹理时，景深边缘是否正确仍未验证。

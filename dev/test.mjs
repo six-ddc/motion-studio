@@ -85,6 +85,24 @@ export async function syntaxSmoke() {
 
 // ── 各 skill 自带的回归测试 ────────────────────────────────────
 const UNITS = [
+  ...[
+    ['_test-events', 'unit.mjs', 'events 单测：.*0 失败', '事件编排、弹簧与镜头手感对独立积分/乱序的数值验证'],
+    ['_test-sfx', 'unit.mjs', 'sfx 单测全部通过', '旧音色 PCM 基线、新配方确定性/变体/尾音/总线'],
+    ['_test-sfx', 'cli.mjs', 'sfx CLI 全部通过', '音效CLI、ffmpeg音乐全长duck恢复与统计'],
+    ['_test-model', 'unit.mjs', 'model3d .*条数值断言', '几何法线/绕向/包围盒、合批三角形守恒与可动子树'],
+    ['_test-surface', 'unit.mjs', 'surface3d .*条断言', '顶点风化种子/输入不变、细分预算与材质通道独立'],
+    ['_test-post', 'unit.mjs', 'post exposure .*条断言', '离线测光曲线的平滑、插值和乱序一致'],
+    ['_test-post', 'browser.mjs', 'post 浏览器 .*条断言通过', '后期零强度恒等、开关有效与当帧遮挡'],
+    ['_test-worldfx', 'unit.mjs', 'worldfx 单测全部通过', '贴图物理尺度、ORM、周期、阻力RK4、烟侵蚀与雨盒'],
+    ['_test-worldfx', 'browser.mjs', 'worldfx 浏览器全部通过', '反射与湿度/软粒子实际生效、RT随t变化、渲染器状态恢复'],
+    ['_test-worldfx', 'audit.mjs', 'worldfx 独立审查通过', '预乘色对标准材质、透视火花方向、微阻力极限、HDR反射和cube/mip状态'],
+  ].map(([film, script, match, why]) => ({
+    id: `unit/${film} tests/${script}`, why,
+    async go() {
+      const r = await run(process.execPath, [join(FIXTURES, film, 'tests', script)]);
+      return { ok: r.code === 0 && new RegExp(match).test(r.out), expect: `exit 0，${match}`, got: `exit ${r.code}`, r };
+    },
+  })),
   { id: 'unit/_test-shapes tests/unit.mjs', why: 'shapes.js 弧长/trim/morph/along 与 motion.js 镜头组合子的数值断言',
     async go() { const r = await run(process.execPath, [join(FIXTURES, '_test-shapes/tests/unit.mjs')]);
       return { ok: r.code === 0 && /0 失败/.test(r.out), expect: 'exit 0，0 失败', got: `exit ${r.code}`, r }; } },

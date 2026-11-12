@@ -158,7 +158,7 @@ export function createLightRig(p) {
 
   /** 往一张 uniform 表（{name:{value}}）里填 SKY_GLSL 的全部 uniform；没有的槽会新建。返回同一张表 */
   rig.fill = (u) => {
-    const put = (n, v) => { if (u[n]) { if (u[n].value && u[n].value.copy && v.isVector3 !== undefined || (u[n].value && u[n].value.copy && v.isColor)) u[n].value.copy(v); else u[n].value = typeof v === 'number' ? v : v.clone(); } else u[n] = { value: typeof v === 'number' ? v : v.clone() }; };
+    const put = (n, v) => { if (u[n]) { if (u[n].value?.copy && (v?.isVector3 || v?.isColor)) u[n].value.copy(v); else u[n].value = typeof v === 'number' ? v : v.clone(); } else u[n] = { value: typeof v === 'number' ? v : v.clone() }; };
     put('uSkySunDir', rig.sunDir); put('uSkySunColor', rig.sunColor); put('uSkySunIntensity', rig.sunIntensity);
     put('uSkyZenith', rig.zenith); put('uSkyHorizonSun', rig.horizonSun); put('uSkyHorizonAway', rig.horizonAway);
     put('uSkyGround', rig.ground); put('uSkyFog', rig.fogColor); put('uSkyShape', rig.shape);

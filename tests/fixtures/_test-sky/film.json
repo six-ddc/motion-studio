@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "slug": "_test-sky",
+  "title": "天空光照验收",
+  "format": "16x9",
+  "fps": 10,
+  "sub": 1,
+  "entry": "scene.html",
+  "stage": "#stage",
+  "duration": 1,
+  "loop": false,
+  "checks": []
+}

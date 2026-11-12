@@ -132,7 +132,7 @@ function material(kind, tx, treated, { space, ao, tri }) {
 const spheres = [];
 function build(side, treated) {
   const g = new THREE.Group(); g.position.x = side; scene.add(g);
-  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(FILL ? 40 : 4.2, FILL ? 40 : 4), material('porous', TX_GND, treated, { space: 'world', ao: 'none', tri: false }));
+  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(FILL ? 40 : 4.2, FILL ? 40 : 4), material('porous', TX_GND, treated, { space: 'world', ao: 'none', tri: FILL }));
   gnd.rotation.x = -Math.PI / 2; gnd.receiveShadow = true; g.add(gnd);
   if (FILL) return;
   const useTri = treated && SF.has('tri');

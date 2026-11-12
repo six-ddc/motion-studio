@@ -22,6 +22,7 @@ export function nameHash(s) {
 
 /** RBJ 双二阶系数 [b0, b1, b2, a1, a2]（已除 a0）。kind: lp | hp | bp（带通取 0 dB 峰值） */
 export function biquad(kind, f, q) {
+  if (!Number.isFinite(f) || !(Number.isFinite(q) && q > 0)) throw new Error('biquad: f 必须有限，q 必须有限且 > 0');
   const w = TAU * clamp(f, 10, SR * 0.46) / SR, c = Math.cos(w), al = Math.sin(w) / (2 * q), a0 = 1 + al;
   let b0, b1, b2;
   if (kind === 'lp') { b1 = (1 - c); b0 = b2 = b1 / 2; }
@@ -448,9 +449,17 @@ export function renderRecipe(name, { params = {}, variant = 0, seed = null, pitc
   const R = recipes[name];
   if (!R) throw new Error(`没有配方 ${name}，可选 ${Object.keys(recipes).join(' ')}`);
   const p = { ...R.defaults, ...params };
+  if (!Number.isInteger(variant) || !Number.isFinite(pitch) || !(pitch > 0)) throw new Error('renderRecipe: variant 必须为整数，pitch 必须有限且 > 0');
+  if (seed != null && !Number.isFinite(seed)) throw new Error('renderRecipe: seed 必须有限');
+  for (const [key, value] of Object.entries(p)) {
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`renderRecipe: params.${key} 必须有限`);
+    if (['dur', 'size', 'ring', 'f0', 'from', 'to', 'rate', 'q'].includes(key) && value != null && !(value > 0)) throw new Error(`renderRecipe: params.${key} 必须 > 0`);
+    if (['partials', 'harmonics', 'hits'].includes(key) && value != null && !(Number.isInteger(value) && value > 0)) throw new Error(`renderRecipe: params.${key} 必须是正整数`);
+  }
   const s = (seed ?? (nameHash(name) + variant * 7919)) >>> 0;
   const r = seeded(s);
   const jp = typeof jitter === 'number' ? jitter : (jitter?.pitch ?? 0), jg = typeof jitter === 'number' ? 0 : (jitter?.gain ?? 0);
+  if (!(Number.isFinite(jp) && jp >= 0 && jp < 1 && Number.isFinite(jg) && jg >= 0 && jg <= 1)) throw new Error('renderRecipe: jitter.pitch ∈ [0,1)，jitter.gain ∈ [0,1]');
   const jr = seeded(s ^ 0x5bd1e995);
   const kj = 1 + jp * (jr() * 2 - 1), gj = 1 - jg * jr();
   const k = pick(R.variants, variant) * pitch * kj;
@@ -517,6 +526,8 @@ const irCache = new Map();
 export function makeIR(space) {
   const spec = typeof space === 'string' ? { preset: space } : { ...space };
   if (!SPACES[spec.preset]) throw new Error(`space 只认 ${Object.keys(SPACES).join(' / ')}，或 { preset, gain?, scale?, bright?, seed? }，收到 ${JSON.stringify(space)}`);
+  for (const k of ['scale', 'bright']) if (spec[k] != null && !(Number.isFinite(spec[k]) && spec[k] > 0)) throw new Error(`space.${k} 必须有限且 > 0`);
+  if (spec.gain != null && !(Number.isFinite(spec.gain) && spec.gain >= 0)) throw new Error('space.gain 必须有限且 ≥ 0');
   const key = JSON.stringify([spec.preset, spec.scale ?? 1, spec.bright ?? 1, spec.seed ?? 0]);
   if (!irCache.has(key)) {
     const base = nameHash('space:' + spec.preset) + (spec.seed ?? 0) * 7919;
@@ -565,10 +576,11 @@ export function convolve(x, h) {
 
 /**
  * 尾音规则（对整张 cue 表一次性决定，确定）：同一个 space 的 cue 按时间排序，相邻间隔 < burstGap 的算一串；
- * 一串只在第一个和最后一个 cue 上挂尾音；写了 throttle 时，串中离上一次尾音 ≥ throttle 的 cue 也挂。
+ * 一串只在最后一个 cue 上挂尾音；edges: 'both' 也保留开头。写了 throttle 时，串中离上一次尾音 ≥ throttle 的 cue 也挂。
  * 返回 Map<cue 下标, space>
  */
-export function planTails(cues, { burstGap = 0.15, throttle = null } = {}) {
+export function planTails(cues, { burstGap = 0.15, throttle = null, edges = 'end' } = {}) {
+  if (!(Number.isFinite(burstGap) && burstGap > 0) || (throttle != null && !(Number.isFinite(throttle) && throttle > 0)) || !['end', 'both'].includes(edges)) throw new Error('spaceRule: burstGap/throttle 要为正秒数，edges 要为 end 或 both');
   const groups = new Map();
   cues.forEach((c, i) => { if (c.space != null) { const k = JSON.stringify(c.space); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); } });
   const plan = new Map();
@@ -580,7 +592,7 @@ export function planTails(cues, { burstGap = 0.15, throttle = null } = {}) {
       const first = j === 0 || t - cues[idx[j - 1]].t >= burstGap;
       const last = j === idx.length - 1 || cues[idx[j + 1]].t - t >= burstGap;
       const thr = throttle != null && t - lastTail >= throttle;
-      if (first || last || thr) { plan.set(i, cues[i].space); lastTail = t; }
+      if ((edges === 'both' && first) || last || thr) { plan.set(i, cues[i].space); lastTail = t; }
     }
   }
   return plan;
@@ -590,12 +602,14 @@ export function planTails(cues, { burstGap = 0.15, throttle = null } = {}) {
 const asSpec = (v, key) => (typeof v === 'number' ? { [key]: v } : v);
 /** 闷音强度 Z(t) = max_e z_e·e^(−(t−t_e)/recover_e)；cue.muffle = 数字 z（0..1）或 { amount, recover }。recover 默认 1.1 s */
 export function muffleCurve(cues, N) {
-  const ev = cues.filter((c) => c.muffle != null).map((c) => { const s = asSpec(c.muffle, 'amount'); return { t: c.t, z: clamp(s.amount ?? 0, 0, 1), tau: s.recover ?? 1.1 }; });
+  const ev = cues.filter((c) => c.muffle != null).map((c) => { const s = asSpec(c.muffle, 'amount'), z = s.amount, tau = s.recover ?? 1.1;
+    if (!(Number.isFinite(c.t) && Number.isFinite(z) && z >= 0 && z <= 1 && Number.isFinite(tau) && tau > 0)) throw new Error('muffle: t 必须有限，amount ∈ [0,1]，recover 必须有限且 > 0');
+    return { t: c.t, z, tau }; });
   if (!ev.length) return null;
   const Z = new Float32Array(N);
   for (const e of ev) {
-    const o = Math.max(0, Math.round(e.t * SR)), end = Math.min(N, o + Math.ceil(e.tau * 9 * SR));
-    for (let n = o; n < end; n++) { const z = e.z * Math.exp(-(n - o) / SR / e.tau); if (z > Z[n]) Z[n] = z; }
+    const first = Math.round(e.t * SR), o = Math.max(0, first), end = Math.min(N, first + Math.ceil(e.tau * 9 * SR));
+    for (let n = o; n < end; n++) { const z = e.z * Math.exp(-(n - first) / SR / e.tau); if (z > Z[n]) Z[n] = z; }
   }
   return Z;
 }
@@ -616,18 +630,21 @@ export function applyMuffle(x, Z, step = 32) {
 }
 /** 配乐增益曲线 g(t) = min_e [1 − (1 − depth_e)·e^(−(t−t_e)/recover_e)]；cue.duck = 数字 depth（压到的线性增益）或 { depth, recover }。recover 默认 0.286 s */
 export function duckCurve(cues, N) {
-  const ev = cues.filter((c) => c.duck != null).map((c) => { const s = asSpec(c.duck, 'depth'); return { t: c.t, d: clamp(s.depth ?? 1, 0, 1), tau: s.recover ?? 0.286 }; });
+  const ev = cues.filter((c) => c.duck != null).map((c) => { const s = asSpec(c.duck, 'depth'), d = s.depth, tau = s.recover ?? 0.286;
+    if (!(Number.isFinite(c.t) && Number.isFinite(d) && d >= 0 && d <= 1 && Number.isFinite(tau) && tau > 0)) throw new Error('duck: t 必须有限，depth ∈ [0,1]，recover 必须有限且 > 0');
+    return { t: c.t, d, tau }; });
   if (!ev.length) return null;
   const G = new Float32Array(N).fill(1);
   for (const e of ev) {
-    const o = Math.max(0, Math.round(e.t * SR)), end = Math.min(N, o + Math.ceil(e.tau * 9 * SR));
-    for (let n = o; n < end; n++) { const g = 1 - (1 - e.d) * Math.exp(-(n - o) / SR / e.tau); if (g < G[n]) G[n] = g; }
+    const first = Math.round(e.t * SR), o = Math.max(0, first), end = Math.min(N, first + Math.ceil(e.tau * 9 * SR));
+    for (let n = o; n < end; n++) { const g = 1 - (1 - e.d) * Math.exp(-(n - first) / SR / e.tau); if (g < G[n]) G[n] = g; }
   }
   return G;
 }
 
 /** 前馈压缩器（立体声联动、峰值检测、软拐点），原地。{ threshold dB, ratio, attack s, release s, knee dB, makeup dB } */
 export function compress(L, R, { threshold = -10, ratio = 6, attack = 0.002, release = 0.14, knee = 6, makeup = 0 } = {}) {
+  if (![threshold, ratio, attack, release, knee, makeup].every(Number.isFinite) || ratio < 1 || attack <= 0 || release <= 0 || knee < 0) throw new Error('compress: 参数必须有限，ratio ≥ 1，attack/release > 0，knee ≥ 0');
   const ca = Math.exp(-1 / (attack * SR)), cr = Math.exp(-1 / (release * SR));
   let g = 0, maxGr = 0;
   for (let n = 0; n < L.length; n++) {
@@ -646,6 +663,7 @@ export function compress(L, R, { threshold = -10, ratio = 6, attack = 0.002, rel
 }
 /** 软拐点削波（原地）：|x| ≤ knee 线性，以上 knee + (1−knee)·tanh((|x|−knee)/(1−knee))，渐近 ±1 */
 export function kneeClip(x, knee = 0.6) {
+  if (!(Number.isFinite(knee) && knee >= 0 && knee < 1)) throw new Error('kneeClip: knee ∈ [0,1)');
   for (let n = 0; n < x.length; n++) {
     const a = Math.abs(x[n]);
     if (a > knee) x[n] = Math.sign(x[n]) * (knee + (1 - knee) * Math.tanh((a - knee) / (1 - knee)));

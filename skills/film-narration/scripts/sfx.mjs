@@ -360,9 +360,9 @@ if (cfg.music) {
   const r = spawnSync('ffmpeg', ['-v', 'error', '-i', sp, '-f', 'f32le', '-ac', '2', '-ar', String(RATE), '-'], { maxBuffer: 1 << 30 });
   if (r.status !== 0) die(`music.src 解码失败 ${r.stderr}`);
   const inter = new Float32Array(r.stdout.buffer, r.stdout.byteOffset, r.stdout.length / 4), M = inter.length / 2;
-  const ML = new Float32Array(M), MR = new Float32Array(M);
-  for (let n = 0; n < M; n++) { const g = mixInfo.duck ? mixInfo.duck[Math.min(n, mixInfo.duck.length - 1)] : 1; ML[n] = inter[2 * n] * g; MR[n] = inter[2 * n + 1] * g; }
-  if (mmuf && mixInfo.muffle) { const Z = new Float32Array(M); Z.set(mixInfo.muffle.subarray(0, M)); filmRt.applyMuffle(ML, Z); filmRt.applyMuffle(MR, Z); }
+  const ML = new Float32Array(M), MR = new Float32Array(M), musicDuck = filmRt.duckCurve(cues, M);
+  for (let n = 0; n < M; n++) { const g = musicDuck ? musicDuck[n] : 1; ML[n] = inter[2 * n] * g; MR[n] = inter[2 * n + 1] * g; }
+  if (mmuf && mixInfo.muffle) { const Z = filmRt.muffleCurve(cues, M); filmRt.applyMuffle(ML, Z); filmRt.applyMuffle(MR, Z); }
   mkdirSync(dirname(op), { recursive: true });
   writeFileSync(op, mixer.toWavStereo(ML, MR));
   musicInfo = { src, out: mout, src_sha256: createHash('sha256').update(readFileSync(sp)).digest('hex'), duck: !!mixInfo.duck, muffle: !!(mmuf && mixInfo.muffle) };

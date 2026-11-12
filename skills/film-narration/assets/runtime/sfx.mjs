@@ -152,7 +152,9 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
   const wet = cues.some((c) => c.send != null && c.send !== 0);
   if (wet && !room) throw new Error('有 cue 写了 send > 0，但没给 room（{ size, damp }）：房间的大小是片子的选择，套件不给默认');
   const last = cues.reduce((m, c, i) => Math.max(m, c.t + spans[i]), 0);
-  const N = Math.ceil(Math.max(length, last + tail + (wet ? 2 : 0)) * RATE);
+  const tailIRs = new Map([...tails].map(([i, space]) => [i, makeIR(space)]));
+  const tailEnd = [...tailIRs].reduce((m, [i, ir]) => Math.max(m, cues[i].t + spans[i] + (ir.L.length - 1) / RATE), 0);
+  const N = Math.ceil(Math.max(length, last + tail + (wet ? 2 : 0), tailEnd ? tailEnd + tail : 0) * RATE);
   const L = new Float32Array(N), R = new Float32Array(N);
   const useDry = cues.some((c) => c.bus === 'dry');
   const DL = useDry ? new Float32Array(N) : null, DR = useDry ? new Float32Array(N) : null;
@@ -207,7 +209,7 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
   // 尾音：干声 × 程序化冲激响应（左右去相关），从 cue 起点叠回它所在的总线；超出片长的部分截掉
   const tailInfo = [];
   for (const [idx, { buf: src, first, out: [OL, OR] }] of tailSrc) {
-    const ir = makeIR(tails.get(idx));
+    const ir = tailIRs.get(idx);
     for (const [h, O] of [[ir.L, OL], [ir.R, OR]]) {
       const y = convolve(src, h);
       for (let n = 0; n < y.length; n++) { const at = first + n; if (at >= 0 && at < N) O[at] += y[n] * ir.gain; }

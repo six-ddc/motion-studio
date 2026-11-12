@@ -1,6 +1,6 @@
 ---
 name: film-narration
-description: 代码渲染视频的声音，以及画面时间轴的数据来源：旁白 TTS 合成（火山引擎豆包语音，edge / say 兜底）、按内容筛选音色、字级时间戳 narration.json、关键词触发动画 vo.at()、字幕的时间数据与 SRT/ASS 导出、代码合成音效并按关键词/节拍摆放、音乐节拍栅格、代码合成原创配乐（先定曲子再对齐事件）、配乐闪避与混音、声音质量门（开场静音、发闷、配乐截断）、音画合流与响度归一、成片转写校验。片子里有声音时使用：配音、旁白、解说、口播、TTS、选音色、多音字或术语读错、音画不同步、镜头该多长、音效时刻、节拍卡点、ducking、合流、LUFS/真峰、已有录音反推时间戳、成片念读校验。画面内字幕怎么画归 film-typography，素材文件从哪来、能不能商用归 film-assets。
+description: 代码渲染视频的声音，以及画面时间轴的数据来源：旁白 TTS 合成（火山引擎豆包语音，edge / say 兜底）、按内容筛选音色、字级时间戳 narration.json、关键词触发动画 vo.at()、字幕的时间数据与 SRT/ASS 导出、代码合成音效并按关键词/节拍摆放、分层音效与材质碰撞、空间尾音、事件闷音与配乐压低、音乐节拍栅格、代码合成原创配乐（先定曲子再对齐事件）、配乐闪避与混音、声音质量门（开场静音、发闷、配乐截断）、音画合流与响度归一、成片转写校验。片子里有声音时使用：配音、旁白、解说、口播、TTS、选音色、多音字或术语读错、音画不同步、镜头该多长、音效时刻、节拍卡点、ducking、合流、LUFS/真峰、已有录音反推时间戳、成片念读校验。画面内字幕怎么画归 film-typography，素材文件从哪来、能不能商用归 film-assets。
 ---
 
 # film-narration
@@ -126,6 +126,8 @@ const cap = vo.captionAt(t, { maxChars: 14, hold: 0 });
 
 ## 六、音效
 
+分层冲击、金属/木/玻璃/水碰撞、蓄力与低频落点、种子变体、空间 IR、事件闷音与配乐压低，按需读 `references/sfx-recipes.md`。它们使用离线确定合成；`--stats` 量峰值、NaN 与分段 RMS，声音的真实感和悦耳程度仍需试听。
+
 在 `films/<slug>/cues.json` 里描述事件，再用 `node <film-narration>/scripts/sfx.mjs --film <slug>` 渲成 `out/sfx.wav`：
 
 ```json
@@ -196,5 +198,5 @@ bash <film-narration>/scripts/mux.sh --film <slug> [--music assets/music.wav --m
 - `references/schemas.md`：各 json 的字段表，以及留白字段由谁读取（其他 skill 读这份）；`references/volcano-api.md`：请求体、经官方核实的模型与 2.0 语气机制、返回码、网络
 - `references/voices.md`：选音色的维度、代价、指标、候选组命令；`references/voice-catalog.json`：官方 2.0 中文音色目录（`voices.py --list-catalog [--md]` 读取它）
 - `references/pronunciation.md`：改读音的写法以及能否自动验证；`references/mix.md`：loudnorm 模式、限幅、成片真峰门；`references/verify.md`：模型、归一、挑文件、留白链路
-- `references/music.md`：定曲流程、`music.py` 的风格与代价、`audiocheck` 的口径与阈值；`references/sound-design.md`：各项音效能力的代价
+- `references/music.md`：定曲流程、`music.py` 的风格与代价、`audiocheck` 的口径与阈值；`references/sound-design.md`：各项音效能力的代价；`references/sfx-recipes.md`：分层配方、空间尾音与总线处理
 - 实测记录（不随安装）：仓库 `docs/verified/film-narration.md`

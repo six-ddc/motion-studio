@@ -1,0 +1,11 @@
+{
+ "master":{"comp":{"threshold":-12,"ratio":4,"attack":0.002,"release":0.14},"trim":0.7,"clip":{"knee":0.6}},
+ "spaceRule":{"burstGap":0.15},
+ "cues":[
+  {"t":0,"type":"crack","gain":0.4,"space":{"preset":"outdoor","gain":0.12}},
+  {"t":0.1,"type":"crack","gain":0.4,"space":{"preset":"outdoor","gain":0.12}},
+  {"t":1,"type":"impact","params":{"material":"metal"},"gain":0.4,"pan":-0.4},
+  {"t":2,"type":"boom","gain":0.35,"muffle":{"amount":0.7,"recover":0.6},"duck":{"depth":0.25,"recover":0.3}},
+  {"t":3,"type":"shimmer","gain":0.2,"bus":"dry"}
+ ]
+}

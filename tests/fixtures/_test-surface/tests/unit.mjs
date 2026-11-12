@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { importRuntime } from '../../../../skills/film-core/lib/runtime-node.mjs';
+const T=await importRuntime('three-film.module.js'),M=await importRuntime('surface3d.js');
+let checks=0;const ok=v=>{assert.ok(v);checks++;};
+const source=new T.BoxGeometry(1,1,1,6,6,6),before=source.attributes.position.array.slice();
+const opts={seed:17,transform:new T.Matrix4(),mottle:[{freq:1.1,amount:.2}],hemi:{down:.5,side:.8},contact:null,crease:null,rust:null};
+const a=M.weatherGeometry(source,opts),b=M.weatherGeometry(source,opts);assert.deepEqual(a.attributes.color.array,b.attributes.color.array);checks++;
+assert.deepEqual(source.attributes.position.array,before);checks++;ok(!source.attributes.color);
+const c=M.weatherGeometry(source,{...opts,seed:18});ok(a.attributes.color.array.some((x,i)=>x!==c.attributes.color.array[i]));
+const small=new T.BoxGeometry(1,1,1),dense=M.subdivideGeometry(small,{maxEdge:.3,maxTriangles:10000});ok(dense.attributes.position.count>small.attributes.position.count);
+const p=dense.attributes.position;let longest=0;for(let i=0;i<p.count;i+=3)for(const[u,v]of[[0,1],[1,2],[2,0]]){const x=new T.Vector3().fromBufferAttribute(p,i+u),y=new T.Vector3().fromBufferAttribute(p,i+v);longest=Math.max(longest,x.distanceTo(y));}ok(longest<=.3+1e-6);
+assert.throws(()=>M.subdivideGeometry(small,{maxEdge:.01,maxTriangles:10}));checks++;
+assert.throws(()=>M.weatherGeometry(small,{...opts,contact:{groundY:0,height:.1,darken:.5,warm:null,noise:null}}));checks++;
+const mat=new T.MeshStandardMaterial(),surf=M.applySurface(mat,{macro:{space:'object',freq:1,albedo:.1,roughness:.1},grime:{space:'object',ao:'none',freq:1,amount:.5,ramp:[.3,.8],aoWeight:1,darken:.2,roughen:.2}});
+surf.set({macro:{freq:2}});ok(surf.uniforms.uSfMacro.value.x===2);ok(surf.uniforms.uSfGrime2.value.x===1);
+assert.throws(()=>surf.set({macro:{space:'world'}}));checks++;
+assert.throws(()=>M.applySurface(mat,{macro:{space:'world',freq:1,albedo:.1,roughness:.1}}));checks++;
+console.log(`✓ surface3d ${checks} 条断言；种子可复现/输入不变/细分边长 ${longest.toFixed(6)}m/预算拒绝/通道独立`);

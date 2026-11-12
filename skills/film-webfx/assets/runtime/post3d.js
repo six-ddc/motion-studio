@@ -33,9 +33,10 @@
 //   dirt / streak / flare                  镜头脏污（加载期按种子生成）/ 变形镜头拉丝 / 太阳眩光与幽灵（可见度取当帧深度）
 //   tonemap: { curves:[a, b?] } + grade    显示链：曝光 → 两条曲线按比例混合 → 显示线性域调色 → 分段 sRGB 编码
 //   finish: { fxaa, sharpen, grain, dither }  编码之后一遍：FXAA（luma 存 alpha）、反锐化、三角颗粒、去色带抖动
-//   post.measure() / exposureTrack()       离线测光表 → exposure(t)（scripts/exposure-scan.mjs）
+//   post.measure() / exposureTrack()       离线测光表 → exposure(t)（流程见 post-chain.md）
 
 import * as THREE from './three-film.module.js';
+import { seeded } from './rand.js';
 
 const VERT = `varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
@@ -98,7 +99,7 @@ const TM_FN = { aces: 'tmAces', agx: 'tmAgx', neutral: 'tmNeutral' };
 
 /**
  * 离线测光表 → exposure(t)。纯函数：表在加载期读进来，平滑在这里一次算完，求值只是查表插值。
- *   table   scripts/exposure-scan.mjs 写的 JSON：{ fps, logAvg: [每个采样点的对数平均亮度（自然对数，曝光前的 HDR）] }
+ *   table   离线扫片写的 JSON：{ fps, logAvg: [每个采样点的对数平均亮度（自然对数，曝光前的 HDR）] }
  *   key     目标中灰（曝光后的平均亮度）
  *   power   补偿指数：1 = 完全补偿到 key，<1 = 只补一部分（暗场仍偏暗）
  *   min,max 曝光倍数的上下限
@@ -106,8 +107,8 @@ const TM_FN = { aces: 'tmAces', agx: 'tmAgx', neutral: 'tmNeutral' };
  * 返回 (t) => 曝光倍数；表外按两端取值。这几项都是风格参数，没有默认值。
  */
 export function exposureTrack(table, o = {}) {
-  if (!table || !(table.fps > 0) || !Array.isArray(table.logAvg) || !table.logAvg.length || table.logAvg.some((x) => !Number.isFinite(x)))
-    throw new Error('post3d.exposureTrack: table 要是 exposure-scan.mjs 写的 { fps, logAvg:[有限数…] }');
+  if (!table || !Number.isFinite(table.fps) || !(table.fps > 0) || !Array.isArray(table.logAvg) || !table.logAvg.length || table.logAvg.some((x) => !Number.isFinite(x)))
+    throw new Error('post3d.exposureTrack: table 要是 离线扫片写的 { fps, logAvg:[有限数…] }');
   for (const k of ['key', 'power', 'min', 'max', 'tau']) if (!Number.isFinite(o[k])) throw new Error(`post3d.exposureTrack: ${k} 必填（风格参数）`);
   if (!(o.key > 0) || !(o.min > 0) || o.max < o.min || o.tau < 0) throw new Error('post3d.exposureTrack: 要求 key>0、0<min≤max、tau≥0');
   const dt = 1 / table.fps, rate = o.tau > 0 ? 1 - Math.exp(-dt / o.tau) : 1;
@@ -118,6 +119,7 @@ export function exposureTrack(table, o = {}) {
     e[i] = Math.min(o.max, Math.max(o.min, Math.pow(o.key / Math.exp(a), o.power)));
   }
   return (t) => {
+    if(!Number.isFinite(t)) throw new Error('post3d.exposureTrack: t 要是有限数');
     const u = Math.min(e.length - 1, Math.max(0, t * table.fps)), i = Math.floor(u), f = u - i;
     return i + 1 < e.length ? e[i] + (e[i + 1] - e[i]) * f : e[i];
   };
@@ -147,9 +149,16 @@ export function createPost(S, cfg = {}) {
     ao: want('ao'), volume: want('volume'), dirt: want('dirt'), streak: want('streak'), flare: want('flare'),
     tonemap: want('tonemap'), grade: want('grade'), finish: want('finish') };
   for (const k of Object.keys(cfg)) if (!['samples', 'hdr', 'output', 'seed', ...Object.keys(E)].includes(k)) throw new Error(`post3d: 不认识的效果 ${k}`);
+  for (const k of ['ao', 'volume', 'bloom', 'dof', 'godrays']) {
+    const r = opt(k).resolution;
+    if (E[k] && r != null && !(Number.isFinite(r) && r > 0 && r <= 1)) throw new Error(`post3d: ${k}.resolution 要在 (0,1]`);
+  }
+  if ((E.ao || E.volume) && !S.camera.isPerspectiveCamera) throw new Error('post3d: AO / volume 的深度重建需要透视相机');
   const bloomMix = E.bloom && opt('bloom').mode === 'mix';
   if (E.bloom && opt('bloom').mode !== undefined && !['add', 'mix'].includes(opt('bloom').mode)) throw new Error(`post3d: bloom.mode 只能是 'add' 或 'mix'，收到 ${opt('bloom').mode}`);
-  if (bloomMix && !(opt('bloom').karis >= 0)) throw new Error('post3d: bloom.mode=\'mix\' 时 karis 必填（首级部分 Karis 平均的系数，0 = 不做）');
+  if (bloomMix && !(Number.isFinite(opt('bloom').karis) && opt('bloom').karis >= 0)) throw new Error('post3d: bloom.mode=\'mix\' 时 karis 必填（首级部分 Karis 平均的系数，0 = 不做）');
+  if (bloomMix && opt('bloom').clamp != null && !(Number.isFinite(opt('bloom').clamp) && opt('bloom').clamp > 0)) throw new Error('post3d: bloom.clamp 要是正的有限数');
+  if (E.streak && opt('streak').level != null && !(Number.isInteger(opt('streak').level) && opt('streak').level >= 0)) throw new Error('post3d: streak.level 要是非负整数');
   if ((E.grade || E.finish) && !E.tonemap) throw new Error('post3d: grade / finish 属于显示链，要同时开 tonemap: { curves: [...] }');
   if (E.finish && E.grain) throw new Error('post3d: 开了 finish 就用 finish.grain（编码之后、FXAA 之后加颗粒）；旧的 grain 会被 FXAA 抹掉');
   if ((E.dirt || E.streak) && !E.bloom) throw new Error('post3d: dirt / streak 要从泛光链取光（dirt = 泛光 × 脏污，streak 取泛光的低级 mip），先开 bloom');
@@ -165,7 +174,8 @@ export function createPost(S, cfg = {}) {
   const rtScene = mkRT(W, H, { depthBuffer: true, samples: cfg.samples ?? 0, ...(depthTex ? { depthTexture: depthTex } : {}) });
   // AO / 体积雾合成之后的 HDR 缓冲：之后的泛光、景深、体积光、合成都从它取。不开这两样就是 rtScene 本身
   const rtLit = (E.ao || E.volume) ? mkRT(W, H) : null;
-  const src = rtLit ?? rtScene;
+  let litActive=!!rtLit;
+  const src={get texture(){return litActive?rtLit.texture:rtScene.texture;}};
 
   // 全屏三角形
   const quadGeo = new THREE.BufferGeometry();
@@ -268,11 +278,20 @@ void main(){
   let vol = null;
   if (E.volume) {
     const o = opt('volume'), res = o.resolution ?? 0.5, N = o.steps, light = o.light;
+    if(renderer.shadowMap.type === THREE.VSMShadowMap)throw new Error('post3d: volume 要读深度阴影，不支持 VSM 方差阴影');
     if (!(Number.isInteger(N) && N >= 2 && N <= 256)) throw new Error('post3d: volume.steps 必填（2–256 的整数；离线可以 64+，成本与步数成正比）');
     if (!light || !light.isDirectionalLight) throw new Error('post3d: volume.light 必填：投阴影的 THREE.DirectionalLight（castShadow，renderer.shadowMap.enabled）');
     if (o.horizonGLSL != null && (typeof o.horizonGLSL !== 'string' || !/vec3\s+horizonColor\s*\(/.test(o.horizonGLSL)))
       throw new Error('post3d: volume.horizonGLSL 要是一段定义了 vec3 horizonColor(vec3 dir) 的 GLSL 字符串（连同它的 uniform 声明）');
     const hasHorizon = typeof o.horizonGLSL === 'string';
+    if(hasHorizon){
+      const reserved=new Set(['tZ','tShadow','shadowMatrix','camRot','camPos','uRay','skyZ']);
+      for(const m of o.horizonGLSL.matchAll(/uniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+(\w+)/g)){
+        const name=m[1],slot=o.horizonUniforms?.[name];
+        if(reserved.has(name)||name.startsWith('pv'))throw new Error(`post3d: horizon uniform ${name} 与体积雾内部名字冲突`);
+        if(!slot||slot.value==null||(typeof slot.value==='number'&&!Number.isFinite(slot.value)))throw new Error(`post3d: volume.horizonUniforms.${name} 要有有效的 {value}`);
+      }
+    }
     const rtA = mkRT(W * res, H * res), rtB = mkRT(W * res, H * res);
     let m = null;
     // 材质在第一次 run 时建：要等阴影图建出来，才知道它是比较采样（PCF → sampler2DShadow，硬件 2×2 PCF）还是原始深度
@@ -399,14 +418,31 @@ void main(){
     resA: { value: new THREE.Vector2(1, 1) }, resV: { value: new THREE.Vector2(1, 1) }, near: { value: 0.1 }, far: { value: 100 }, exposure: { value: 1 },
     aoStrength: { value: 0 }, aoLit: { value: new THREE.Vector3() }, aoTint: { value: new THREE.Vector3() } }) : null;
 
+  if (ao) zFor(ao.res);
+  if (vol) zFor(vol.res);
+
   // ---------- bloom ----------
   let bloom = null;
   if (E.bloom) {
     const o = opt('bloom'), L = o.levels ?? 5, res = o.resolution ?? 0.5;
+    if (!(Number.isInteger(L) && L >= 1 && L <= 12)) throw new Error('post3d: bloom.levels 要是 1–12 的整数');
     const down = [], up = [];
     for (let i = 0; i < L; i++) down.push(mkRT((W * res) / 2 ** i, (H * res) / 2 ** i));
     for (let i = 0; i < L - 1; i++) up.push(mkRT((W * res) / 2 ** i, (H * res) / 2 ** i));
-    const pre = mat(`varying vec2 vUv; uniform sampler2D tIn; uniform vec2 texel; uniform float threshold, knee; ${LUMA}
+    const pre = bloomMix ? mat(`varying vec2 vUv; uniform sampler2D tIn; uniform vec2 texel; uniform float karis, cap; ${LUMA}
+vec3 tap(vec2 o){ return min(max(texture2D(tIn, vUv + texel * o).rgb, vec3(0.)), vec3(cap)); }
+vec4 box(vec3 a, vec3 b, vec3 c, vec3 d){
+  vec4 w = 1. / (1. + karis * vec4(luma(a), luma(b), luma(c), luma(d)));
+  return vec4((a*w.x+b*w.y+c*w.z+d*w.w)/dot(w,vec4(1.)),1.);
+}
+void main(){
+  vec3 a=tap(vec2(-2,2)), b=tap(vec2(0,2)), c=tap(vec2(2,2));
+  vec3 d=tap(vec2(-2,0)), e=tap(vec2(0)), f=tap(vec2(2,0));
+  vec3 g=tap(vec2(-2,-2)), h=tap(vec2(0,-2)), i=tap(vec2(2,-2));
+  vec3 j=tap(vec2(-1,1)), k=tap(vec2(1,1)), l=tap(vec2(-1,-1)), m=tap(vec2(1,-1));
+  vec3 o=box(j,k,l,m).rgb*.5+(box(a,b,d,e).rgb+box(b,c,e,f).rgb+box(d,e,g,h).rgb+box(e,f,h,i).rgb)*.125;
+  gl_FragColor=vec4(o,1.);
+}`, { tIn:{value:null}, texel:{value:new THREE.Vector2()}, karis:{value:opt('bloom').karis}, cap:{value:opt('bloom').clamp ?? 65504} }) : mat(`varying vec2 vUv; uniform sampler2D tIn; uniform vec2 texel; uniform float threshold, knee; ${LUMA}
 void main(){
   // 4 个双线性 tap = 源的 4×4 盒子；阈值用软膝（knee）避免亮部边缘闪
   vec3 c = .25 * (texture2D(tIn, vUv + texel * vec2(-1,-1)).rgb + texture2D(tIn, vUv + texel * vec2(1,-1)).rgb
@@ -439,9 +475,10 @@ void main(){
 }`, { tLow: { value: null }, tHigh: { value: null }, texel: { value: new THREE.Vector2() }, radius: { value: 0.5 } });
     bloom = {
       out: () => (L > 1 ? up[0].texture : down[0].texture),
+      mip: (i) => down[Math.min(L - 1, Math.max(0, i))],
       run(p) {
-        pre.uniforms.tIn.value = rtScene.texture; pre.uniforms.texel.value.set(1 / W, 1 / H);
-        pre.uniforms.threshold.value = p.threshold; pre.uniforms.knee.value = Math.max(1e-4, p.knee);
+        pre.uniforms.tIn.value = src.texture; pre.uniforms.texel.value.set(1 / W, 1 / H);
+        if (!bloomMix) { pre.uniforms.threshold.value = p.threshold; pre.uniforms.knee.value = Math.max(1e-4, p.knee); }
         pass(pre, down[0]);
         for (let i = 1; i < L; i++) { dn.uniforms.tIn.value = down[i - 1].texture; dn.uniforms.texel.value.set(1 / down[i - 1].width, 1 / down[i - 1].height); pass(dn, down[i]); }
         for (let i = L - 2; i >= 0; i--) {
@@ -490,7 +527,7 @@ void main(){
       out: () => rt.texture,
       run(p) {
         const u = m.uniforms;
-        u.tColor.value = rtScene.texture; u.tDepth.value = depthTex;
+        u.tColor.value = src.texture; u.tDepth.value = depthTex;
         // CoC 参数以全分辨率像素给出，着色器里乘 cocScale 换到本 RT 的像素
         u.px.value.set(1 / rt.width, 1 / rt.height); u.focus.value = p.focus; u.blur.value = p.blur; u.maxBlur.value = Math.max(1, p.maxBlur);
         u.near.value = S.camera.near; u.far.value = S.camera.far;
@@ -519,7 +556,7 @@ void main(){
     rays = {
       out: () => rtB.texture, fade: 1,
       run(p) {
-        pre.uniforms.tIn.value = rtScene.texture; pre.uniforms.threshold.value = p.threshold; pass(pre, rtA);
+        pre.uniforms.tIn.value = src.texture; pre.uniforms.threshold.value = p.threshold; pass(pre, rtA);
         this.fade = 1;   // 每帧重设：只在本帧内有意义，不带到下一帧
         let lu;
         if (p.lightUV) lu = p.lightUV;
@@ -557,7 +594,7 @@ vec4 colorAt(vec2 uv){
   c.rgb = mix(c.rgb, texture2D(tDof, uv).rgb, smoothstep(.5, 1.5, cc));
 #endif
 #ifdef FX_BLOOM
-  c.rgb += texture2D(tBloom, uv).rgb * bloomStrength;
+  ${bloomMix ? 'c.rgb = mix(c.rgb, texture2D(tBloom, uv).rgb, clamp(bloomStrength, 0., 1.));' : 'c.rgb += texture2D(tBloom, uv).rgb * bloomStrength;'}
 #endif
 #ifdef FX_GODRAYS
   c.rgb += texture2D(tRays, uv).rgb * raysExposure;
@@ -608,7 +645,7 @@ void main(){
 #endif
   gl_FragColor = vec4(o * a, a);
 }`, {
-    tScene: { value: rtScene.texture }, tBloom: { value: null }, tDof: { value: null }, tRays: { value: null }, tDepth: { value: depthTex },
+    tScene: { value: src.texture }, tBloom: { value: null }, tDof: { value: null }, tRays: { value: null }, tDepth: { value: depthTex },
     res: { value: new THREE.Vector2(W, H) }, uTime: { value: 0 }, uSeed: { value: cfg.seed ?? 0 },
     bloomStrength: { value: 0 }, raysExposure: { value: 0 },
     dofFocus: { value: 1 }, dofBlur: { value: 0 }, dofMax: { value: 1 }, camNear: { value: 0.1 }, camFar: { value: 100 },
@@ -618,6 +655,164 @@ void main(){
     glAmount: { value: 0 }, glBucket: { value: 0 }, glSlices: { value: 1 }, glShift: { value: 0 }, glSplit: { value: 0 },
   }, { toneMapped: true, transparent: false });
 
+  // 显式显示链单独编译；旧 comp 的 shader 和旧参数路径保留。
+  if ((E.dirt || E.streak || E.flare) && !E.tonemap) throw new Error('post3d: dirt / streak / flare 要同时开 tonemap 显示链');
+  const dirtTex = E.dirt ? (() => {
+    const o=opt('dirt'), n=o.size ?? 128, count=o.count;
+    if (!(Number.isInteger(n)&&n>=8&&n<=1024&&Number.isInteger(count)&&count>0&&count<=4096)) throw new Error('post3d: dirt.size 要是 8–1024 整数，count 必填（1–4096）');
+    const rr=vec(o,'dirt','radius',2); if (!(rr[0]>0&&rr[1]>=rr[0])) throw new Error('post3d: dirt.radius 为归一化半径正区间');
+    const rnd=seeded(o.seed??cfg.seed??0), dots=Array.from({length:count},()=>[rnd(),rnd(),rr[0]+rnd()*(rr[1]-rr[0]),rnd()]);
+    const data=new Uint8Array(n*n*4);
+    for(let y=0;y<n;y++) for(let x=0;x<n;x++) {
+      let v=0;for(const [cx,cy,r,a] of dots){const d=((x+.5)/n-cx)**2+((y+.5)/n-cy)**2;v+=a*Math.exp(-d/(r*r));}
+      const at=(y*n+x)*4;data[at]=data[at+1]=data[at+2]=Math.round(255*Math.min(1,v));data[at+3]=255;
+    }
+    const t=new THREE.DataTexture(data,n,n);t.minFilter=t.magFilter=THREE.LinearFilter;t.needsUpdate=true;return t;
+  })() : null;
+  const streakN=E.streak?(opt('streak').samples??17):0;
+  if(E.streak&&!(Number.isInteger(streakN)&&streakN>=3&&streakN<=65&&streakN%2===1))throw new Error('post3d: streak.samples 为 3–65 奇数');
+  const ghostN=E.flare?opt('flare').ghosts:0;
+  if(E.flare&&!(Number.isInteger(ghostN)&&ghostN>=0&&ghostN<=12))throw new Error('post3d: flare.ghosts 必填（0–12 整数）');
+  const F=opt('finish');
+  for(const k of Object.keys(F))if(!['fxaa','sharpen','grain','dither'].includes(k))throw new Error(`post3d: finish 不认识 ${k}`);
+  const rtDisplay=E.finish?mkRT(W,H,{type:THREE.UnsignedByteType}):null;
+  const display=E.tonemap?mat(`${defs}${bloomMix?'#define BLOOM_MIX\n':''}
+varying vec2 vUv;
+uniform sampler2D tScene,tBloom,tDof,tRays,tDepth,tDirt,tStreak;
+uniform vec2 res, flareUV; uniform float exposure,tmMix,bloomStrength,raysExposure,chromaAmount;
+uniform float dofFocus,dofBlur,dofMax,camNear,camFar;
+uniform vec3 gradeShadow,gradeHighlight,gradeLift; uniform vec4 gradeShape;
+uniform float dirtAmount,streakAmount,streakRadius; uniform vec3 dirtColor,streakColor;
+uniform vec3 flareColor; uniform vec4 flareShape,flareGhost; uniform float flareAmount,flareFacing;
+uniform float vigAmount,vigRadius,vigSoft,scanCount,scanAmount,scanPhase;
+uniform float uSeed,glAmount,glBucket,glSlices,glShift,glSplit,grainAmount,grainFrame,grainSize;
+${HASH} ${VIEWZ} ${LUMA}
+${[...new Set(curves??[])].map(c=>TONEMAP[c]).join('\n')}
+vec3 srgb(vec3 c){c=max(c,vec3(0.));return mix(1.055*pow(c,vec3(1./2.4))-.055,12.92*c,lessThanEqual(c,vec3(.0031308)));}
+vec4 sceneAt(vec2 uv){
+  vec4 c=texture2D(tScene,uv);
+#ifdef FX_DOF
+  float z=viewDepth(texture2D(tDepth,uv).r,camNear,camFar);
+  float cc=min(dofMax,dofBlur*abs(1.-dofFocus/max(z,1e-4)));
+  c.rgb=mix(c.rgb,texture2D(tDof,uv).rgb,smoothstep(.5,1.5,cc));
+#endif
+  return c;
+}
+void main(){
+  vec2 uv=vUv,split=vec2(0.);
+#ifdef FX_GLITCH
+  float row=floor(uv.y*glSlices);float on=step(1.-glAmount,hash12(vec2(row,glBucket)+uSeed));
+  uv.x+=on*(hash12(vec2(row*1.7,glBucket+3.1)+uSeed)-.5)*2.*glShift;split=on*vec2(glSplit,0.);
+#endif
+  vec4 c=sceneAt(uv);float a=c.a;
+#ifdef FX_CHROMA
+  vec2 dir=(uv-.5)*chromaAmount/res.y+split;c.r=sceneAt(uv+dir).r;c.b=sceneAt(uv-dir).b;
+#else
+  c.r=sceneAt(uv+split).r;c.b=sceneAt(uv-split).b;
+#endif
+#ifdef FX_BLOOM
+  vec3 b=texture2D(tBloom,uv).rgb;
+  #ifdef BLOOM_MIX
+  c.rgb=mix(c.rgb,b,clamp(bloomStrength,0.,1.));
+  #else
+  c.rgb+=b*bloomStrength;
+  #endif
+  a=max(a,clamp(luma(b)*bloomStrength,0.,1.));
+#endif
+#ifdef FX_GODRAYS
+  c.rgb+=texture2D(tRays,uv).rgb*raysExposure;
+#endif
+#ifdef FX_DIRT
+  c.rgb+=texture2D(tBloom,uv).rgb*texture2D(tDirt,vUv).r*dirtColor*dirtAmount;
+#endif
+#ifdef FX_STREAK
+  vec3 st=vec3(0.);float sw=0.;
+  for(int i=0;i<${Math.max(1,streakN)};i++){
+    float q=(float(i)-float(${Math.max(1,streakN)}-1)*.5)/max(float(${Math.max(1,streakN)}-1)*.5,1.);
+    float w=exp(-q*q*4.5);st+=texture2D(tStreak,uv+vec2(q*streakRadius/res.x,0.)).rgb*w;sw+=w;
+  }
+  c.rgb+=st/max(sw,1e-5)*streakColor*streakAmount;
+#endif
+#ifdef FX_FLARE
+  float vis=0.;
+  for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
+    vec2 q=flareUV+vec2(float(i),float(j))*flareGhost.z/res;
+    float inside=step(0.,q.x)*step(q.x,1.)*step(0.,q.y)*step(q.y,1.);
+    vis+=inside*step(flareGhost.w,texture2D(tDepth,clamp(q,0.,1.)).r)/9.;
+  }
+  vis*=flareFacing;
+  vec2 aspect=vec2(res.x/res.y,1.);float r=length((uv-flareUV)*aspect);
+  float glare=exp(-r*r/max(flareShape.x*flareShape.x,1e-8));
+  glare+=flareShape.z*exp(-pow((r-flareShape.y)/max(flareShape.w,1e-5),2.));
+  for(int i=0;i<${Math.max(1,ghostN)};i++){
+    ${ghostN?'':'if(i==0)break;'}
+    vec2 center=flareUV+(.5-flareUV)*(float(i)+1.)*flareGhost.x;
+    float d=length((uv-center)*aspect)/max(flareGhost.y,1e-5);
+    glare+=pow(max(0.,1.-d*d),3.)/(float(i)+2.);
+  }
+  c.rgb+=flareColor*glare*flareAmount*vis;
+#endif
+  vec3 o=max(c.rgb,vec3(0.))*exposure;
+  o=${curves?.length===2?`mix(${TM_FN[curves[0]]}(o),${TM_FN[curves[1]]}(o),clamp(tmMix,0.,1.))`:curves?`${TM_FN[curves[0]]}(o)`:'o'};
+#ifdef FX_GRADE
+  float l=luma(o),w=smoothstep(gradeShape.x,gradeShape.y,l);
+  o*=mix(gradeShadow,gradeHighlight,w);
+  o=mix(o,o*o*(3.-2.*o),gradeShape.z);
+  o+=gradeLift*(1.-clamp(l,0.,1.));
+  o=mix(vec3(luma(o)),o,gradeShape.w);
+#endif
+  o=srgb(clamp(o,0.,1.));
+#ifdef FX_VIGNETTE
+  vec2 q=(vUv-.5)*vec2(res.x/res.y,1.)*2.;o*=mix(1.,smoothstep(vigRadius+vigSoft,vigRadius-vigSoft,length(q)/length(vec2(res.x/res.y,1.))),vigAmount);
+#endif
+#ifdef FX_SCANLINES
+  o*=1.-scanAmount*(.5+.5*cos(6.28318530718*(vUv.y*scanCount+scanPhase)));
+#endif
+#ifdef FX_GRAIN
+  o+=(hash13(vec3(floor(gl_FragCoord.xy/grainSize),grainFrame)+uSeed)-.5)*grainAmount;
+#endif
+  gl_FragColor=${E.finish?'vec4(o,luma(o))':'vec4(o*a,a)'};
+}`,{
+    ...comp.uniforms,tDirt:{value:dirtTex},tStreak:{value:null},exposure:{value:1},tmMix:{value:0},tmAgxLook:{value:new THREE.Vector2(1,1)},
+    gradeShadow:{value:new THREE.Vector3()},gradeHighlight:{value:new THREE.Vector3()},gradeLift:{value:new THREE.Vector3()},gradeShape:{value:new THREE.Vector4()},
+    dirtAmount:{value:0},dirtColor:{value:new THREE.Vector3()},streakAmount:{value:0},streakRadius:{value:0},streakColor:{value:new THREE.Vector3()},
+    flareUV:{value:new THREE.Vector2()},flareShape:{value:new THREE.Vector4()},flareGhost:{value:new THREE.Vector4()},flareAmount:{value:0},flareFacing:{value:0},flareColor:{value:new THREE.Vector3()},
+  }):null;
+  const finish=E.finish?mat(`varying vec2 vUv;uniform sampler2D tIn,tAlpha,tBloom;uniform vec2 px;
+uniform float edgeThreshold,subpixel,sharpAmount,sharpEdge,grainAmount,grainFrame,grainSize,grainDark,ditherAmount,uSeed,bloomStrength;
+${HASH} ${LUMA}
+vec3 readAA(vec2 uv){
+  vec4 c=texture2D(tIn,uv);
+${F.fxaa?`float n=texture2D(tIn,uv+vec2(0.,px.y)).a,s=texture2D(tIn,uv-vec2(0.,px.y)).a,e=texture2D(tIn,uv+vec2(px.x,0.)).a,w=texture2D(tIn,uv-vec2(px.x,0.)).a;
+  float lo=min(c.a,min(min(n,s),min(e,w))),hi=max(c.a,max(max(n,s),max(e,w)));
+  if(hi-lo<edgeThreshold*max(hi,.05))return c.rgb;
+  vec2 dir=vec2(-(n-s),e-w);dir=clamp(dir/(min(abs(dir.x),abs(dir.y))+.05),-4.,4.)*px;
+  vec3 q=.5*(texture2D(tIn,uv+dir/6.).rgb+texture2D(tIn,uv-dir/6.).rgb);
+  vec3 r=q*.5+.25*(texture2D(tIn,uv+dir*.5).rgb+texture2D(tIn,uv-dir*.5).rgb);
+  return mix(c.rgb,(luma(r)<lo||luma(r)>hi)?q:r,subpixel);`:'return c.rgb;'}
+}
+void main(){
+  vec3 c=readAA(vUv);
+${F.sharpen?`vec3 n=texture2D(tIn,vUv+vec2(0.,px.y)).rgb,s=texture2D(tIn,vUv-vec2(0.,px.y)).rgb,e=texture2D(tIn,vUv+vec2(px.x,0.)).rgb,w=texture2D(tIn,vUv-vec2(px.x,0.)).rgb;
+  float edge=max(max(abs(luma(n)-luma(s)),abs(luma(e)-luma(w))),abs(luma(c)-luma((n+s+e+w)*.25)));
+  c+=(c-(n+s+e+w)*.25)*sharpAmount*(1.-smoothstep(sharpEdge,sharpEdge*2.,edge));`:''}
+${F.grain?`vec2 cell=floor(gl_FragCoord.xy/grainSize);float g=hash13(vec3(cell,grainFrame)+uSeed)-hash13(vec3(cell+71.31,grainFrame+19.3)+uSeed);c+=g*grainAmount*mix(grainDark,1.,sqrt(clamp(luma(c),0.,1.)));`:''}
+${F.dither?`c+=(hash12(gl_FragCoord.xy+uSeed)-hash12(gl_FragCoord.yx+43.7+uSeed))*ditherAmount/255.;`:''}
+  float a=texture2D(tAlpha,vUv).a;
+${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));':''}
+  gl_FragColor=vec4(clamp(c,0.,1.)*a,a);
+}`,{tIn:{value:rtDisplay.texture},tAlpha:{value:src.texture},tBloom:{value:null},px:{value:new THREE.Vector2(1/W,1/H)},
+    edgeThreshold:{value:0},subpixel:{value:0},sharpAmount:{value:0},sharpEdge:{value:0},grainAmount:{value:0},grainFrame:{value:0},grainSize:{value:1},grainDark:{value:0},ditherAmount:{value:0},uSeed:{value:cfg.seed??0},bloomStrength:{value:0}}):null;
+
+  // 低分辨率 HDR 读回只给离线扫片使用；每次读的是当前帧，求值不依赖历史。
+  const measureRT=mkRT(32,18,{type:THREE.FloatType});
+  const measureM=mat(`varying vec2 vUv;uniform sampler2D tIn;${LUMA}void main(){gl_FragColor=vec4(log(max(luma(texture2D(tIn,vUv).rgb),1e-6)),0.,0.,1.);}`,{tIn:{value:rtScene.texture}});
+  function measure(){
+    const old=renderer.getRenderTarget();pass(measureM,measureRT);const data=new Float32Array(32*18*4);
+    renderer.readRenderTargetPixels(measureRT,0,0,32,18,data);renderer.setRenderTarget(old);
+    let sum=0;for(let i=0;i<data.length;i+=4)sum+=data[i];return sum/(32*18);
+  }
+
   const output = cfg.output ?? null;
 
   /** 每帧调（stage3d 的 render 会替你调）。params 全量，见文件头 */
@@ -625,13 +820,37 @@ void main(){
     if (!P) throw new Error('post3d: render(t, params) 每帧要传全量参数');
     const u = comp.uniforms;
     // 场景
+    if (!Number.isFinite(P.exposure) || P.exposure < 0) throw new Error('post3d: exposure 必填且≥0');
     renderer.setRenderTarget(rtScene);
     renderer.clear();
     renderer.render(S.scene, S.camera);
     if (!Number.isFinite(P.exposure)) throw new Error('post3d: exposure 必填（色调映射前的曝光倍数，1 = 不变）');
     renderer.toneMappingExposure = P.exposure;
+    if (rtLit) {
+      for (const [r, z] of zRTs) { zMat.uniforms.near.value=S.camera.near; zMat.uniforms.far.value=S.camera.far; zMat.uniforms.scale.value=1/r; pass(zMat,z); }
+      if (ao) {
+        const p=need(P.ao,'ao',['radius','intensity','strength','fade','tolerance','lit','tint']);
+        vec(p,'ao','fade',2); vec(p,'ao','lit',3); vec(p,'ao','tint',3);
+        if (!(p.radius>0 && p.intensity>=0 && p.strength>=0 && p.tolerance>0 && p.lit[1]>p.lit[0])) throw new Error('post3d: ao 要求 radius/tolerance>0、intensity/strength≥0、lit[1]>lit[0]');
+        ao.run(p,zFor(ao.res)); const l=litM.uniforms;
+        l.tAO.value=ao.out(); l.tZA.value=zFor(ao.res).texture; l.resA.value.set(zFor(ao.res).width,zFor(ao.res).height);
+        l.aoStrength.value=p.strength; l.aoLit.value.fromArray(p.lit); l.aoTint.value.fromArray(p.tint);
+      }
+      if (vol) {
+        const p=need(P.volume,'volume',['shadowBias','sigma','maxDist','skyDistance','ambientShadow','sun','ambient','height','far','phase','near','tolerance',...(vol.hasHorizon?[]:['farColor'])]);
+        for(const [k,n] of [['sun',3],['ambient',3],['height',3],['far',3],['phase',4],['near',4],...(vol.hasHorizon?[]:[['farColor',3]])]) vec(p,'volume',k,n);
+        if (!(p.sigma>=0 && p.maxDist>0 && p.skyDistance>0 && p.height[1]>0 && p.tolerance>0 && Math.abs(p.phase[0])<1 && Math.abs(p.phase[1])<1 && p.phase[2]>=0 && p.phase[2]<=1 && p.phase[3]>0 && p.height[2]>=0 && p.height[2]<=1 && p.far[0]>=0)) throw new Error('post3d: volume 密度/远景消光≥0、距离/标高/容差/phaseCap>0、HG 的 |g|<1、混合权重/底层比例在 0–1');
+        vol.run(p,zFor(vol.res)); const l=litM.uniforms;
+        l.tVol.value=vol.out(); l.tZV.value=zFor(vol.res).texture; l.resV.value.set(zFor(vol.res).width,zFor(vol.res).height);
+      }
+      litM.uniforms.near.value=S.camera.near;litM.uniforms.far.value=S.camera.far;litM.uniforms.exposure.value=P.exposure;
+      litActive=!!((ao && P.ao.strength>0 && P.ao.intensity>0) || (vol && P.volume.sigma>0));
+      if(litActive)pass(litM,rtLit);
+    }
+    u.tScene.value=src.texture;
+    if(finish)finish.uniforms.tAlpha.value=src.texture;
     // 强度为 0 的那一帧跳过整条子链（不是缓存：合成里它的权重恰好是 0，读到的旧纹理乘 0，输出与"跑了一遍"逐位相同）
-    if (bloom) { const p = need(P.bloom, 'bloom', ['threshold', 'knee', 'strength', 'radius']); if (p.strength > 0) bloom.run(p); u.tBloom.value = bloom.out(); u.bloomStrength.value = Math.max(0, p.strength); }
+    if (bloom) { const p = need(P.bloom, 'bloom', bloomMix ? ['strength','radius'] : ['threshold', 'knee', 'strength', 'radius']); if (p.strength > 0 || E.dirt || E.streak) bloom.run(p); u.tBloom.value = bloom.out(); u.bloomStrength.value = Math.max(0, p.strength); }
     if (dof) {
       const p = need(P.dof, 'dof', ['focus', 'blur', 'maxBlur']); if (p.blur > 0) dof.run(p);
       u.tDof.value = dof.out(); u.dofFocus.value = p.focus; u.dofBlur.value = Math.max(0, p.blur); u.dofMax.value = Math.max(1, p.maxBlur);
@@ -657,12 +876,43 @@ void main(){
       u.glShift.value = p.shift; u.glSplit.value = p.split ?? 0;
     }
     u.uTime.value = t;
-    pass(comp, output);
+    if (!display) { pass(comp, output); return; }
+    const d=display.uniforms; d.exposure.value=P.exposure;
+    const tm=need(P.tonemap,'tonemap',curves.length===2?['mix']:[]);d.tmMix.value=tm.mix??0;
+    if(curves.includes('agx')){vec(tm,'tonemap','agxLook',2);d.tmAgxLook.value.fromArray(tm.agxLook);}
+    if(E.grade){
+      const p=need(P.grade,'grade',['shadow','highlight','lift','range','contrast','saturation']);
+      vec(p,'grade','shadow',3);vec(p,'grade','highlight',3);vec(p,'grade','lift',3);vec(p,'grade','range',2);
+      if(!(p.range[1]>p.range[0]))throw new Error('post3d: grade.range 递增');
+      d.gradeShadow.value.fromArray(p.shadow);d.gradeHighlight.value.fromArray(p.highlight);d.gradeLift.value.fromArray(p.lift);
+      d.gradeShape.value.set(...p.range,p.contrast,p.saturation);
+    }
+    if(E.dirt){const p=need(P.dirt,'dirt',['amount','color']);vec(p,'dirt','color',3);d.dirtAmount.value=p.amount;d.dirtColor.value.fromArray(p.color);}
+    if(E.streak){const p=need(P.streak,'streak',['amount','radius','color']);vec(p,'streak','color',3);d.streakAmount.value=p.amount;d.streakRadius.value=p.radius;d.streakColor.value.fromArray(p.color);d.tStreak.value=bloom.mip(opt('streak').level??2).texture;}
+    if(E.flare){
+      const p=need(P.flare,'flare',['amount','color','radius','haloRadius','haloStrength','haloWidth','spacing','ghostRadius','visibilityRadius','depthCutoff']);vec(p,'flare','color',3);
+      let uv=p.lightUV,facing=1;
+      if(!uv){if(!p.light)throw new Error('post3d: flare.light（世界坐标）或 flare.lightUV 必填');const q=S.project(p.light,{x:0,y:0,w:1,h:1});uv=[q.x,1-q.y];facing=q.behind?0:1;}
+      vec({uv},'flare','uv',2);d.flareUV.value.fromArray(uv);d.flareFacing.value=facing;
+      d.flareShape.value.set(p.radius,p.haloRadius,p.haloStrength,p.haloWidth);d.flareGhost.value.set(p.spacing,p.ghostRadius,p.visibilityRadius,p.depthCutoff);
+      d.flareAmount.value=p.amount;d.flareColor.value.fromArray(p.color);
+    }
+    pass(display,rtDisplay??output);
+    if(finish){
+      const p=need(P.finish,'finish',[]),f=finish.uniforms;
+      if(F.fxaa){const v=need(p.fxaa,'finish.fxaa',['edgeThreshold','subpixel']);f.edgeThreshold.value=v.edgeThreshold;f.subpixel.value=v.subpixel;}
+      if(F.sharpen){const v=need(p.sharpen,'finish.sharpen',['amount','edgeThreshold']);if(!(v.edgeThreshold>0))throw new Error('post3d: finish.sharpen.edgeThreshold>0');f.sharpAmount.value=v.amount;f.sharpEdge.value=v.edgeThreshold;}
+      if(F.grain){const v=need(p.grain,'finish.grain',['amount','fps','size','darkWeight']);if(!(v.fps>0&&v.size>0))throw new Error('post3d: finish.grain fps/size>0');f.grainAmount.value=v.amount;f.grainFrame.value=Math.floor(t*v.fps+1e-6)%4096;f.grainSize.value=v.size;f.grainDark.value=v.darkWeight;}
+      if(F.dither){f.ditherAmount.value=need(p.dither,'finish.dither',['amount']).amount;}
+      if(bloom){f.tBloom.value=bloom.out();f.bloomStrength.value=P.bloom.strength;}
+      pass(finish,output);
+    }
+
   }
 
   const post = {
-    render, effects: { ...E }, rtScene,
-    dispose() { for (const x of [bloom, dof, rays]) if (x) { x.rts.forEach((r) => r.dispose()); x.mats.forEach((m) => m.dispose()); } comp.dispose(); rtScene.dispose(); },
+    render, measure, effects: { ...E }, rtScene,
+    dispose() { for (const r of zRTs.values()) r.dispose(); for (const x of [zMat,blurM,litM,display,finish,measureM]) x?.dispose(); for(const r of [rtLit,rtDisplay,measureRT]) r?.dispose(); dirtTex?.dispose(); quadGeo.dispose(); for (const x of [bloom, dof, rays, ao, vol]) if (x) { x.rts.forEach((r) => r.dispose()); x.mats.forEach((m) => m.dispose()); } comp.dispose(); rtScene.dispose(); },
   };
   S._attachPost(post);
   return post;

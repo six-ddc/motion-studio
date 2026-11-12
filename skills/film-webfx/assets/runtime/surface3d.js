@@ -474,7 +474,7 @@ export function applySurface(material, features) {
   if (features.grime) {
     defs.push(`SF_GRIME_POS ${features.grime.space === 'world' ? 'vSfPosW' : 'vSfPosO'}`);
     defs.push(`SF_GRIME_AO ${{ aoMap: 1, vertexColor: 2, none: 0 }[features.grime.ao]}`);
-    if (features.macro && features.macro.space === features.grime.space && features.macro.freq === features.grime.freq) defs.push('SF_GRIME_SHARE');
+    // 频率可逐帧独立修改：加载时碰巧相等不代表同一条噪声通道，保持分开求值。
   }
   if (struct['wet.splash'] === 'on') defs.push('SF_SPLASH');
   if (struct['wet.beads'] === 'on') defs.push('SF_BEADS');

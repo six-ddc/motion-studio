@@ -59,6 +59,12 @@
 | 景深、拉焦、背景虚化 | `createPost(S, {dof})` | webfx · post3d.js | +78 ms，是最贵的一项；blur=0 的帧会整条跳过 |
 | 色差、颗粒、暗角、扫描线、故障 | `createPost(S, {chroma, grain, vignette, scanlines, glitch})` | webfx · post3d.js | 合并成一遍为 +18.7 ms（在直通的 +11 之上几乎不额外花钱） |
 | 3D 粒子 | `createParticles(S, o)`（GPU 闭式）/ `createCPUParticles(S, o)` | webfx · particles3d.js | 1 万个粒子分别为 +0.9 / +1.3 ms |
+| 同源天空、云、环境反射、高度雾与 PCSS | `createLightRig` `createSky`、环境捕获与软阴影工具 | webfx · sky3d.js | 参见 webfx sky.md，天空与 PMREM 使用同一光照数据 |
+| 程序化硬表面模型、倒角与可动装配 | `bevelBox` `sweep` `lathe` `extrude` `mergeByMaterial` | webfx · model3d.js | 加载期几何成本，参见 modeling.md |
+| 物体湿润、积垢、高光抗闪烁与顶点色风化 | `applySurface` `weatherGeometry` | webfx · surface3d.js | 连续遮罩与米制尺度，参见 surfaces.md |
+| 共享破损贴图、湿地面和平面反射 | `bakePaint` `bakeGroundMask` `applyGround` `createPlanarReflection` | webfx · texture3d.js、ground3d.js | 反射多绘一次场景；参见 world-surfaces.md |
+| 速度拉伸火花、受光烟、火焰、软粒子 | `createSpriteFX` `bakeSmokeAtlas` | webfx · spritefx3d.js | 实例四边形；透明排序和厚度近似见 world-surfaces.md |
+| AO、阴影步进雾、眩光、能量泛光、显示调色与收尾 | `createPost` 的显式扩展；离线测光 `exposureTrack` | webfx · post3d.js | 新旧链分开；参见 post-chain.md |
 | **物理与粒子** | | | |
 | 抛物线、落地弹跳、物理弹簧、摆、轨道 | `ballistic` `bounce` `spring(t, x0, v0, target)` `pendulum` `orbit` | physics · closed.js | 闭式解：2000 个粒子 0.5 ms；做不了物体之间的相互作用 |
 | 粒子发射、爆发、飘散 | `emitter({seed, rate, life, loop})` `burst(t, {at, count})` | physics · closed.js | 开销为 O(rate × life)，与片长无关；循环不额外花钱 |
@@ -66,6 +72,9 @@
 | 碰撞小球、布料/绳、鸟群、流体 | `balls` `cloth` `boids` `fluid` + `createReplay({fps, init, step, clone})`；预烘焙回放 `loadBake(baseUrl)` → `makeTrack` | physics · sims.js、replay.js、baked.js | 每步 0.03–13 ms，fluid 超过 1000 个粒子基本只能预烘焙；烘焙后 300 个球 0.04 ms/帧，改参数要重新烘焙 |
 | 跟车、堵车、排队链式传播 | `chain` `chainDesign` `chainProbe` | physics · chain.js | 每步 0.03–0.17 ms |
 | 快进、慢镜头、定格、倒放 | `timeMap(keys, {reverse})` `fitRate` | physics · timemap.js | 见 physics timemap.md |
+| 事件多通道、闪光帧对齐、后坐/落地/步态/创伤屏震 | `eventTrack` `channel` `snapToFrames` `trauma`；`recoil` `stepBob` `perturbShot` | physics · events.js、feel.js | 纯函数事件响应；非线性限位仍需重放，参见 events.md |
 | **声音与时间** | | | |
 | 画面卡旁白某个词 | `makeNarration(data)` / `loadNarration` → `vo.at(kw)` `vo.endOf(kw)` `vo.after(kw, d)` | narration · narration.js | 见 narration SKILL.md §四 |
-| 合成音效（click pop thump whoosh tick chime sweep noise） | `SOUNDS` + `renderCues` / `renderStereo` → `toWav` / `toWavStereo` | narration · sfx.mjs | 没有授权风险；模仿真实物件的声音听起来廉价 |
+| 合成音效（click pop thump whoosh tick chime sweep noise） | `SOUNDS` + `renderCues` / `renderStereo` → `toWav` / `toWavStereo` | narration · sfx.mjs | 没有授权风险；简单音色缺少材质与空间层，真实物件声需另加分层并试听 |
+
+| 分层冲击、材质碰撞、蓄力、空间尾音、闷音与配乐压低 | `SOUNDS` 新配方 + cue `space` / `muffle` / `duck` / `bus` | narration · sfx.mjs、sfxdsp.mjs | 频谱与峰值能客观测，真实感仍需试听，参见 sfx-recipes.md |

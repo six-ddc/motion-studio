@@ -1,6 +1,6 @@
 ---
 name: film-webfx
-description: 代码渲染视频里决定"一个像素是什么颜色"的那一层：WebGL/WebGL2 片元着色器（程序化噪声、fbm、domain warp、流场、光线步进 SDF）、后期处理（泛光、色差、晕影、胶片颗粒、色调映射、景深、halation、变形镜头拉丝、镜头畸变）、风格化（半调、抖动、像素化、Sobel 勾线、油画 Kuwahara、ASCII）与调色（LUT、lift/gamma/gain）、多 pass 管线与可 seek 的帧间反馈（反应扩散、拖影、墨晕）、位移与扭曲（置换、水波、热浪、玻璃折射）、SVG 滤镜、canvas 混合模式与挖空，以及按帧契约改造的 three.js 三维（场景、材质打光、软阴影、三维运镜、GPU 闭式粒子、GLB 模型资产、三维文字可读性）。片子里出现"着色器""shader""GLSL""噪声纹理""辉光""bloom""颗粒""色散""扭曲""水波""玻璃""墨晕""烟雾""程序化背景""后期""调色""混合模式""挖空""3D""三维""three.js""立体""打光""景深""体积光""数字雨"，或要在 2D canvas、SVG 滤镜、WebGL 之间选型、估算着色器渲染耗时时使用。
+description: 代码渲染视频里决定"一个像素是什么颜色"的那一层：WebGL/WebGL2 片元着色器（程序化噪声、fbm、domain warp、流场、光线步进 SDF）、后期处理（泛光、色差、晕影、胶片颗粒、色调映射、景深、halation、变形镜头拉丝、镜头畸变）、风格化（半调、抖动、像素化、Sobel 勾线、油画 Kuwahara、ASCII）与调色（LUT、lift/gamma/gain）、多 pass 管线与可 seek 的帧间反馈（反应扩散、拖影、墨晕）、位移与扭曲（置换、水波、热浪、玻璃折射）、SVG 滤镜、canvas 混合模式与挖空，以及按帧契约改造的 three.js 三维（场景、材质打光、软阴影、三维运镜、GPU 闭式粒子、GLB 模型资产、三维文字可读性）。片子里出现"着色器""shader""GLSL""噪声纹理""辉光""bloom""颗粒""色散""扭曲""水波""玻璃""墨晕""烟雾""程序化背景""后期""调色""混合模式""挖空""3D""三维""three.js""立体""打光""景深""体积光""数字雨""建模""产品模型""硬表面""倒角""天空云层""湿地面""程序化贴图"，或要在 2D canvas、SVG 滤镜、WebGL 之间选型、估算着色器渲染耗时时使用。
 ---
 
 # film-webfx
@@ -10,6 +10,7 @@ description: 代码渲染视频里决定"一个像素是什么颜色"的那一�
 
 参考文档：`references/shaders.md`（着色器模板，以及时间怎么传进着色器）、`references/compositing.md`（WebGL 与 2D 互相合成、预乘、纹理只上传一次与 mipmap、混合模式、泛光链）、
 `references/svg-filters.md`、`references/three.md`（三维的全部内容）、`references/models.md`（模型资产）、`references/fxchain.md`（一个 context 里的多 pass 管线、浮点目标、帧间反馈的定步重放）、`references/stylize.md`（风格化后期与调色的效果菜单、参数、实测代价、对细线小字的影响）。
+程序化场景按需读 `references/modeling.md`（拆件、倒角、扫掠、装配合批）、`references/sky.md`（天/雾/环境同源、PCSS）、`references/surfaces.md`（湿润、积垢、顶点色风化）、`references/world-surfaces.md`（贴图烘焙、湿地面反射、受光烟火花）、`references/post-chain.md`（AO、阴影步进体积雾、镜头与显示后期）。
 
 ## 0. 先看代价（实测环境：SwiftShader 软件渲染，16 线程 CPU）
 
@@ -136,13 +137,15 @@ node <film-webfx>/scripts/fxreplay-check.mjs --film <slug>          # 用了 fxc
 场景里直接 `import './runtime/<名>'`，可用的文件有：`three-film.core.js` 和 `three-film.module.js`（three.js 0.186.1 按帧契约改造的版本，MIT 协议）、`stage3d.js`（舞台）、`camrig.js`（镜头）、`post3d.js`（后期链）、`particles3d.js`（粒子，依赖 `webfx.js`）；锚点用 film-core 的 `anchors.js`。完整 API、做法、代价全表和盲区见 `references/three.md`。例子有夹具 `tests/fixtures/_test-3d`（含阴性对照）和片子 `films/weiqi-fx-open`（立体棋盘、长运镜、焦点拉走）。
 
 **硬约束（three 版）**：
-1. 每次 seek 都从 t 算出全部状态，只调用一次 `renderer.render()`。在 three-film 里用到 `Clock` / `Timer` / `setAnimationLoop` / `Math.random` 系列 / `compileAsync` 会直接抛错（补丁表见 three.md §1）。
+1. 每次 seek 都从 t 算出全部状态；反射、深度与后期的额外 pass 在同一次帧求值内完成。用 `S.frame()` 统一复位和最终绘制。在 three-film 里用到 `Clock` / `Timer` / `setAnimationLoop` / `Math.random` 系列 / `compileAsync` 会直接抛错（补丁表见 three.md §1）。
 2. **保留式场景图会把上一帧的状态带过来**：`S.frame()` 每帧先把场景复位到 `S.freeze()` 时的静止姿态（默认开启；用 `reset:false` 关掉的代价是，漏写一个属性时只有 seamcheck 门 2 能发现）；在 seek 里 add/remove 对象会直接抛错。
 3. 后期的风格参数每帧全量传入，没有默认值；颗粒按 `floor(t·fps)` 播种；粒子是 (i, 种子, t) 的闭式函数。
 4. 锚点在渲染之后用渲染时的矩阵投影（`S.anchor`），不另外推算一遍坐标。
 
 可选能力：**世界文字可读性** `S.legible(name, obj, {from, to, em})` 测量投影后的字高与压扁比，film.json 的 `checks` 声明了 `{"legible": {"min_px": …, "min_squash": …}}` 时由 film-critique 判定（three.md §2）。
 **镜头** `camrig.js` 全部是 t 的纯函数（多镜硬切的镜头表用 `shots()` 生成关键帧），`fromCamera3d()` 让 film-motion 的 2D 标注与 3D 物体共用同一个投影（three.md §3）。
+**程序化模型与场景**：`model3d.js` 在加载期造型和装配；`sky3d.js` 统一天空、环境反射与雾；`surface3d.js` 注入物体材质，`texture3d.js` 烘焙共享破损贴图。`ground3d.js` 提供连续湿润地面和当帧平面反射，`spritefx3d.js` 提供速度拉伸火花与受光烟图集。它们均为可选能力，参数与代价见上方各参考页。
+**扩展后期**：`post3d.js` 显式开启能量混合泛光、AO、阴影体积雾、调色与镜头层、FXAA/锐化/抖动；用加载期测光表生成曝光曲线，见 `references/post-chain.md`。旧调用路径保持原有输出。
 **模型资产**（获取、度量、评审、内联、截面扫掠、LOD）见 `references/models.md`；模型要登记进 film-assets 的台账（"3D 模型"一类）。
 
 **代价**（SwiftShader，`dev/film-webfx/bench3d.mjs`，全表见 three.md §7）：基准 PBR 场景约 8 ms；只要开任何后期，先要付一遍直通，约多 11 ms；景深最贵（多 78 ms，blur=0 时整条跳过）；色差、颗粒、暗角、扫描线、故障合并成一遍，只比单开一项多几 ms；软阴影多 5 ms；GPU 闭式粒子 1 万个几乎不花时间。

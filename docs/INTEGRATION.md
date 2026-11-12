@@ -1116,3 +1116,29 @@ Chromium 给变换层选光栅缩放有滞回，seamcheck 门 1a/2/5 都红（1�
   `_pool.mjs`、`texcache-check.mjs`、`physcheck.mjs` 已改成按片子声明的后端起浏览器；`siblings.mjs`、`legibility.mjs`、`font_proof.mjs` 没改（前者靠 openScene 自动补起，后两者打开的不是片子画面）。
 
 仍没做：neutrality-eval 按新流程重跑；用新能力做一支完整的片子；Linux 与其他显卡上的 GPU 后端；装机 md 已到约 7300 行，高于 6500 的目标，需要一轮瘦身。
+
+## 游戏技法迁入：中断会话接续（2026-11-12）
+
+接续 Claude 会话 d19fc17d-c2f5-48f3-a64c-fdb848e0d084。最后的真实用户要求是“全部搬进来”，并增加代码建模；此前只做局部验证、不制作完整片子的约束沿用。原会话因账号verification_required中断；HEAD 879fb59保存了研究报告与约4750行阶段代码，尚缺后期执行接线、建模、第二批场景能力、文档入口和验证登记。
+
+本轮完成的能力，均可选，不改变内核或给片子默认审美：
+
+| 范围 | 运行时/参考 |
+|---|---|
+| 天空云、同源光照/雾/PMREM、PCSS与前景层 | sky3d.js / sky.md |
+| 湿润、宏观变化、积垢、三平面、抗闪烁、顶点风化 | surface3d.js / surfaces.md |
+| 倒角/扫掠/车床/挤出、可动装配、静态合批与贴花 | model3d.js / modeling.md |
+| 能量泛光、深度AO、阴影步进雾、镜头层、显示调色与收尾、离线曝光 | post3d.js / post-chain.md |
+| 事件多通道编排、节流/帧对齐、屏震/后坐/落地/步态/跟随 | film-physics events.js + feel.js / events.md |
+| 分层配方/材质碰撞、变体、IR、事件闷音/音乐压低、可选总线 | film-narration sfx*.mjs / sfx-recipes.md |
+| 米制贴图/共享破损、唯一湿地遮罩与当帧平面反射、烟火花/软粒子 | texture3d.js + ground3d.js + spritefx3d.js / world-surfaces.md |
+
+同步接上webfx/physics/narration的SKILL入口与motion效果索引，新增六组正对照夹具（含原有表面/事件夹具补全），修正事件阴性对照并登记统一回归。无需新强制门：纯函数能力由内核seam、三维已有seam4覆盖。未替换已交付片子的冻结副本；旧三维四帧PNG SHA256与旧音效PCM基线保持不变。
+
+接续过程中抓到并修复的跨模块问题：表面动态频率还错误共享噪声；镜像合批绕向与阴影属性；IR尾音截断、长配乐duck恢复与负时刻包络；后期零强度拷贝1LSB误差、horizon缺uniform静默取零；sprite输出域/透视速度/小阻力/最小像素补偿；反射误用主相机深度与RT面/mip恢复。两处旧测试曾产生假安全感：事件阴性对照不命中采样峰值、软交界差异实际来自错误反射；均已用针对性的正负对照替换。
+
+独立前向测试按文档新建两场景并跑乱序，实际修正了applyShot签名、合批后节点引用和像素单位说明。真实命令、SHA、误差、成本与未测范围分别记在verified/film-webfx.md、film-physics.md、film-narration.md的2026-11-12节。
+
+仍保留边界：没有制作完整片子或证明成片美术质量提高；声音未经人耳验收；未重跑创意盲评；天空/烟/水波/AO均有文档化近似；未验证跨机器/GPU像素一致；新参考页使装机文档超过6500行目标，保留selfcheck警告，尚未做整套文档瘦身。
+
+最终合格线：`dev/selfcheck.mjs`通过（装机文档8002行与既有SVG触发词重合两条警告）；完整`dev/test.mjs`的111项全部符合期望，用时533s；最终新增/修改的worldfx四项、post三项、surface两项再次针对性补测均通过。全仓库`accept`收据对账通过；sky/model/surface/post/events/worldfx六组局部夹具`accept --deep`均通过；三份能力SKILL的quick_validate与`git diff --check`通过。改动未提交。

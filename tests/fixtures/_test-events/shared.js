@@ -32,7 +32,7 @@ export function mount({ bad = false } = {}) {
   window.DURATION = D;
   window.seek = (t) => {
     let tr = T(t);
-    if (bad) { accT = Math.max(0, accT - 1.2 * Math.abs(t - lastT)) + (flash(t) > 0.99 ? 0.3 : 0); lastT = t; tr = Math.min(1, accT); }
+    if (bad) { accT = Math.min(1, accT + Math.max(0, t - lastT) * 0.1); lastT = t; tr = accT; }
     const sh = traumaShake(t, tr, { amp: { pitch: 40, yaw: 40, roll: 0.05 }, terms });
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#14171c'; ctx.fillRect(0, 0, W, H);
