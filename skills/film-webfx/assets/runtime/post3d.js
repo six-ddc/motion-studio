@@ -25,6 +25,15 @@
 //     chroma: { amount: 2.5 }, grain: { amount: .06, fps: 24 }, vignette: { amount: .5, radius: .75, softness: .45 },
 //   });
 // 这些数只是示例，不是推荐值——它们由本片 style_guide 定。
+//
+// 显式开启的扩展（不开 = 上面那条链逐像素不变；参数、两条链的顺序图、实测代价见 film-webfx references/post-chain.md）：
+//   bloom: { mode:'mix', karis, clamp? }   能量守恒泛光：无阈值、逐级 mix 上采样、最终 mix(col, bloom, strength)
+//   ao: { samples, resolution }            屏幕空间 AO（深度重建法线、螺旋采样、深度感知模糊、联合双边上采样、只压环境光区域）
+//   volume: { steps, light, resolution, horizonGLSL?, horizonUniforms? }   步进体积雾（太阳阴影图、高度介质、双瓣 HG、解析远景）
+//   dirt / streak / flare                  镜头脏污（加载期按种子生成）/ 变形镜头拉丝 / 太阳眩光与幽灵（可见度取当帧深度）
+//   tonemap: { curves:[a, b?] } + grade    显示链：曝光 → 两条曲线按比例混合 → 显示线性域调色 → 分段 sRGB 编码
+//   finish: { fxaa, sharpen, grain, dither }  编码之后一遍：FXAA（luma 存 alpha）、反锐化、三角颗粒、去色带抖动
+//   post.measure() / exposureTrack()       离线测光表 → exposure(t)（scripts/exposure-scan.mjs）
 
 import * as THREE from './three-film.module.js';
 
@@ -43,6 +52,75 @@ function need(p, effect, keys) {
   for (const k of keys) if (p[k] == null || (typeof p[k] === 'number' && !Number.isFinite(p[k])))
     throw new Error(`post3d: ${effect}.${k} 必填（风格参数，由本片 style_guide 定）`);
   return p;
+}
+// 定长数组参数（颜色、区间……）：长度不对或含非有限数就抛错
+function vec(p, effect, k, n) {
+  const v = p[k];
+  if (!Array.isArray(v) || v.length !== n || v.some((x) => !Number.isFinite(x))) throw new Error(`post3d: ${effect}.${k} 必填，${n} 个有限数（风格参数，由本片 style_guide 定）`);
+  return v;
+}
+
+// 交错梯度噪声（Jimenez 2014）：屏幕坐标的纯函数，逐帧不变——抖动步进起点、旋转采样圈
+const IGN = `float ign(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }`;
+
+// 显示链的色调映射曲线（输入：曝光后的线性 sRGB；输出：显示线性 0–1）
+const TONEMAP = {
+  // Hill 的 ACES 拟合（RRT+ODT 有理式）
+  aces: `vec3 tmAces(vec3 c){
+  const mat3 inM = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
+  const mat3 outM = mat3(vec3(1.60475, -0.10208, -0.00327), vec3(-0.53108, 1.10813, -0.07276), vec3(-0.07367, -0.00605, 1.07602));
+  vec3 v = inM * c; vec3 a = v * (v + 0.0245786) - 0.000090537; vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+  return clamp(outM * (a / b), 0., 1.); }`,
+  // AgX（Filament / Blender 拟合，与 three 的 AgXToneMapping 同一组矩阵），look 段：pow(power) + 以 luma 为中心的饱和度 sat（1,1 = 不加 look）
+  agx: `uniform vec2 tmAgxLook;
+vec3 tmAgx(vec3 color){
+  const mat3 toR = mat3(vec3(0.6274, 0.0691, 0.0164), vec3(0.3293, 0.9195, 0.0880), vec3(0.0433, 0.0113, 0.8956));
+  const mat3 fromR = mat3(vec3(1.6605, -0.1246, -0.0182), vec3(-0.5876, 1.1329, -0.1006), vec3(-0.0728, -0.0083, 1.1187));
+  const mat3 inset = mat3(vec3(0.856627153315983, 0.137318972929847, 0.11189821299995), vec3(0.0951212405381588, 0.761241990602591, 0.0767994186031903), vec3(0.0482516061458583, 0.101439036467562, 0.811302368396859));
+  const mat3 outset = mat3(vec3(1.1271005818144368, -0.1413297634984383, -0.14132976349843826), vec3(-0.11060664309660323, 1.157823702216272, -0.11060664309660294), vec3(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405));
+  color = inset * (toR * color);
+  color = clamp((log2(max(color, 1e-10)) + 12.47393) / 16.500999, 0., 1.);
+  vec3 x2 = color * color, x4 = x2 * x2;
+  color = 15.5 * x4 * x2 - 40.14 * x4 * color + 31.96 * x4 - 6.868 * x2 * color + 0.4298 * x2 + 0.1191 * color - 0.00232;
+  float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  color = pow(max(color, vec3(0.)), vec3(tmAgxLook.x));
+  color = l + (color - l) * tmAgxLook.y;
+  color = pow(max(outset * color, vec3(0.)), vec3(2.2));
+  return clamp(fromR * color, 0., 1.); }`,
+  // Khronos PBR Neutral（色相基本不动，只压高光）
+  neutral: `vec3 tmNeutral(vec3 c){
+  float x = min(c.r, min(c.g, c.b)); float off = x < 0.08 ? x - 6.25 * x * x : 0.04; c -= off;
+  float pk = max(c.r, max(c.g, c.b)); if (pk < 0.76) return c;
+  float np = 1. - 0.0576 / (pk + 0.24 - 0.76); c *= np / pk;
+  float g = 1. - 1. / (0.15 * (pk - np) + 1.); return clamp(mix(c, vec3(np), g), 0., 1.); }`,
+};
+const TM_FN = { aces: 'tmAces', agx: 'tmAgx', neutral: 'tmNeutral' };
+
+/**
+ * 离线测光表 → exposure(t)。纯函数：表在加载期读进来，平滑在这里一次算完，求值只是查表插值。
+ *   table   scripts/exposure-scan.mjs 写的 JSON：{ fps, logAvg: [每个采样点的对数平均亮度（自然对数，曝光前的 HDR）] }
+ *   key     目标中灰（曝光后的平均亮度）
+ *   power   补偿指数：1 = 完全补偿到 key，<1 = 只补一部分（暗场仍偏暗）
+ *   min,max 曝光倍数的上下限
+ *   tau     因果平滑时间常数（秒，0 = 不平滑）；在对数域做一阶指数平滑，只看过去，所以亮度突变后曝光"慢慢跟上"
+ * 返回 (t) => 曝光倍数；表外按两端取值。这几项都是风格参数，没有默认值。
+ */
+export function exposureTrack(table, o = {}) {
+  if (!table || !(table.fps > 0) || !Array.isArray(table.logAvg) || !table.logAvg.length || table.logAvg.some((x) => !Number.isFinite(x)))
+    throw new Error('post3d.exposureTrack: table 要是 exposure-scan.mjs 写的 { fps, logAvg:[有限数…] }');
+  for (const k of ['key', 'power', 'min', 'max', 'tau']) if (!Number.isFinite(o[k])) throw new Error(`post3d.exposureTrack: ${k} 必填（风格参数）`);
+  if (!(o.key > 0) || !(o.min > 0) || o.max < o.min || o.tau < 0) throw new Error('post3d.exposureTrack: 要求 key>0、0<min≤max、tau≥0');
+  const dt = 1 / table.fps, rate = o.tau > 0 ? 1 - Math.exp(-dt / o.tau) : 1;
+  const e = new Float64Array(table.logAvg.length);
+  let a = table.logAvg[0];
+  for (let i = 0; i < e.length; i++) {
+    a += rate * (table.logAvg[i] - a);
+    e[i] = Math.min(o.max, Math.max(o.min, Math.pow(o.key / Math.exp(a), o.power)));
+  }
+  return (t) => {
+    const u = Math.min(e.length - 1, Math.max(0, t * table.fps)), i = Math.floor(u), f = u - i;
+    return i + 1 < e.length ? e[i] + (e[i + 1] - e[i]) * f : e[i];
+  };
 }
 
 /**
@@ -64,15 +142,30 @@ export function createPost(S, cfg = {}) {
   const want = (k) => cfg[k] !== undefined && cfg[k] !== false;
   const opt = (k) => (typeof cfg[k] === 'object' && cfg[k] ? cfg[k] : {});
   const E = { bloom: want('bloom'), dof: want('dof'), godrays: want('godrays'), chroma: want('chroma'), grain: want('grain'),
-    vignette: want('vignette'), scanlines: want('scanlines'), glitch: want('glitch') };
+    vignette: want('vignette'), scanlines: want('scanlines'), glitch: want('glitch'),
+    // 以下是显式开启的扩展（references/post-chain.md）；都不开时上面那条链逐像素不变
+    ao: want('ao'), volume: want('volume'), dirt: want('dirt'), streak: want('streak'), flare: want('flare'),
+    tonemap: want('tonemap'), grade: want('grade'), finish: want('finish') };
   for (const k of Object.keys(cfg)) if (!['samples', 'hdr', 'output', 'seed', ...Object.keys(E)].includes(k)) throw new Error(`post3d: 不认识的效果 ${k}`);
+  const bloomMix = E.bloom && opt('bloom').mode === 'mix';
+  if (E.bloom && opt('bloom').mode !== undefined && !['add', 'mix'].includes(opt('bloom').mode)) throw new Error(`post3d: bloom.mode 只能是 'add' 或 'mix'，收到 ${opt('bloom').mode}`);
+  if (bloomMix && !(opt('bloom').karis >= 0)) throw new Error('post3d: bloom.mode=\'mix\' 时 karis 必填（首级部分 Karis 平均的系数，0 = 不做）');
+  if ((E.grade || E.finish) && !E.tonemap) throw new Error('post3d: grade / finish 属于显示链，要同时开 tonemap: { curves: [...] }');
+  if (E.finish && E.grain) throw new Error('post3d: 开了 finish 就用 finish.grain（编码之后、FXAA 之后加颗粒）；旧的 grain 会被 FXAA 抹掉');
+  if ((E.dirt || E.streak) && !E.bloom) throw new Error('post3d: dirt / streak 要从泛光链取光（dirt = 泛光 × 脏污，streak 取泛光的低级 mip），先开 bloom');
+  const curves = E.tonemap ? opt('tonemap').curves : null;
+  if (E.tonemap && (!Array.isArray(curves) || curves.length < 1 || curves.length > 2 || curves.some((c) => !TM_FN[c])))
+    throw new Error(`post3d: tonemap.curves 要是 1–2 条曲线（${Object.keys(TM_FN).join(' / ')}），两条时每帧传 tonemap.mix`);
 
   const mkRT = (w, h, extra = {}) => new THREE.WebGLRenderTarget(Math.max(1, Math.round(w)), Math.max(1, Math.round(h)), {
     type, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
     depthBuffer: false, stencilBuffer: false, generateMipmaps: false, ...extra,
   });
-  const depthTex = (E.dof) ? new THREE.DepthTexture(W, H, THREE.UnsignedIntType) : null;
+  const depthTex = (E.dof || E.ao || E.volume || E.flare) ? new THREE.DepthTexture(W, H, THREE.UnsignedIntType) : null;
   const rtScene = mkRT(W, H, { depthBuffer: true, samples: cfg.samples ?? 0, ...(depthTex ? { depthTexture: depthTex } : {}) });
+  // AO / 体积雾合成之后的 HDR 缓冲：之后的泛光、景深、体积光、合成都从它取。不开这两样就是 rtScene 本身
+  const rtLit = (E.ao || E.volume) ? mkRT(W, H) : null;
+  const src = rtLit ?? rtScene;
 
   // 全屏三角形
   const quadGeo = new THREE.BufferGeometry();
@@ -84,6 +177,227 @@ export function createPost(S, cfg = {}) {
     vertexShader: VERT, fragmentShader: frag, uniforms, depthTest: false, depthWrite: false, toneMapped: false, ...extra,
   });
   const pass = (m, target) => { quad.material = m; renderer.setRenderTarget(target); renderer.render(qScene, qCam); };
+
+  // ---------- AO / 体积雾（显式开启） ----------
+  // 线性深度：按各自分辨率从全分辨率深度 texelFetch 点采样（落在 texel 角上双线性取会挑错行，掠射地面上出条带），R32F
+  const zRTs = new Map();
+  const zMat = (E.ao || E.volume) ? mat(`varying vec2 vUv; uniform sampler2D tDepth; uniform float near, far, scale; ${VIEWZ}
+void main(){
+  ivec2 sz = textureSize(tDepth, 0);
+  ivec2 p = min(ivec2((floor(gl_FragCoord.xy) + 0.5) * scale), sz - 1);
+  gl_FragColor = vec4(viewDepth(texelFetch(tDepth, p, 0).r, near, far), 0., 0., 1.);
+}`, { tDepth: { value: depthTex }, near: { value: 0.1 }, far: { value: 100 }, scale: { value: 1 } }) : null;
+  const zFor = (res) => {
+    if (!zRTs.has(res)) zRTs.set(res, mkRT(W * res, H * res, { type: THREE.FloatType, format: THREE.RedFormat, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter }));
+    return zRTs.get(res);
+  };
+  // 深度感知的 7 tap 可分离模糊（AO 与体积雾共用）：权重随 |Δz|/z 超过容差线性降到 0
+  const blurM = (E.ao || E.volume) ? mat(`varying vec2 vUv; uniform sampler2D tSrc, tZ; uniform vec2 dir; uniform float tol;
+void main(){
+  float zc = texture2D(tZ, vUv).r; vec4 acc = vec4(0.); float ws = 0.;
+  for (int i = -3; i <= 3; i++) {
+    vec2 uv = vUv + dir * float(i);
+    float z = texture2D(tZ, uv).r;
+    float w = (1. - abs(float(i)) * .22) * max(0., 1. - abs(z - zc) / (tol * zc + .02));
+    acc += texture2D(tSrc, uv) * w; ws += w;
+  }
+  gl_FragColor = ws > 1e-4 ? acc / ws : texture2D(tSrc, vUv);
+}`, { tSrc: { value: null }, tZ: { value: null }, dir: { value: new THREE.Vector2() }, tol: { value: 0.1 } }) : null;
+  const blur2 = (a, b, z, tol) => {   // a → b（横）→ a（竖），结果留在 a
+    blurM.uniforms.tZ.value = z.texture; blurM.uniforms.tol.value = tol;
+    blurM.uniforms.tSrc.value = a.texture; blurM.uniforms.dir.value.set(1 / a.width, 0); pass(blurM, b);
+    blurM.uniforms.tSrc.value = b.texture; blurM.uniforms.dir.value.set(0, 1 / a.height); pass(blurM, a);
+  };
+  // 视线：透视相机下 ray(uv) 在 ndc 上是仿射的（含 setViewOffset 的主点偏移），由两个角上的射线插出来，z 分量归一到 −1
+  const _r = new THREE.Vector4();
+  const rayCorners = (out) => {
+    const inv = S.camera.projectionMatrixInverse;
+    _r.set(-1, -1, 1, 1).applyMatrix4(inv); const ax = _r.x / -_r.z, ay = _r.y / -_r.z;
+    _r.set(1, 1, 1, 1).applyMatrix4(inv); out.set(ax, ay, _r.x / -_r.z, _r.y / -_r.z);
+  };
+  const RAY = `uniform vec4 uRay; vec3 rayAt(vec2 uv){ return vec3(mix(uRay.x, uRay.z, uv.x), mix(uRay.y, uRay.w, uv.y), -1.); }`;
+
+  let ao = null;
+  if (E.ao) {
+    const o = opt('ao'), res = o.resolution ?? 0.5, N = o.samples;
+    if (!(Number.isInteger(N) && N >= 1 && N <= 64)) throw new Error('post3d: ao.samples 必填（1–64 的整数；采样数是成本与噪声的取舍，不给默认）');
+    const rtA = mkRT(W * res, H * res), rtB = mkRT(W * res, H * res);
+    // 由深度重建法线（左右、上下各取深度差小的一侧，不跨边缘）；3 圈螺旋 N 个采样，起始角按 IGN 旋转；
+    // 每个采样的贡献 (R²−|v|²)³·max((v·n − bias)/(|v|²+ε), 0)；70%–100% 远处淡出由 fade 给
+    const m = mat(`varying vec2 vUv; uniform sampler2D tZ; uniform vec2 texel; uniform float radius, intensity, aspect, fadeNear, fadeFar, skyZ;
+${IGN} ${RAY}
+void main(){
+  float z0 = texture2D(tZ, vUv).r;
+  if (z0 >= skyZ) { gl_FragColor = vec4(1.); return; }
+  vec3 P = rayAt(vUv) * z0;
+  vec2 ox = vec2(texel.x, 0.), oy = vec2(0., texel.y);
+  float zl = texture2D(tZ, vUv - ox).r, zr = texture2D(tZ, vUv + ox).r, zd = texture2D(tZ, vUv - oy).r, zu = texture2D(tZ, vUv + oy).r;
+  vec3 dx = abs(zl - z0) < abs(zr - z0) ? P - rayAt(vUv - ox) * zl : rayAt(vUv + ox) * zr - P;
+  vec3 dy = abs(zd - z0) < abs(zu - z0) ? P - rayAt(vUv - oy) * zd : rayAt(vUv + oy) * zu - P;
+  vec3 n = normalize(cross(dx, dy));
+  float R = radius, R2 = R * R;
+  float rUv = clamp(R / (z0 * (uRay.w - uRay.y)), 3. * texel.y, .14);
+  float rot = ign(gl_FragCoord.xy) * 6.2831853, sum = 0.;
+  for (int i = 0; i < ${N}; i++) {
+    float a = (float(i) + .5) / float(${N});
+    float th = a * 6.2831853 * 3. + rot;
+    vec2 o = vec2(cos(th), sin(th)) * a * rUv; o.x /= aspect;
+    vec2 uv2 = vUv + o;
+    vec3 v = rayAt(uv2) * texture2D(tZ, uv2).r - P;
+    float vv = dot(v, v), f = max(R2 - vv, 0.);
+    sum += f * f * f * max((dot(v, n) - (.015 + .004 * z0)) / (vv + .004), 0.);
+  }
+  float occ = max(0., 1. - intensity * sum * 5. / (R2 * R2 * R2 * float(${N})));
+  occ = mix(occ, 1., smoothstep(fadeNear, fadeFar, z0));
+  gl_FragColor = vec4(vec3(occ), 1.);
+}`, { tZ: { value: null }, texel: { value: new THREE.Vector2() }, uRay: { value: new THREE.Vector4() }, radius: { value: 1 }, intensity: { value: 1 },
+      aspect: { value: W / H }, fadeNear: { value: 50 }, fadeFar: { value: 100 }, skyZ: { value: 1e9 } });
+    ao = {
+      res, out: () => rtA.texture,
+      run(p, z) {
+        const u = m.uniforms;
+        u.tZ.value = z.texture; u.texel.value.set(1 / rtA.width, 1 / rtA.height); rayCorners(u.uRay.value);
+        u.radius.value = p.radius; u.intensity.value = p.intensity; u.fadeNear.value = p.fade[0]; u.fadeFar.value = Math.max(p.fade[0] + 1e-3, p.fade[1]);
+        u.skyZ.value = S.camera.far * 0.97;
+        pass(m, rtA); blur2(rtA, rtB, z, p.tolerance);
+      },
+      rts: [rtA, rtB], mats: [m],
+    };
+  }
+
+  let vol = null;
+  if (E.volume) {
+    const o = opt('volume'), res = o.resolution ?? 0.5, N = o.steps, light = o.light;
+    if (!(Number.isInteger(N) && N >= 2 && N <= 256)) throw new Error('post3d: volume.steps 必填（2–256 的整数；离线可以 64+，成本与步数成正比）');
+    if (!light || !light.isDirectionalLight) throw new Error('post3d: volume.light 必填：投阴影的 THREE.DirectionalLight（castShadow，renderer.shadowMap.enabled）');
+    if (o.horizonGLSL != null && (typeof o.horizonGLSL !== 'string' || !/vec3\s+horizonColor\s*\(/.test(o.horizonGLSL)))
+      throw new Error('post3d: volume.horizonGLSL 要是一段定义了 vec3 horizonColor(vec3 dir) 的 GLSL 字符串（连同它的 uniform 声明）');
+    const hasHorizon = typeof o.horizonGLSL === 'string';
+    const rtA = mkRT(W * res, H * res), rtB = mkRT(W * res, H * res);
+    let m = null;
+    // 材质在第一次 run 时建：要等阴影图建出来，才知道它是比较采样（PCF → sampler2DShadow，硬件 2×2 PCF）还是原始深度
+    const build = (cmp) => mat(`${cmp ? '#define SHADOW_CMP\n' : ''}varying vec2 vUv; uniform sampler2D tZ;
+#ifdef SHADOW_CMP
+uniform sampler2DShadow tShadow;
+#else
+uniform sampler2D tShadow;
+#endif
+uniform mat4 shadowMatrix; uniform mat3 camRot; uniform vec3 camPos;
+uniform float skyZ, pvShadowBias, pvSigma, pvMaxDist, pvSkyDist, pvAmbShadow;
+uniform vec3 pvSunDir, pvSun, pvAmb, pvHeight, pvFar; uniform vec4 pvPhase, pvNear;
+${hasHorizon ? o.horizonGLSL : 'uniform vec3 pvFarColor; vec3 horizonColor(vec3 d){ return pvFarColor; }'}
+${IGN} ${RAY}
+float shape(float y){ return pvHeight.z + (1. - pvHeight.z) * exp(-max(y - pvHeight.x, 0.) / pvHeight.y); }
+float hg(float mu, float g){ float g2 = g * g; return (1. - g2) / (12.566371 * pow(max(1. + g2 - 2. * g * mu, 1e-4), 1.5)); }
+float sunVis(vec3 p){
+  vec4 sc = shadowMatrix * vec4(p, 1.); sc.xyz /= sc.w;
+  if (sc.x < 0. || sc.x > 1. || sc.y < 0. || sc.y > 1. || sc.z < 0. || sc.z > 1.) return 1.;
+#ifdef SHADOW_CMP
+  return texture(tShadow, vec3(sc.xy, sc.z - pvShadowBias));
+#else
+  return step(sc.z - pvShadowBias, texture2D(tShadow, sc.xy).r);
+#endif
+}
+void main(){
+  float z = texture2D(tZ, vUv).r;
+  vec3 vd = rayAt(vUv); float rl = length(vd);
+  vec3 rd = normalize(camRot * vd);
+  float dist = z * rl;
+  bool sky = z >= skyZ;
+  float maxD = sky ? pvSkyDist : min(dist, pvMaxDist);
+  float mu = dot(rd, pvSunDir);
+  float ph = min(hg(mu, pvPhase.x) * pvPhase.z + hg(mu, pvPhase.y) * (1. - pvPhase.z), pvPhase.w);
+  float j = ign(gl_FragCoord.xy);
+  vec3 acc = vec3(0.); float T = 1., tPrev = 0.;
+  for (int i = 0; i < ${N}; i++) {
+    float f = (float(i) + 1.) / float(${N});
+    float t1 = maxD * f * (.35 + .65 * f);            // 近处步子密
+    float ds = t1 - tPrev, tj = tPrev + ds * j;
+    vec3 p = camPos + rd * tj;
+    float sh = sunVis(p);
+    float Ti = exp(-pvSigma * shape(p.y) * ds);
+    float nearW = mix(pvNear.x, pvNear.y, smoothstep(pvNear.z, pvNear.w, tj));
+    vec3 srcL = pvSun * (ph * sh * nearW) + pvAmb * (pvAmbShadow + (1. - pvAmbShadow) * sh);
+    acc += T * srcL * (1. - Ti);                       // 每段按 (1−透射) 积分：能量守恒，不随步数整体变亮
+    T *= Ti; tPrev = t1;
+  }
+  // 超出 maxDist 的几何：梯形近似光学厚度，散射色取这个方向的地平线色（与天空同源）
+  if (!sky && dist > pvMaxDist) {
+    float h1 = camPos.y + rd.y * pvMaxDist, h2 = camPos.y + rd.y * dist;
+    float Tf = exp(-pvSigma * pvFar.x * (dist - pvMaxDist) * .5 * (shape(h1) + shape(h2)));
+    acc += T * (horizonColor(rd) * pvFar.y + pvAmb * pvFar.z) * (1. - Tf);
+    T *= Tf;
+  }
+  gl_FragColor = vec4(acc, T);
+}`, Object.assign({
+      tZ: { value: null }, tShadow: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, camRot: { value: new THREE.Matrix3() },
+      camPos: { value: new THREE.Vector3() }, uRay: { value: new THREE.Vector4() }, skyZ: { value: 1e9 },
+      pvShadowBias: { value: 0 }, pvSigma: { value: 0 }, pvMaxDist: { value: 1 }, pvSkyDist: { value: 1 }, pvAmbShadow: { value: 0 },
+      pvSunDir: { value: new THREE.Vector3() }, pvSun: { value: new THREE.Vector3() }, pvAmb: { value: new THREE.Vector3() },
+      pvHeight: { value: new THREE.Vector3() }, pvFar: { value: new THREE.Vector3() }, pvPhase: { value: new THREE.Vector4() },
+      pvNear: { value: new THREE.Vector4() }, pvFarColor: { value: new THREE.Vector3() },
+    }, hasHorizon ? (o.horizonUniforms ?? {}) : {}));   // 天空的 uniform 槽按引用并进来：天空那边每帧写的值这里同时生效
+    const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+    vol = {
+      res, hasHorizon, out: () => rtA.texture,
+      run(p, z) {
+        const sm = light.shadow && light.shadow.map;
+        if (!renderer.shadowMap.enabled || !light.castShadow || !sm || !sm.depthTexture)
+          throw new Error('post3d: volume 要读太阳阴影图：renderer.shadowMap.enabled（createStage3D shadows:true）、volume.light.castShadow = true，且这盏灯在场景里');
+        if (!m) { m = build(sm.depthTexture.compareFunction != null); vol.mats.push(m); }
+        const u = m.uniforms;
+        u.tZ.value = z.texture; u.tShadow.value = sm.depthTexture; u.shadowMatrix.value.copy(light.shadow.matrix);
+        u.camRot.value.setFromMatrix4(S.camera.matrixWorld); S.camera.getWorldPosition(u.camPos.value); rayCorners(u.uRay.value);
+        u.skyZ.value = S.camera.far * 0.97;
+        light.getWorldPosition(_a); light.target.getWorldPosition(_b); u.pvSunDir.value.copy(_a).sub(_b).normalize();
+        u.pvShadowBias.value = p.shadowBias; u.pvSigma.value = p.sigma; u.pvMaxDist.value = p.maxDist; u.pvSkyDist.value = p.skyDistance;
+        u.pvAmbShadow.value = p.ambientShadow; u.pvSun.value.fromArray(p.sun); u.pvAmb.value.fromArray(p.ambient);
+        u.pvHeight.value.set(p.height[0], Math.max(1e-3, p.height[1]), p.height[2]); u.pvFar.value.fromArray(p.far);
+        u.pvPhase.value.fromArray(p.phase); u.pvNear.value.set(p.near[0], p.near[1], p.near[2], Math.max(p.near[2] + 1e-3, p.near[3]));
+        if (!this.hasHorizon) u.pvFarColor.value.fromArray(p.farColor);
+        pass(m, rtA); blur2(rtA, rtB, z, p.tolerance);
+      },
+      rts: [rtA, rtB], mats: [],
+    };
+  }
+
+  // HDR 合成：联合双边上采样（双线性权重 × 1/(0.015 + |Δz|/z)）→ AO 只压"环境光区域" → col·T + 散射
+  const litM = rtLit ? mat(`${E.ao ? '#define AO\n' : ''}${E.volume ? '#define VOL\n' : ''}varying vec2 vUv;
+uniform sampler2D tColor, tDepth, tAO, tZA, tVol, tZV; uniform vec2 resA, resV; uniform float near, far, exposure;
+uniform float aoStrength; uniform vec3 aoLit, aoTint; ${VIEWZ} ${LUMA}
+vec4 upsample(sampler2D tex, sampler2D tz, vec2 hres, float zc){
+  vec2 hp = vUv * hres - .5, f = fract(hp), base = (floor(hp) + .5) / hres, tx = 1. / hres;
+  vec4 acc = vec4(0.); float ws = 0.;
+  for (int k = 0; k < 4; k++) {
+    vec2 o = vec2(float(k - (k / 2) * 2), float(k / 2));
+    vec2 uv = base + o * tx;
+    float w = (o.x > .5 ? f.x : 1. - f.x) * (o.y > .5 ? f.y : 1. - f.y);
+    w = max(w / (.015 + abs(texture2D(tz, uv).r - zc) / zc), 1e-5);
+    acc += texture2D(tex, uv) * w; ws += w;
+  }
+  return acc / ws;
+}
+void main(){
+  vec4 s = texture2D(tColor, vUv);
+  vec3 col = max(s.rgb, vec3(0.));
+  float d = texture2D(tDepth, vUv).r;
+  float zc = viewDepth(d, near, far);
+#ifdef AO
+  if (d < 0.99999) {
+    float occ = upsample(tAO, tZA, resA, zc).r;
+    float lit = smoothstep(aoLit.x, aoLit.y, luma(col) * exposure);   // 被直射光照亮的像素 AO 退让：遮蔽属于环境光
+    float a = mix(1., occ, aoStrength * (1. - aoLit.z * lit));
+    col *= mix(vec3(a), vec3(1.), aoTint);
+  }
+#endif
+#ifdef VOL
+  vec4 v = upsample(tVol, tZV, resV, zc);
+  col = col * v.a + v.rgb;
+#endif
+  gl_FragColor = vec4(col, s.a);
+}`, { tColor: { value: rtScene.texture }, tDepth: { value: depthTex }, tAO: { value: null }, tZA: { value: null }, tVol: { value: null }, tZV: { value: null },
+    resA: { value: new THREE.Vector2(1, 1) }, resV: { value: new THREE.Vector2(1, 1) }, near: { value: 0.1 }, far: { value: 100 }, exposure: { value: 1 },
+    aoStrength: { value: 0 }, aoLit: { value: new THREE.Vector3() }, aoTint: { value: new THREE.Vector3() } }) : null;
 
   // ---------- bloom ----------
   let bloom = null;

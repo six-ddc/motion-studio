@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-physics 事件编排夹具（events.js / feel.js：一个事件驱动闪白、屏震、粒子、弹簧、贴花）",
+  "entry": "scene.html",
+  "format": "9x16",
+  "fps": 30,
+  "duration": 6,
+  "loop": false,
+  "stage": "#stage",
+  "checks": []
+}

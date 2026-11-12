@@ -1,0 +1,13 @@
+{
+  "slug": "_test-surface",
+  "title": "film-webfx 表面注入与顶点色风化验收片",
+  "format": "16x9",
+  "formats": ["16x9", "9x16"],
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "stage": "#stage",
+  "duration": 4,
+  "loop": false,
+  "checks": []
+}

@@ -39,9 +39,20 @@
 //   { "v": true, ... }  同上，x 取事件的 v（只在 fromScene 模板里有意义）
 // 需要场景（anchor / probe / fromScene）时用 film-core 的 openScene 开一次页面（Playwright）。
 // --dump-events 只打印场景事件；--emit <path> 把场景事件生成的 cue 写成普通 cue 数组（定稿留痕/手改用）。
+//
+// ── 分层配方与总线（film-narration references/sfx-recipes.md）──────────
+// type 也可以是运行时 RECIPES 里的配方名（crack boom impact zing passby clatter step land rub riser sub shimmer hum）：
+//   params 配方参数；variant 变体（不写 = 同名配方按时间顺序轮换）；pitch 音高系数；jitter 音高/增益抖动。只用这些仍走单声道路径
+// 下列字段任一出现就走立体声路径：
+//   space      "outdoor" | "indoor" | { preset, gain?, scale?, bright?, seed? } 程序化冲激响应尾音；顶层 spaceRule { burstGap, throttle } 决定挂在哪几个 cue 上
+//   muffle     z 或 { amount, recover }：事件后主总线全局低通闷音；bus: "dry" 的 cue 不过闷音
+//   duck       depth 或 { depth, recover }：事件后压低配乐。顶层 music { src, out, muffle? } 让本脚本输出一份处理过的配乐给 mux.sh --music
+// 顶层 master { comp?, trim?, clip? }：总线末级压缩 + 软削波，不写就没有（输出与旧版逐样本相同）
+// --stats 打印峰值、过载样本、NaN、直流、每 0.5 s RMS（NaN 时退出 1）；--list-sounds 列出音色与配方
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve, isAbsolute } from 'node:path';
+import { createHash } from 'node:crypto';
 import { FILM_OPTS, parseArgs, resolveFilm, fail as die } from '../../film-core/lib/film.mjs';
 import { importRuntime } from '../../film-core/lib/runtime-node.mjs';
 
@@ -53,9 +64,24 @@ const A = parseArgs({
     cues: ['<file>', 'cue 表（相对片子目录，默认 cues.json）'], out: ['<file>', '输出 wav（相对片子目录，默认 out/sfx.wav）'],
     format: ['<9x16|1x1|16x9>', '需要开场景（anchor / probe / fromScene）时用的画幅'],
     'dump-events': '只打印场景 window.events() 的事件', emit: ['<path>', '把场景事件生成的 cue 写成普通 cue 数组'],
+    stats: '渲完打印自测统计：峰值、过载样本数、NaN、直流偏移、每 0.5 s RMS（有 NaN 时退出 1），并记进 out/sfx.json',
+    'list-sounds': '列出可用的合成音色与分层配方（含片内 runtime/sfx.mjs）后退出',
   },
 });
 const arg = (k) => A.flag(k, undefined);
+const wantStats = process.argv.includes('--stats');
+if (process.argv.includes('--list-sounds') && A.film == null) {
+  const rt = await importRuntime('sfx.mjs');
+  listSounds(rt, 'sfx.mjs（套件 film-narration）'); process.exit(0);
+}
+function listSounds(rt, label) {
+  console.log(`音色来自 ${label}`);
+  console.log(`  合成音色（SOUNDS）：${Object.keys(rt.SOUNDS).join(' ')}`);
+  if (!rt.RECIPES) { console.log('  这份运行时没有 RECIPES（分层配方）'); return; }
+  console.log('  分层配方（RECIPES，cue 写 "type": 名字，参数写在 params）：');
+  for (const [k, r] of Object.entries(rt.RECIPES))
+    console.log(`    ${k.padEnd(8)} [${r.use}] ${r.about}\n             变体 ${r.variants.length} 个；params 默认 ${JSON.stringify(r.defaults)}`);
+}
 
 let F;
 try { F = resolveFilm(A.film, A); } catch (e) { die(e.message); }
@@ -72,6 +98,8 @@ try {
 } catch (e) { die(`加载音色运行时 ${sfxRuntimeLabel} 失败：${e.message}`); }
 if (typeof renderCues !== 'function' || typeof toWav !== 'function' || !RATE || !SOUNDS)
   die(`${sfxRuntimeLabel} 缺少导出（要有 renderCues / toWav / RATE / SOUNDS）`);
+const RECIPES = filmRt.RECIPES ?? {};
+if (process.argv.includes('--list-sounds')) { listSounds(filmRt, sfxRuntimeLabel); process.exit(0); }
 const cuesPath = resolve(film, arg('cues') ?? 'cues.json');
 if (!existsSync(cuesPath)) die(`缺少 ${cuesPath}`);
 const rawFile = JSON.parse(readFileSync(cuesPath, 'utf8'));
@@ -89,7 +117,7 @@ const GRIDS = { beats: (b) => b.beats, downbeats: (b) => b.downbeats, hits: (b) 
 
 // ---------- 场景（只在用到 anchor / probe / fromScene 时打开） ----------
 const PARAMS = ['gain', 'pan', 'send', 'rate', 'lowpass'];
-const NEW_KEYS = ['pan', 'anchor', 'send', 'rate', 'lowpass', 'dur', 'stack'];
+const NEW_KEYS = ['pan', 'anchor', 'send', 'rate', 'lowpass', 'dur', 'stack', 'space', 'muffle', 'duck', 'bus'];
 const isSpec = (p) => p != null && typeof p === 'object' && !Array.isArray(p);
 const usesProbe = (c) => PARAMS.some((k) => isSpec(c[k]) && c[k].probe != null);
 const needScene = !!cfg.fromScene || raw.some((c) => c.anchor != null || usesProbe(c))
@@ -158,7 +186,7 @@ const timed = raw.map((c, i) => {
   return { ...c, t };
 }).concat(eventCues);
 
-const stereo = !!cfg.stereo || eventCues.length > 0 || timed.some((c) => NEW_KEYS.some((k) => c[k] != null) || PARAMS.some((k) => isSpec(c[k])));
+const stereo = !!cfg.stereo || !!cfg.master || !!cfg.music || eventCues.length > 0 || timed.some((c) => NEW_KEYS.some((k) => c[k] != null) || PARAMS.some((k) => isSpec(c[k])));
 
 // ---------- 去重（可选） ----------
 const dropped = [];
@@ -177,8 +205,9 @@ if (cfg.dedupe != null) {
 
 // ---------- 音色 / 素材 ----------
 const cues = cues0.map((c, i) => {
-  if (!c.file && !Object.hasOwn(SOUNDS, c.type))
-    die(`cue #${i}: 未知音效类型 ${c.type}。${sfxRuntimeLabel} 里有：${Object.keys(SOUNDS).join(' ')}。` +
+  if (!c.file && !Object.hasOwn(SOUNDS, c.type) && !Object.hasOwn(RECIPES, c.type))
+    die(`cue #${i}: 未知音效类型 ${c.type}。${sfxRuntimeLabel} 里有：${Object.keys(SOUNDS).join(' ')}` +
+        (Object.keys(RECIPES).length ? `；配方：${Object.keys(RECIPES).join(' ')}。` : '（这份运行时没有分层配方）。') +
         (own ? '要新音色就在这份的 SOUNDS 里加一项（名字: [时长秒, (t, rnd) => 样本]），或写 "file" 用素材'
           : `要新音色：把套件的 film-narration/assets/runtime/sfx.mjs 拷到 ${filmRuntime}，在它的 SOUNDS 里加；或写 "file" 用素材`));
   const out = { ...c };
@@ -192,6 +221,22 @@ const cues = cues0.map((c, i) => {
   }
   return out;
 });
+// 配方 cue 先渲成 samples（变体轮换按时间顺序、对去重后的整张表决定），后面的曲线采样 / 锚点 / 混音都按素材处理
+let cuesR = cues;
+if (filmRt.expandRecipes) {
+  try { cuesR = filmRt.expandRecipes(cues, { sounds: SOUNDS }); } catch (e) { die(`配方渲染失败：${e.message}`); }
+  cues.splice(0, cues.length, ...cuesR);
+}
+const recipeMeta = (c) => (c._recipe ? { variant: c._recipe.variant, seed: c._recipe.seed, pitch: c._recipe.pitch } : {});
+function printStats(chs) {
+  const st = filmRt.stats(chs);
+  const w = st.windowsDb.map((d) => (d === -Infinity ? '-inf' : d.toFixed(0)));
+  console.log(`  自测：峰值 ${st.peakDb} dBFS（${st.peak}）  过载样本 ${st.over}  NaN ${st.nan}  直流 ${st.dc}  RMS ${st.rmsDb} dBFS`);
+  console.log(`  每 ${st.win}s RMS(dBFS)：${w.join(' ')}`);
+  if (st.over) console.log(`  ⚠ ${st.over} 个样本超过 0 dBFS，写 WAV 时削顶：降 gain，或在顶层写 master（压缩 + 软削波）`);
+  if (st.nan) console.log(`  ✗ ${st.nan} 个样本是 NaN/Inf（写 WAV 时会变成 0）：某个配方参数或曲线算出了非有限数`);
+  return st;
+}
 
 const outPath = resolve(film, arg('out') ?? 'out/sfx.wav');
 const metaPath = outPath.replace(/\.[^./]+$/, '') + '.json';
@@ -202,11 +247,13 @@ if (!stereo) {
   // 单声道路径（与立体声路径的差别见仓库 docs/verified/film-narration.md §29）
   const mix = renderCues(cues, { length: vo?.duration ?? 0 });
   writeFileSync(outPath, toWav(mix));
+  const st = wantStats && filmRt.stats ? filmRt.stats([mix]) : null;
   writeFileSync(metaPath, JSON.stringify({ narrationOffset: offset, script_hash: narData?.script_hash ?? null,
-    cues: cues.map((c) => ({ t: +c.t.toFixed(3), at: c.at, type: c.type ?? c.file })) }, null, 1) + '\n');
+    cues: cues.map((c) => ({ t: +c.t.toFixed(3), at: c.at, type: c.type ?? c.file, ...recipeMeta(c) })), ...(st ? { stats: st } : {}) }, null, 1) + '\n');
   console.log(`✓ ${outPath.replace(film + '/', '')}  ${cues.length} 个事件  ${(mix.length / RATE).toFixed(2)}s  （成片时间，片头偏移 +${offset}s，记在 ${metaPath.replace(film + '/', '')}）`);
   console.log(`  音色来自 ${sfxRuntimeLabel}`);
-  for (const c of cues) console.log(`  ${c.t.toFixed(3)}s  ${c.file ?? c.type}${c.at ? `  ← 「${c.at}」` : ''}`);
+  for (const c of cues) console.log(`  ${c.t.toFixed(3)}s  ${c.file ?? c.type}${c._recipe ? `  变体 ${c._recipe.variant}` : ''}${c.at ? `  ← 「${c.at}」` : ''}`);
+  if (wantStats) { if (!filmRt.stats) die(`${sfxRuntimeLabel} 没有 stats：--stats 要用套件那份运行时`); const s2 = printStats([mix]); process.exit(s2.nan ? 1 : 0); }
   process.exit(0);
 }
 
@@ -292,19 +339,53 @@ await closeScene();
 
 if (!cfg.room && cues.some((c) => c.send != null && c.send !== 0))
   die('有 cue 写了 send，但 cues.json 顶层没有 room（{ size: 0..1, damp: 0..1 }）。房间多大是这支片的选择，套件不给默认；不要房间就去掉 send');
-let L, R;
-try { ({ L, R } = mixer.renderStereo(cues, { sounds: SOUNDS, length: vo?.duration ?? 0, room: cfg.room ?? null })); }
+const usesBus = cfg.master || cfg.spaceRule || cfg.music || cues.some((c) => ['space', 'muffle', 'duck', 'bus'].some((k) => c[k] != null));
+if (usesBus && !filmRt.planTails) die(`${sfxRuntimeLabel} 没有尾音/闷音/总线处理（space / muffle / duck / bus / master / music）：删掉片内这份改用套件的，或从套件那份合并过来`);
+let L, R, mixInfo;
+const ropts = { sounds: SOUNDS, length: vo?.duration ?? 0, room: cfg.room ?? null };
+if (cfg.spaceRule) ropts.spaceRule = cfg.spaceRule;
+if (cfg.master) ropts.master = cfg.master;
+try { mixInfo = mixer.renderStereo(cues, ropts); ({ L, R } = mixInfo); }
 catch (e) { die(`混音失败：${e.message}`); }
 writeFileSync(outPath, mixer.toWavStereo(L, R));
+// 事件后压低配乐（和闷音）：mux.sh 不读 cue，所以在这里把配乐处理成一份新文件，合流时 --music 指它
+let musicInfo = null;
+if (mixInfo.duck && !cfg.music) console.log('  ⚠ 有 cue 写了 duck，但顶层没有 music { src, out }：压低曲线只记进 out/sfx.json，配乐不会被压低');
+if (cfg.music) {
+  const { src, out: mout, muffle: mmuf = false } = cfg.music;
+  if (!src || !mout) die('music 要写 { "src": "out/music.wav", "out": "out/music-sfx.wav", "muffle": false }');
+  const sp = resolve(film, src), op = resolve(film, mout);
+  if (!existsSync(sp)) die(`music.src 不存在：${sp}`);
+  if (sp === op) die('music.out 不能和 src 同一个文件（处理是从原曲派生的，覆盖后再跑会叠两遍）');
+  const r = spawnSync('ffmpeg', ['-v', 'error', '-i', sp, '-f', 'f32le', '-ac', '2', '-ar', String(RATE), '-'], { maxBuffer: 1 << 30 });
+  if (r.status !== 0) die(`music.src 解码失败 ${r.stderr}`);
+  const inter = new Float32Array(r.stdout.buffer, r.stdout.byteOffset, r.stdout.length / 4), M = inter.length / 2;
+  const ML = new Float32Array(M), MR = new Float32Array(M);
+  for (let n = 0; n < M; n++) { const g = mixInfo.duck ? mixInfo.duck[Math.min(n, mixInfo.duck.length - 1)] : 1; ML[n] = inter[2 * n] * g; MR[n] = inter[2 * n + 1] * g; }
+  if (mmuf && mixInfo.muffle) { const Z = new Float32Array(M); Z.set(mixInfo.muffle.subarray(0, M)); filmRt.applyMuffle(ML, Z); filmRt.applyMuffle(MR, Z); }
+  mkdirSync(dirname(op), { recursive: true });
+  writeFileSync(op, mixer.toWavStereo(ML, MR));
+  musicInfo = { src, out: mout, src_sha256: createHash('sha256').update(readFileSync(sp)).digest('hex'), duck: !!mixInfo.duck, muffle: !!(mmuf && mixInfo.muffle) };
+  console.log(`✓ ${mout}  配乐按 cue 的 duck${musicInfo.muffle ? ' + muffle' : ''} 处理过（${(M / RATE).toFixed(2)}s）；合流用 mux.sh --music ${mout}。mux 的旁白闪避照常叠在上面`);
+}
+const curve100 = (G) => { const v = []; for (let n = 0; n < G.length; n += RATE / 100) v.push(+G[n].toFixed(4)); return { rate: 100, v }; };
 let peak = 0; for (let n = 0; n < L.length; n++) peak = Math.max(peak, Math.abs(L[n]), Math.abs(R[n]));
 const curveInfo = (p) => (p?.v instanceof Float32Array ? { t0: +p.t0.toFixed(3), rate: p.rate, n: p.v.length } : p);
 writeFileSync(metaPath, JSON.stringify({ narrationOffset: offset, script_hash: narData?.script_hash ?? null, channels: 2,
   panLaw: mixer.PAN_LAW ?? 'equal-power', mixer: mixerLabel, room: cfg.room ?? null, dedupe: cfg.dedupe ?? null, dropped,
   sceneEvents: cfg.fromScene ? sceneEvents.length : undefined,
+  ...(mixInfo.tails ? { spaceRule: cfg.spaceRule ?? null, tails: mixInfo.tails } : {}),
+  ...(mixInfo.muffle ? { muffle: curve100(mixInfo.muffle) } : {}), ...(mixInfo.duck ? { duck: curve100(mixInfo.duck) } : {}),
+  ...(musicInfo ? { music: musicInfo } : {}), ...(cfg.master ? { master: cfg.master, masterInfo: mixInfo.master } : {}),
   cues: cues.map((c) => ({ t: +c.t.toFixed(3), at: c.at, type: c.type ?? c.file, event: c._event?.kind,
     ...Object.fromEntries(PARAMS.filter((k) => c[k] != null).map((k) => [k, curveInfo(c[k])])),
-    ...(c.anchor ? { anchor: c.anchor } : {}), ...(c.dur != null ? { dur: c.dur } : {}) })) }, null, 1) + '\n');
+    ...(c.anchor ? { anchor: c.anchor } : {}), ...(c.dur != null ? { dur: c.dur } : {}), ...recipeMeta(c),
+    ...Object.fromEntries(['space', 'muffle', 'duck', 'bus'].filter((k) => c[k] != null).map((k) => [k, c[k]])) })),
+  ...(wantStats ? { stats: filmRt.stats([L, R]) } : {}) }, null, 1) + '\n');
 console.log(`✓ ${outPath.replace(film + '/', '')}  立体声  ${cues.length} 个事件${eventCues.length ? `（其中 ${cues.filter((c) => c._event).length} 个来自场景 window.events()）` : ''}${dropped.length ? `  去重丢掉 ${dropped.length} 个（dedupe ${cfg.dedupe}s）` : ''}  ${(L.length / RATE).toFixed(2)}s  峰值 ${(20 * Math.log10(peak || 1e-9)).toFixed(1)} dBFS${peak > 1 ? '  ⚠ 超过 0 dBFS，写 WAV 时削顶了：降 gain' : ''}`);
 console.log(`  音色来自 ${sfxRuntimeLabel}；混音器 ${mixerLabel}${cfg.room ? `；房间 ${JSON.stringify(cfg.room)}` : ''}`);
 for (const r of report) console.log(`  ${r}`);
-for (const c of cues) console.log(`  ${c.t.toFixed(3)}s  ${c.file ?? c.type}${c.at ? `  ← 「${c.at}」` : ''}${c._event ? `  ← 事件 ${c._event.kind}` : ''}`);
+if (mixInfo.tails) console.log(`  尾音 ${mixInfo.tails.length} 个：${mixInfo.tails.map((x) => `${x.t}s ${x.type}`).join('、')}`);
+if (mixInfo.master?.comp) console.log(`  总线压缩最大增益衰减 ${mixInfo.master.comp.maxReductionDb} dB`);
+for (const c of cues) console.log(`  ${c.t.toFixed(3)}s  ${c.file ?? c.type}${c._recipe ? `  变体 ${c._recipe.variant}` : ''}${c.at ? `  ← 「${c.at}」` : ''}${c._event ? `  ← 事件 ${c._event.kind}` : ''}`);
+if (wantStats) { const s2 = printStats([L, R]); if (s2.nan) process.exit(1); }

@@ -5,6 +5,10 @@
 // 合成出来听着廉价。转场 whoosh、低频 thump、tick 用合成足够；需要质感时用素材
 // （cues 里写 file，见 scripts/sfx.mjs）。
 
+import { expandRecipes, RECIPES, planTails, makeIR, convolve, muffleCurve, applyMuffle, duckCurve, applyMaster } from './sfxdsp.mjs';
+// 分层配方、DSP 基元、程序化空间与总线处理在 sfxdsp.mjs；这里转导出，片子和脚本只认 sfx.mjs 一个入口
+export { RECIPES, expandRecipes, renderRecipe, stats, duckCurve, muffleCurve, applyMuffle, makeIR, planTails } from './sfxdsp.mjs';
+
 export const RATE = 48000;
 const TAU = Math.PI * 2;
 const env = (t, len, k) => Math.exp(-k * t) * (t < len ? 1 : 0);
@@ -30,6 +34,7 @@ export const SOUNDS = {
 
 /** cues: [{ t, type, gain? , seed? }] 或已解码的 { t, samples:Float32Array, gain? } -> Float32Array */
 export function renderCues(cues, { tail = 0.5, length = 0 } = {}) {
+  cues = expandRecipes(cues, { sounds: SOUNDS });   // type 是配方名的 cue 先渲成 samples；其余 cue 原样（同一个对象）
   const lenOf = (c) => c.samples ? c.samples.length / RATE : (SOUNDS[c.type]?.[0] ?? 0);
   const last = cues.reduce((m, c) => Math.max(m, c.t + lenOf(c)), 0);
   const mix = new Float32Array(Math.ceil(Math.max(length, last + tail) * RATE));
@@ -140,13 +145,19 @@ function freeverb(inL, inR, { size, damp, width = 1 }) {
  *   lowpass  一阶低通截止频率 Hz，不写就不滤
  *   dur      连续层：在这段时长里循环音色/素材（不写就按音色长度放一次）
  */
-export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, room = null } = {}) {
+export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, room = null, spaceRule = undefined, master = null } = {}) {
+  cues = expandRecipes(cues, { sounds });
+  const tails = planTails(cues, spaceRule);                       // 尾音挂在哪些 cue 上：对整张表一次性决定
   const spans = cues.map((c) => spanOf(c, sounds));
   const wet = cues.some((c) => c.send != null && c.send !== 0);
   if (wet && !room) throw new Error('有 cue 写了 send > 0，但没给 room（{ size, damp }）：房间的大小是片子的选择，套件不给默认');
   const last = cues.reduce((m, c, i) => Math.max(m, c.t + spans[i]), 0);
   const N = Math.ceil(Math.max(length, last + tail + (wet ? 2 : 0)) * RATE);
   const L = new Float32Array(N), R = new Float32Array(N);
+  const useDry = cues.some((c) => c.bus === 'dry');
+  const DL = useDry ? new Float32Array(N) : null, DR = useDry ? new Float32Array(N) : null;
+  for (const c of cues) if (c.bus != null && c.bus !== 'dry' && c.bus !== 'main') throw new Error(`bus 只认 "main"（默认，过闷音）/ "dry"（不过闷音），收到 ${JSON.stringify(c.bus)}`);
+  const tailSrc = new Map();
   const WL = wet ? new Float32Array(N) : null, WR = wet ? new Float32Array(N) : null;
   cues.forEach((cue, idx) => {
     const g = param(cue.gain, 1), pn = param(cue.pan, 0), sd = param(cue.send, 0), rt = param(cue.rate, 1);
@@ -164,6 +175,9 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
     const rnd = noise(cue.seed ?? (idx + 1) * 2654435761);
     const first = Math.round(cue.t * RATE), count = Math.ceil(spans[idx] * RATE);
     let tau = 0, y = 0;
+    const OL = cue.bus === 'dry' ? DL : L, OR = cue.bus === 'dry' ? DR : R;
+    const ts = tails.has(idx) ? new Float32Array(Math.max(1, count)) : null;
+    if (ts) tailSrc.set(idx, { buf: ts, first, out: [OL, OR] });
     for (let n = 0; n < count; n++) {
       const at = first + n;
       if (at >= N) break;
@@ -181,7 +195,8 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
       if (at < 0) continue;
       const v = g(tA) * s;
       const [gl, gr] = constPan ? [cl, cr] : panGains(pn(tA));
-      L[at] += v * gl; R[at] += v * gr;
+      OL[at] += v * gl; OR[at] += v * gr;
+      if (ts) ts[n] = v;
       if (wet) { const k = sd(tA); if (k) { WL[at] += v * k * gl; WR[at] += v * k * gr; } }
     }
   });
@@ -189,7 +204,26 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
     const [rl, rr] = freeverb(WL, WR, room);
     for (let n = 0; n < N; n++) { L[n] += rl[n]; R[n] += rr[n]; }
   }
-  return { L, R };
+  // 尾音：干声 × 程序化冲激响应（左右去相关），从 cue 起点叠回它所在的总线；超出片长的部分截掉
+  const tailInfo = [];
+  for (const [idx, { buf: src, first, out: [OL, OR] }] of tailSrc) {
+    const ir = makeIR(tails.get(idx));
+    for (const [h, O] of [[ir.L, OL], [ir.R, OR]]) {
+      const y = convolve(src, h);
+      for (let n = 0; n < y.length; n++) { const at = first + n; if (at >= 0 && at < N) O[at] += y[n] * ir.gain; }
+    }
+    tailInfo.push({ t: +cues[idx].t.toFixed(3), type: cues[idx].type ?? 'samples', space: tails.get(idx) });
+  }
+  const info = {};
+  if (tailInfo.length) info.tails = tailInfo;
+  // 闷音：主总线时变低通（dry 总线不过）
+  const Z = muffleCurve(cues, N);
+  if (Z) { applyMuffle(L, Z); applyMuffle(R, Z); info.muffle = Z; }
+  if (useDry) for (let n = 0; n < N; n++) { L[n] += DL[n]; R[n] += DR[n]; }
+  const G = duckCurve(cues, N);
+  if (G) info.duck = G;
+  if (master) info.master = applyMaster(L, R, master);
+  return { L, R, ...info };
 }
 
 /** 两条 Float32Array -> 16bit 立体声 WAV 的 Uint8Array（与 toWav 同样的削顶和量化） */
