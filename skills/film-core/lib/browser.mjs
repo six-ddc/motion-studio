@@ -184,6 +184,21 @@ async function chromiumBuild(browser) {
   return v;
 }
 
+/**
+ * 内核在页面脚本执行前注入的只读全局 window.FILM（kernel.md §1）：这次打开实际用的帧率与画幅。
+ * fps 缺省 film.json fps；render / seamcheck 的 --fps 覆盖、门 5 按清单重渲时传的是那次实际的 fps。
+ * width/height 是画幅的布局尺寸（--scale 只缩截图，不改布局，所以不变）。
+ */
+export function filmGlobals(film, format, fps = film?.config?.fps) {
+  const fmt = FORMATS[format];
+  if (!fmt) throw new Error(`未知画幅 ${format}`);
+  if (!(Number.isInteger(fps) && fps > 0)) throw new Error(`window.FILM.fps 必须是正整数（收到 ${fps}）`);
+  return Object.freeze({ fps, width: fmt.width, height: fmt.height, format });
+}
+/** filmGlobals 的注入脚本（addInitScript 的 content，或 preview 写进页面的 <script>）：不可写、不可重定义 */
+export const filmGlobalsScript = (g) =>
+  `Object.defineProperty(globalThis,'FILM',{value:Object.freeze(${JSON.stringify({ fps: g.fps, width: g.width, height: g.height, format: g.format })}),writable:false,configurable:false,enumerable:true});`;
+
 // 注入到每个页面的探针：记录"禁用 API"在 seek 期间被调用的次数。
 // 它不改变行为，只计数 —— 是诊断线索，像素比对才是判据。
 const PROBE = () => {
@@ -216,10 +231,12 @@ const PROBE = () => {
  *   png    'fast'（默认）| 'default'：CDP 截图的 PNG 编码方式，见下面 PNG_MODES
  *   record 自带服务器时是否写加载记录 out/.render/runtime.json（默认 true；只读地看别的片子时传 false）
  *   query  额外的 URL 参数 { 名: 值 }（例：{ variant: 'hook-b' }，content.js 读）；值为 null/undefined 的跳过。不给 = URL 与改动前相同
+ *   fps    这次按什么帧率截（缺省 film.json fps）：只决定注入的 window.FILM.fps，截哪些 t 仍由调用方决定——两者要一致
  */
-export async function openScene(film, format, { browser, probe = false, port, initScripts = [], capture = 'cdp', scale = 1, png = 'fast', record = true, query = {} } = {}) {
+export async function openScene(film, format, { browser, probe = false, port, initScripts = [], capture = 'cdp', scale = 1, png = 'fast', record = true, query = {}, fps } = {}) {
   const fmt = FORMATS[format];
   if (!fmt) throw new Error(`未知画幅 ${format}`);
+  const FILM = filmGlobals(film, format, fps ?? film.config.fps);
   if (!PNG_MODES.includes(png)) throw new Error(`png 只能是 ${PNG_MODES.join(' / ')}，收到 ${png}`);
   if (png === 'fast' && capture !== 'cdp') png = 'default';   // locator 截图没有这个开关
   const out = scaledSize(fmt, scale);
@@ -245,6 +262,7 @@ export async function openScene(film, format, { browser, probe = false, port, in
   }
 
   const context = await browser.newContext({ viewport: { width: fmt.width, height: fmt.height }, deviceScaleFactor: 1 });
+  await context.addInitScript({ content: filmGlobalsScript(FILM) });   // window.FILM：先于探针与场景的任何脚本
   if (probe) await context.addInitScript(PROBE);
   // 调用方的加载前注入（例如 film-critique 的 fillText 探针）：在场景任何脚本之前执行，
   // 所以场景在加载期缓存的函数引用也是被包过的。元素可以是函数、{ path } 或 { content }（Playwright addInitScript 语义）。
@@ -332,7 +350,7 @@ export async function openScene(film, format, { browser, probe = false, port, in
 
   const probeCalls = () => page.evaluate(() => ({ ...(window.__filmProbe?.calls ?? {}) }));
 
-  return { page, context, shot, advance, info: { ...info, duration }, errors, probeCalls, close, width: fmt.width, height: fmt.height,
+  return { page, context, shot, advance, info: { ...info, duration }, errors, probeCalls, close, film: FILM, width: fmt.width, height: fmt.height,
     outWidth: out.width, outHeight: out.height, scale, png };
 }
 

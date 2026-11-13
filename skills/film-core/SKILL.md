@@ -102,6 +102,8 @@ window.ready = (async () => { /* await 字体、图片、narration.json */ })();
 - **镜头组合子**：`sequence([{ name, dur | until }], { overlap, align, marks })` 把镜头表变成 `at(t) → [{ name, local, progress, enter, exit }]`，`until` 可以写旁白时刻、节拍或 `marks` 里的名字；`overlap` 是交棒窗口，两个镜头同时活着。
   `Q.cuts` 直接给 `window.CUTS`，`Q.windows`/`Q.marks` 给 `CUT_WINDOWS`/`MARKS`。`series(durs)` 首尾相接，`loopT` `rate` `freeze` 是局部时间映射。它们只管时间；要转场 kind、缓动和离屏合成，用 film-motion 的 `timeline()`。
 - 其他：`sat lerp clamp norm(t, from, to) win(t, start, dur, ease) wrap(t, len) labelAlpha()`。`win` 等于 `ease(sat((t-start)/dur))`，ease 传一个函数（缓动词汇表在 film-motion 的 `choreo.js`，也可以自己写）。
+- **事件表（`runtime/events.js`，可选）**：一张 `[{t, type, id?, …}]` 同时驱动光、粒子、镜头和声音——`channel` 把每个事件的响应写成 τ = t − e.t 的闭式函数，
+  `throttle` `burstEnds` `snapToFrames` 在加载期对整张表做一次，`toCues` 把同一张表交给 film-narration 出声。帧率读内核注入的 `window.FILM.fps`。见 `references/events.md`。
 
 ## 5. 画幅（`runtime/layout.js`）
 
@@ -241,6 +243,7 @@ accept 和 deliver 还会读 `checks`。类型、默认值和校验规则见 `re
 - `references/render.md`：render / seamcheck / preview 的参数全集、并行、截图、哈希清单、分片缓存、自适应子帧、渲染器版本固定
 - `references/film-json.md`：film.json 的 schema 与校验
 - `references/content-json.md`：可选的内容数据层 content.json、变体与矩阵导出、变体清单
+- `references/events.md`：事件表（多通道响应核、节流、帧对齐、给声音的 cue 桥）
 - `references/kits.md`：可选的 kit（品牌或系列共享组件库）：挂载、冻结与收据、kit.json、标准帧自检
 - `references/nondeterminism.md`：常见的非确定性来源，按失败的门索引
 - `references/style-menu.md`：风格与思路菜单（外部设计 skill、做片思路、游戏思路、Lottie）

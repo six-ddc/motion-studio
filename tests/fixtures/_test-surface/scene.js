@@ -19,8 +19,10 @@ const FILL = q.get('view') === 'fill';
 const tall = L.height > L.width;
 
 const canvas = document.getElementById('stage');
+// 阴性对照 scene-bad-noreset.html：reset:false + 只在后半段写湿度（前半段沿用上一次 seek 留下的 uniform）→ 门 2 红
+const BAD_NORESET = window.SF_VARIANT === 'noreset';
 const S = createStage3D({ canvas, width: L.width, height: L.height, clear: [0.02, 0.022, 0.026, 1],
-  toneMapping: THREE.ACESFilmicToneMapping, shadows: true, shadowType: THREE.PCFSoftShadowMap });
+  toneMapping: THREE.ACESFilmicToneMapping, shadows: true, shadowType: THREE.PCFSoftShadowMap, ...(BAD_NORESET ? { reset: false } : {}) });
 const scene = S.scene;
 
 // ---------- 程序化贴图（加载期、种子化）：可平铺高度 → 反照率 / 粗糙度 / 法线 ----------
@@ -100,7 +102,7 @@ scene.add(sun); scene.add(sun.target);
 const AA = { toksvig: 0.6, minRoughness: 0.045, maxSpecular: 40 };
 const WET_BASE = { level: 0, saturate: 0.5, flatten: 0.45, streakFreq: [9, 0.55], patch: { freq: 0.8, amount: 0.25 } };
 const SPLASH = { groundY: 0, height: 0.3, amount: 0.6, darken: 0.25 };
-const BEADS = (amount) => ({ amount, size: 1 / 170, fadePx: 1 / 120, roughness: 0.05 });
+const BEADS = (amount) => ({ amount, size: 1 / 170, maxFootprint: 1 / 120, roughness: 0.05 });
 const RECIPE = {
   porous: { color: 0xd8d2c8, rough: 1, metal: 0,
     wet: { ...WET_BASE, darken: 0.42, roughnessMul: 0.38, vertical: 0.5, splash: SPLASH, beads: null },
@@ -165,7 +167,7 @@ build(2.25, true);
 
 function paint(t) {
   const w = t / DURATION;
-  for (const s of surfs) if (s.features.wet) s.set({ wet: { level: w } });
+  if (!BAD_NORESET || t > DURATION / 2) for (const s of surfs) if (s.features.wet) s.set({ wet: { level: w } });
   for (const m of spheres) m.rotation.y = 0.6 * t;
   if (FILL) {
     S.camera.fov = 40; S.camera.position.set(2.25, 3.2, 0.8); S.camera.lookAt(2.25, 0, -0.4);

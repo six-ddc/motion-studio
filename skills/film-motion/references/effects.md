@@ -72,7 +72,7 @@
 | 碰撞小球、布料/绳、鸟群、流体 | `balls` `cloth` `boids` `fluid` + `createReplay({fps, init, step, clone})`；预烘焙回放 `loadBake(baseUrl)` → `makeTrack` | physics · sims.js、replay.js、baked.js | 每步 0.03–13 ms，fluid 超过 1000 个粒子基本只能预烘焙；烘焙后 300 个球 0.04 ms/帧，改参数要重新烘焙 |
 | 跟车、堵车、排队链式传播 | `chain` `chainDesign` `chainProbe` | physics · chain.js | 每步 0.03–0.17 ms |
 | 快进、慢镜头、定格、倒放 | `timeMap(keys, {reverse})` `fitRate` | physics · timemap.js | 见 physics timemap.md |
-| 事件多通道、闪光帧对齐、后坐/落地/步态/创伤屏震 | `eventTrack` `channel` `snapToFrames` `trauma`；`recoil` `stepBob` `perturbShot` | physics · events.js、feel.js | 纯函数事件响应；非线性限位仍需重放，参见 events.md |
+| 事件多通道、闪光帧对齐、后坐/落地/步态/创伤屏震 | `eventTrack` `channel` `snapToFrames` `trauma`；`recoil` `stepBob` `perturbShot` | core · events.js；physics · feel.js | 纯函数事件响应；非线性限位仍需重放，参见 events.md |
 | **声音与时间** | | | |
 | 画面卡旁白某个词 | `makeNarration(data)` / `loadNarration` → `vo.at(kw)` `vo.endOf(kw)` `vo.after(kw, d)` | narration · narration.js | 见 narration SKILL.md §四 |
 | 合成音效（click pop thump whoosh tick chime sweep noise） | `SOUNDS` + `renderCues` / `renderStereo` → `toWav` / `toWavStereo` | narration · sfx.mjs | 没有授权风险；简单音色缺少材质与空间层，真实物件声需另加分层并试听 |

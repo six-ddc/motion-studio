@@ -1,10 +1,10 @@
 // feel.js —— 相机与物体的"手感"：全部是 t（或事件表 + t）的纯函数，参数显式，没有审美默认值。
 //
-// 都建在 events.js 上：事件处跳变 + 事件之间闭式流（piecewise），或线性冲量响应求和（channel + springKick）。
+// 都建在 film-core 的 events.js 上（运行时挂载表扁平解析，所以这里照样写 './events.js'）：事件处跳变 + 事件之间闭式流（piecewise），或线性冲量响应求和（channel + springKick）。
 // 输出是数（角度、位移、标量），合成进相机由调用方做：三维走 shot 结构（perturbShot），二维走 film-core 的 camera()。
 // 这里不 import film-webfx：perturbShot 只按 shot 的数据约定（pos/target/up/roll）改值，applyShot 由片子自己调用。
 import { hash01 } from './rand.js';
-import { channel, piecewise, springKick, holdFallFlow } from './events.js';
+import { channel, piecewise, springKick, springParams, holdFallFlow } from './events.js';
 
 const TAU = Math.PI * 2;
 const need = (cond, msg) => { if (!cond) throw new Error(msg); };
@@ -14,20 +14,28 @@ const need = (cond, msg) => { if (!cond) throw new Error(msg); };
 // ---------------------------------------------------------------------------
 
 /**
- * shakeTermsFromSeed(seed, { band: [loHz, hiHz], second }) → { pitch, yaw, roll }，每轴 [[hz, 权重, 相位], [hz, 权重, 相位]]。
- * 第一项权重 1、第二项权重 second；频率在 band 里按 hash 取，第二项与第一项的比避开 1.9–2.1（整数比会让两项同步、显得机械）。
+ * shakeTermsFromSeed(seed, { band: [loHz, hiHz], second, avoid? }) → { pitch, yaw, roll }，每轴 [[hz, 权重, 相位], [hz, 权重, 相位]]。
+ * 第一项权重 1、第二项权重 second；两个频率都在 band 里按 hash 取。
+ * avoid = { ratios: [1, 2, …], tol }：两频率之比 max/min 落在某个 ratios[i] ± tol 内就按 hash01(seed, 轴, 1, 1, j) 重抽第二个频率
+ *   （j = 1, 2, …，确定性；最多 tries 次，默认 32，抽不到报错——band 太窄放不下）。比值同时检查了 f2/f1 与 f1/f2，所以 0.5 与 2 是同一种情况。
+ *   比值≈1 会拍频成一个慢摆、≈小整数会让两项周期性同步，有人觉得"机械"——那是本片的判断，不是套件的：不给 avoid 就不避，
+ *   第一次抽到的频率原样用（与给了 avoid 但第一次就合格时相同）。
  */
-export function shakeTermsFromSeed(seed, { band, second }) {
+export function shakeTermsFromSeed(seed, { band, second, avoid = null }) {
   need(Array.isArray(band) && band[1] > band[0] && band[0] > 0, 'shakeTermsFromSeed: band = [低 Hz, 高 Hz]');
   need(second >= 0, 'shakeTermsFromSeed: second（第二个正弦的权重）必填');
-  const pick = (ax, j) => band[0] + (band[1] - band[0]) * hash01(seed, ax, j, 1);
+  const ratios = avoid?.ratios ?? [], tol = avoid?.tol, tries = avoid?.tries ?? 32;
+  if (avoid) need(Array.isArray(ratios) && ratios.every((q) => q >= 1) && tol > 0, 'shakeTermsFromSeed: avoid = { ratios: [≥1 的比值…], tol > 0, tries? }（例：{ ratios: [1, 2], tol: 0.1 }）');
+  const at = (u) => band[0] + (band[1] - band[0]) * u;
+  const near = (a, b) => { const r = a > b ? a / b : b / a; return ratios.some((q) => Math.abs(r - q) < tol); };
   const out = {};
   ['pitch', 'yaw', 'roll'].forEach((name, ax) => {
-    const f1 = pick(ax, 0);
-    let f2 = pick(ax, 1);
-    const ratio = f2 / f1;
-    if (ratio > 0.9 && ratio < 1.1) f2 = Math.min(band[1], f1 * 1.37);   // 太近会拍频成慢摆
-    if (ratio > 1.9 && ratio < 2.1) f2 = f1 * 1.73;
+    const f1 = at(hash01(seed, ax, 0, 1));
+    let f2 = at(hash01(seed, ax, 1, 1));
+    for (let j = 1; near(f1, f2); j++) {
+      if (j > tries) throw new Error(`shakeTermsFromSeed: band [${band}] 里抽 ${tries} 次都避不开比值 ${ratios.join('/')} ± ${tol}（f1 = ${f1.toFixed(2)} Hz）：放宽 band 或缩小 tol`);
+      f2 = at(hash01(seed, ax, 1, 1, j));
+    }
     out[name] = [[f1, 1, TAU * hash01(seed, ax, 0, 2)], [f2, second, TAU * hash01(seed, ax, 1, 2)]];
   });
   return out;
@@ -37,13 +45,15 @@ export function shakeTermsFromSeed(seed, { band, second }) {
  * traumaShake(t, trauma, { amp: {pitch, yaw, roll}, terms, power }) → { pitch, yaw, roll }（单位随 amp：弧度或像素）
  *   trauma  0..1 的创伤值（events.js 的 traumaOf(track, …)(t)）
  *   terms   { pitch: [[hz, 权重, 相位], …], … }；给不出就用 shakeTermsFromSeed 派生
- *   power   振幅指数，2 = "创伤值平方"（小事件几乎看不见，大事件很猛）；1 = 线性
+ *   power   振幅指数，必填（不给默认）。2 = "创伤值平方"（游戏里常见：小事件几乎看不见、大事件很猛，代价是中等事件也被压得很弱）；
+ *           1 = 线性（每个事件都看得见，代价是满创伤值时不再"爆"出来）
  * 与 closed.js 的 hitShake 的区别：hitShake 每次命中各自一条指数包络 × 从命中起算的噪声，线性叠加，命中越多越抖；
  * traumaShake 只有一个全局包络（封顶、线性衰减、再取幂），正弦按绝对时间走，所以连续命中不会让相位重启、也不会无限叠大。
  * 两者可以同时用（例如 hitShake 管物体，traumaShake 管相机）；hitShake 的行为不变。
  */
-export function traumaShake(t, trauma, { amp, terms, power = 2 }) {
+export function traumaShake(t, trauma, { amp, terms, power }) {
   need(amp && terms, 'traumaShake: amp 与 terms 必填（terms 可用 shakeTermsFromSeed 派生）');
+  need(power > 0, 'traumaShake: power 必填（> 0）。2 = 创伤值平方（游戏常见，小事件被压低），1 = 线性');
   const g = Math.pow(Math.max(0, trauma), power);
   const out = { pitch: 0, yaw: 0, roll: 0 };
   if (g === 0) return out;
@@ -86,14 +96,14 @@ export function recoil(track, { on, amount, keep, rise, hold, fall, min = -Infin
 // ---------------------------------------------------------------------------
 
 /**
- * springDip(track, { on, impulse, k, c, min, max, eps }) → f(t)
- *   每个事件给弹簧一个初速度 impulse（数或 (e) → 数），响应 Σ impulse·h(τ)，h 是 events.js springKick 的闭式。
+ * springDip(track, { on, impulse, k, c, min, max, eps }) → f(t)；{k, c} 也可写成 {stiffness, damping}（film-core motion.js 的名字，同义）或 {omega, zeta}
+ *   每个事件给弹簧一个初速度 impulse（数或 (e) → 数），响应 Σ impulse·h(τ)，h 是 events.js springKick 的闭式（oscillate 同一份）。
  *   min/max 限幅作用在**输出**上；游戏里常见的"限幅在状态里"（撞到限位后速度也被截）是非线性的，
  *   连续两次大冲量时两者会不同——要严格复现就把这个量放进定步重放。
  */
-export function springDip(track, { on, impulse, k, c, min = -Infinity, max = Infinity, eps }) {
-  need(k > 0 && c >= 0, 'springDip: k > 0、c ≥ 0 必填');
-  const h = springKick({ k, c }, eps ? { eps } : undefined);
+export function springDip(track, { on, impulse, min = -Infinity, max = Infinity, eps, ...sp }) {
+  springParams(sp, 'springDip');   // 校验：缺参数在这里报，不到 springKick 里报
+  const h = springKick(sp, eps ? { eps } : undefined);
   const I = typeof impulse === 'function' ? impulse : () => impulse;
   const ch = channel(track, { name: 'springDip', on, response: (tau, e) => I(e) * h(tau), support: h.support });
   const f = (t) => Math.min(max, Math.max(min, ch(t)));
@@ -179,9 +189,9 @@ export function stepBob(h, { vertical = 0, horizontal = 0, roll = 0, accent = nu
  *   a 由 pos 的中心差分得到，积分用 Simpson，steps 段（偶数）。span 取 h.support 足够；比它短会截掉尾巴。
  *   代价 O(steps)/次/轴；父物体运动由离散冲量（速度跳变）组成时，改用 channel(track, {response: (τ,e) => −e.dv·h(τ)}) 精确且更省。
  */
-export function lagOffset(t, pos, { k, c, span, steps }) {
-  need(k > 0 && c >= 0 && span > 0 && steps >= 2, 'lagOffset: k、c、span、steps 必填');
-  const N = steps + (steps % 2), du = span / N, h = springKick({ k, c });
+export function lagOffset(t, pos, { span, steps, ...sp }) {
+  need(span > 0 && steps >= 2, 'lagOffset: k、c（或 stiffness、damping）、span、steps 必填');
+  const N = steps + (steps % 2), du = span / N, h = springKick(sp);
   const acc = (x) => (pos(x + du) - 2 * pos(x) + pos(x - du)) / (du * du);
   let s = 0;
   for (let i = 0; i <= N; i++) { const w = i === 0 || i === N ? 1 : i % 2 ? 4 : 2; s += w * acc(t - i * du) * h(i * du); }
@@ -202,7 +212,10 @@ export function driftTerms(seed, n, { amp, band, falloff = 1 }) {
 // 6. 时间重映射与状态过渡
 // ---------------------------------------------------------------------------
 
-/** cruise(u, soft, ease) = soft·ease(u) + (1−soft)·u：基本匀速、两端柔化。ease 缺省 smoothstep；soft=0 纯匀速，1 纯 ease */
+/**
+ * cruise(u, soft, ease) = soft·ease(u) + (1−soft)·u：基本匀速、两端柔化。soft=0 纯匀速，1 纯 ease。
+ * ease 缺省 smoothstep（3p²−2p³，两端速度为 0、中段最快 1.5 倍）：代价是起停对称，要"慢起快停"这类不对称手感就自己传 ease。
+ */
 export function cruise(u, soft, ease = (p) => p * p * (3 - 2 * p)) {
   need(soft >= 0 && soft <= 1, 'cruise: soft ∈ [0,1] 必填');
   const p = u < 0 ? 0 : u > 1 ? 1 : u;

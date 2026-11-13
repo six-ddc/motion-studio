@@ -1133,3 +1133,53 @@ skill 文档只留结论和可执行判据；下面是从 `skills/film-narration
 
 
 这些量只验证频谱、包络、峰值与确定性；没有人耳验收，不能从频谱推出真实或悦耳，也没有完整影片验证。IR采用非分区FFT卷积，长素材有内存代价；不同JS引擎不承诺新配方最后一位相同。
+
+## 2026-11-13 分层音效评审修复（NaN、变体种子、尾音契约、缓冲长度、卷积性能、去直流、浮点中间文件）
+
+机器：4 核、Node 22.23.2，测时有别的会话并发（load 4–6），数字取交错跑两轮的范围。没有 ffmpeg、仓库根没有 `.venv`（见文末"没测到"）。
+
+**改前复现**（改前运行时拷在 scratchpad，`probe.mjs`）：`crack/boom/sub` 的 `drive:0` → 15360/144000/57600 个 NaN、峰值 0，`sfx.mjs` 写成静音、退出 0；
+8 发带 jitter 的 crack 只有 4 种 PCM（按变体取种子，每 4 发重复）；space 写成 `{preset,gain}` 与 `{gain,preset}` 交替时 `planTails` 分成两组、多挂一个尾音（[2,1] 而不是 [2]）；
+boom 直流 0.00884、land 0.00488；metal 缓冲固定 0.5 s（ring 4 时在 −8 dB 处截断）、clatter 0.55 s（hits 8 时第 5 次以后被丢）。
+
+**修法与实测**
+- `softclip` / `renderRecipe`：drive 等正参数 ≤ 0、数字参数给了非数字直接报错；配方输出逐样本查有限性。`scripts/sfx.mjs` 写 WAV 前查 NaN/Inf，有就退出 1、不写、删掉同名旧文件（不再只靠 `--stats`）。
+  CLI 用例：`gain: 1e39` → 退出 1，"有 1 个样本是 NaN/Inf"；`drive: 0` → 退出 1。
+- 变体/抖动：有 `cue.id` 按 hash(配方, id)，没有按 (配方, 出现序号)。8 发 jitter → 8 种音高、8 种 PCM；有 id 时前面插一个同名事件，后三发 PCM 与 `_recipe` 逐位不变；40 个 id 用到了 step 的全部 4 个变体。
+- 尾音：表里任一 cue 有 `tail` 就严格按它挂；都没有时 `spaceRule.burstGap` 必填（缺了报错写参考量级）。分组键改为规范化 space（键序无关）。
+  事件表回归（`cli.mjs`，按 CONTRACT §5 的 snapToFrames → throttle → burstEnds → `toCues(…,{tails})`）：`out/sfx-events.json` `tailMode: explicit`，尾音只在 `shot:4`、`shot:7`，9 个 id 原样记录；表尾追加一发更早的枪后已有 9 发的变体/音高全部不变。
+- 缓冲长度：metal/wood/glass/water 按 max(1, ring) 拉长；boom = max(3√size, 1.9·size+0.2, 1.6·size)；clatter 按 hits 上界。默认参数长度不变（boom 3.000 s、clatter 0.550 s、metal 0.500 s）；ring 4 → 2.0 s，hits 8 → 1.055 s，size 4 → 7.8 s。
+- 去直流：非循环配方输出过 20 Hz 二阶巴特沃斯高通。默认参数 17 种配方/材质直流全部 ≤ 1.2e-4（boom 9.6e-7、sub 1.15e-4、land 5.2e-5）。旧 8 音色 3 组 PCM 基线（单声道、等功率声像、Freeverb）SHA256 不变。
+- 采样率：`sfxdsp.mjs` 的 `SR` 是唯一来源，`sfx.mjs` 的 `RATE = SR`，CLI 发现不一致直接报错。
+- 中间文件：`out/sfx.wav`、`music.out` 改写 32 位浮点 WAV（格式码 3 + fact 块），超过 ±1 不削顶。
+- 默认值政策：`space.gain`、`muffle.recover`、`duck.recover`、`spaceRule.burstGap` 改为必填，报错写参考量级；`master.comp: true` 的默认值保留，sfx-recipes.md 写了代价。
+
+**卷积性能**（`renderStereo` 计时，独立进程，`maxRSS`；场景同评审：300 cue / 120 s，每 3 个带 space（室内外交替），spaceRule 0.15；90 s hum + indoor）
+
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| 300 cue / 120 s，100 个尾音 | 15.1–18.5 s，RSS 222 MB | 5.0–5.6 s，RSS 195 MB |
+| 90 s hum + indoor | 10.9–13.4 s，RSS 459–509 MB | 2.6–3.3 s，RSS 158 MB |
+
+做法：同 IR、同总线的干声（已乘 space.gain）叠成一条，每组卷一次；分块重叠相加，M ≤ 2^18（实测 V8 上 2^19/2^20 每蝶形慢约 1.7 倍：2^18 一次 FFT 22.6 ms，2^20 171 ms），
+全零块跳过，两块实数拼一次复数正变换，左右各一次逆变换，IR 频谱按 (IR, M) 缓存，旋转因子/位反转表缓存，直接叠进输出；同一张表里同参数配方只渲一次。
+剖析（改后 300 cue，`--cpu-prof`）：剩下的时间大部分是 FFT，其余是闷音约 0.28 s、配方展开约 0.16 s。
+
+**与改前的数值对照**（`equiv.mjs`：配方先用改前代码渲成 samples，两边喂同一份，只比混音器）：
+
+| 用例 | max\|Δ\| | Δ/峰值 | SNR |
+|---|---|---|---|
+| 300 cue / 120 s（两种 IR、dry 总线、闷音、duck） | 4.77e-7 | 1.48e-7 | 147.6 dB |
+| 90 s hum + indoor | 5.96e-8 | 7.1e-8 | 146.8 dB |
+| 重叠尾音 / 负起点 / edges both / scale·bright·seed | 5.96e-8 | 8.6e-8 | 148.0 dB |
+| 同上 + length 截断 + master | 5.96e-8 | 9.7e-8 | 147.3 dB |
+| 不带 space 的同一张表 | 0（逐位相同） | | |
+
+差异在 float32 舍入量级（尾音从"逐 cue 卷积再相加"变成"相加再卷积"，求和顺序不同）。
+
+**回归**：`unit.mjs` 38 项（新增：50 个 配方×材质×变体 PCM 钉死在 `recipe-pcm.json`；两个子进程与本进程综合混音 SHA256 相同；分块卷积对整段卷积相对误差 < 1e-6；
+阴性 drive 0 / jitter 重复 / 键序分组 / 缓冲截断）。`cli.mjs` 4 组：事件表 cues、插入稳定、非有限数退出 1、配乐 duck 全长恢复（浮点 WAV 读回，误差 < 1e-5）。
+
+**没测到**：本机没有 ffmpeg——配乐 duck 段只用一个本地极简替身（16 位/浮点 WAV → f32le）跑通，真 ffmpeg 读 32 位浮点 WAV 和 `mux.sh` 合流没在这台机器上跑；
+`cli.mjs` 在没有 ffmpeg 时会在配乐段红并写明原因。仓库根没有 `.venv`，`measure.py`（新加了直流 < 1e-3 断言）没跑，`dev/test.mjs` 遇到没有 .venv 时跳过并说明。
+20 Hz 高通让 boom（27 Hz 底）和 sub（30 Hz 底）最低频约弱 0.8–1.3 dB，没有人耳对比。

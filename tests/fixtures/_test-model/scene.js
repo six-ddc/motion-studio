@@ -23,7 +23,7 @@ function camera(x,detail){
   const cable=tube([[-.63,.1,.1],[-.84,.25,.1],[-.88,.65,.12],[-.61,.67,.12]],.025);body.add(part('strap',cable,rubber));
   body.add(repeat(part('focus-ridge',box(.018,.035,.08,.004),rubber),24,(o,i)=>{const a=i/24*Math.PI*2;o.position.set(-.15+.316*Math.cos(a),.316*Math.sin(a),.5);o.rotation.z=a-Math.PI/2;}));
   const cn=document.createElement('canvas');cn.width=128;cn.height=32;const c=cn.getContext('2d');c.fillStyle='#ded8ca';c.fillRect(0,0,128,32);c.fillStyle='#233244';for(let i=0;i<10;i++)c.fillRect(8+i*11,7,5,18);
-  wearCanvas(cn,{seed:3,scratches:8,spots:30,amount:.5});const label=decal(cn,{width:.32,height:.08});label.position.set(.32,.22,.257);body.add(label);
+  wearCanvas(cn,{seed:3,scratches:8,spots:30,amount:.5});const label=decal(cn,{width:.32,height:.08,roughness:1});label.position.set(.32,.22,.257);body.add(label);
  }
  const lid=part('screen',box(.7,.48,.035,.016),dark,{at:[0,-.02,-.28],pivot:[-.35,-.02,-.28],movable:true});body.add(lid);lids.push(lid);
  return body;

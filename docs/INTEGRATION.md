@@ -1119,7 +1119,7 @@ Chromium 给变换层选光栅缩放有滞回，seamcheck 门 1a/2/5 都红（1�
 
 ## 游戏技法迁入：中断会话接续（2026-11-12）
 
-接续 Claude 会话 d19fc17d-c2f5-48f3-a64c-fdb848e0d084。最后的真实用户要求是“全部搬进来”，并增加代码建模；此前只做局部验证、不制作完整片子的约束沿用。原会话因账号verification_required中断；HEAD 879fb59保存了研究报告与约4750行阶段代码，尚缺后期执行接线、建模、第二批场景能力、文档入口和验证登记。
+接续 Claude 会话 d19fc17d-c2f5-48f3-a64c-fdb848e0d084。最后的真实用户要求是“全部搬进来”，并增加代码建模；此前只做局部验证、不制作完整片子的约束沿用。原会话因账号verification_required中断；阶段代码（研究报告与约4750行）后来作为提交 51dbdc2 入库，尚缺后期执行接线、建模、第二批场景能力、文档入口和验证登记。
 
 本轮完成的能力，均可选，不改变内核或给片子默认审美：
 
@@ -1141,4 +1141,31 @@ Chromium 给变换层选光栅缩放有滞回，seamcheck 门 1a/2/5 都红（1�
 
 仍保留边界：没有制作完整片子或证明成片美术质量提高；声音未经人耳验收；未重跑创意盲评；天空/烟/水波/AO均有文档化近似；未验证跨机器/GPU像素一致；新参考页使装机文档超过6500行目标，保留selfcheck警告，尚未做整套文档瘦身。
 
-最终合格线：`dev/selfcheck.mjs`通过（装机文档8002行与既有SVG触发词重合两条警告）；完整`dev/test.mjs`的111项全部符合期望，用时533s；最终新增/修改的worldfx四项、post三项、surface两项再次针对性补测均通过。全仓库`accept`收据对账通过；sky/model/surface/post/events/worldfx六组局部夹具`accept --deep`均通过；三份能力SKILL的quick_validate与`git diff --check`通过。改动未提交。
+最终合格线：`dev/selfcheck.mjs`通过（装机文档8002行与既有SVG触发词重合两条警告）；完整`dev/test.mjs`的111项全部符合期望，用时533s；最终新增/修改的worldfx四项、post三项、surface两项再次针对性补测均通过。全仓库`accept`收据对账通过；sky/model/surface/post/events/worldfx六组局部夹具`accept --deep`均通过；三份能力SKILL的quick_validate与`git diff --check`通过。本节内容即提交 1be8087；其后的审查与修复见下一节。
+
+## 游戏技法迁入：审查与修复（2026-11-13）
+
+对 51dbdc2 / 1be8087 做三路只读审查（webfx 三维、physics 事件、narration 音效）后统一修复。审查结论：seek 契约没有被破坏，问题集中在移植偏差、把游戏观感常数写成默认值、画面与声音各有一套事件规则、以及只有阳性对照的测试。
+
+**跨 skill 的接口变化**（三条修复线共用一份约定）：
+- **事件表是画面与声音唯一的时间真相源。** `events.js` 从 film-physics 移到 film-core（运行时扁平挂载，片子的 import 路径不变；通用文档在 film-core `references/events.md`，手感与顿帧留在 physics）。
+  `toCues`/`toSceneEvents` 透传 `id`、`pan` 等全部字段；`burstEnds` 经 `toCues(…,{tails})` 给每串最后一发标 `tail:true`。
+  sfx 只要见到任何 `tail` 字段就严格照办，不再自己判串；变体与 jitter 按 `hash(配方, id)` 取，插入事件不再让后面所有声音换变体。
+- **内核把 fps 交给页面**：所有开场景页的地方（render 含 `--fps`、seamcheck、preview、fontsrc、preflight、physcheck）在脚本执行前注入只读 `window.FILM={fps,width,height,format}`（kernel.md §1）。
+  `snapToFrames`/`holdFrames` 缺省读它；之前按 30 fps 对齐、24 fps 渲染时 200 个闪光里有 43 个不足 2 帧。
+- **音频进收据**：Node 脚本经 `importRuntime(…,{film})` 加载的运行时记入 `out/.render/runtime-node.json`，deliver 一并冻结进片内 `runtime/`；渲染侧与 Node 侧同名运行时版本不同时判红。
+- **默认值政策**：游戏里的观感常数（时间常数、幅度、阈值、受光/压暗系数）改为必填参数（报错给参考量级），或保留默认但在 references 写明代价。
+  **破坏性**：`space:'outdoor'` 字符串简写、`muffle`/`duck` 数字简写、缺 `burstGap`、`traumaShake` 不给 power、ground 不给板缝/颗粒参数等，现在都会报错。缺省事件 id 从 `type#n` 改为 `type:n`。
+
+**修掉的 bug**：`drive:0` 整段 NaN 却写成静音且 exit 0；jitter 同变体逐样本重复；重叠顿帧让世界时间倒退；`combine:'last'`+`lead` 取到未发生的事件；配方缓冲定长截断余振；地面涟漪同相位网格加格缝（按原版逐格雨滴重写）；mix 模式拉丝无阈值抹全图；跳过的子链对旧 RT 乘 0（Inf×0 得 NaN）；`applySurface` 后再 `applyGround` 抛错（统一到 `patch3d.js`）；`sweep` 顺时针轮廓侧壁朝内；`extrude({smooth})` 把端盖法线一起平均；眩光出画即消失；`shakeTermsFromSeed` 避比不全；测光只取 0.1% 像素。
+
+**性能**：sfx 尾音改为同一 IR 同一总线先叠后卷、IR 频谱缓存：300 cue/120 s 从 15–18 s 降到约 5 s；90 s 长音加室内尾音从 11–13 s / 约 480 MB 降到约 3 s / 158 MB（带尾音部分误差在 float32 舍入量级，不带尾音逐位相同）。中间 WAV 改 32 位浮点，不再先按 16 位削顶。
+
+**测试**：新增阴性对照 `_test-worldfx/scene-bad-reflect-prevframe.html`（门 1a、2 红）、`_test-surface/scene-bad-noreset.html`（门 2 红），以及 sfx 的 drive 0、jitter 重复、键序分组、缓冲截断四组；`_test-events` 原来两项同义反复的单测换成独立参照实现；新配方钉了 50 个 PCM 哈希并验证跨进程一致。
+旧音色 PCM 哈希、旧三维四帧（本机重存基线）逐位不变。注意：`docs/verified/film-webfx.md` 里原记录的三维基线 SHA 是另一台机器上的，本机复现不出来，这次用本机新存的基线对照。
+
+**仍未完成**：
+- 本机没有 ffmpeg、`.venv`、numpy、fontTools：deliver 全流程、配乐 duck 段、`mux.sh` 读浮点 WAV、`measure.py` 都没实测，需要在有环境的机器上补跑。
+- `mux.sh` 的 `mix.wav` 仍是 24 位整数，进 loudnorm 前会削顶；没改，因为会改变已交付片子的重放结果。
+- 天空云的受光曲线常数（0.55+0.9r²、0.05+2.2r³）只写了代价，没参数化；涟漪只在公式层对过原版，没做像素对照；前景遮罩只在景深上验证过；新测光没和旧采样做数值对比；`worldfx-bench` 没重跑。
+- 装机 md 仍为 8004 行（目标 6500）；仍然没有用这批能力做过一支完整片子。

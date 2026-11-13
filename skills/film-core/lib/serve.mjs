@@ -72,7 +72,7 @@ export function readRuntimeRecord(filmDir) {
 /**
  * root：托管的目录（web 根）。
  * opts.port      0 = 随机端口
- * opts.routes    { '/path': 字符串 } 内存页面
+ * opts.routes    { '/path': 字符串 | () → 字符串 } 内存页面（函数每次请求现算）
  * opts.mounts    { '/prefix/': 绝对目录 } 额外挂载（前缀以 / 结尾）
  * opts.runtime   'auto'（默认：root 下有 film.json 才挂运行时）| true | false
  * opts.record    默认 true：挂了运行时就写 <root>/out/.render/runtime.json
@@ -141,8 +141,11 @@ export function serve(root, { port = 0, routes = {}, mounts = {}, runtime = 'aut
     let path;
     try { path = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400).end('bad url'); return; }
     if (routes[path] != null) {
+      let body;
+      try { body = typeof routes[path] === 'function' ? routes[path]() : routes[path]; }   // 函数：每次请求现算（preview 改写入口页）
+      catch (e) { res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' }).end(String(e.message ?? e)); return; }
       res.writeHead(200, { 'Content-Type': MIME[extname(path)] || 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(routes[path]);
+      res.end(body);
       return;
     }
     const loc = locate(path);

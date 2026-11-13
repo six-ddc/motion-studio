@@ -15,6 +15,9 @@
 //   5. checks 门：film.json checks 声明的每个 id 交给认领它的 skill 的门；没人认领 = 缺能力，红。
 //   6. 冻结：渲染清单里记的、从套件挂载来的运行时（以及 film.json kits 声明的 kit 文件 → runtime/kits/<kit>/），逐个核对 sha256 后拷进 films/<slug>/runtime/。
 //      之后这支片子不再依赖套件的运行时：套件升级不会改它的像素，也不会修它的 bug（要修就改了再 deliver 一次）。
+//      Node 侧加载记录 out/.render/runtime-node.json（runtime-node.mjs importRuntime(…, { film }) 写：音效 sfx.mjs/sfxdsp.mjs、烘焙脚本用的运行时）
+//      里的运行时一起冻结——于是生成音频的代码也进了收据的输入摘要；同名文件两边版本不同、或源头在生成之后改过，直接红（重跑生成它的脚本）。
+//      生成脚本本身（scripts/sfx.mjs 这类工具，与 render.mjs 同类，不冻结）的 sha256 记在收据 node.scripts，生成之后改过的打 ⚠。
 //   7. 写 films/<slug>/receipt.json：输入文件哈希、运行时哈希与来源、通过的门、环境指纹、时间。accept 只认它。
 //
 // 平台档位（只转码：不渲染、不过门、不写收据；拿现有的成片转，先 deliver 一次）：
@@ -35,6 +38,8 @@ import { resolveFilm, parseArgs, main, fail, FILM_OPTS, parseChecks } from '../l
 import { loadGates, planGates, runGate, timeoutOf, manifestOf, finalState } from '../lib/gates.mjs';
 import { hasCapability, capability, findVenvBin } from '../lib/env.mjs';
 import { readRuntimeRecord } from '../lib/serve.mjs';
+import { readNodeRuntimeRecord, nodeRuntimeRecordPath } from '../lib/runtime-node.mjs';
+import { SKILLS_ROOT } from '../lib/env.mjs';
 import { planFreeze, applyFreeze } from '../lib/freeze.mjs';
 import { kitsReceipt } from '../lib/kits.mjs';
 import { receiptInputs, writeReceipt, envFingerprint, portableCmd, receiptState } from '../lib/receipt.mjs';
@@ -155,9 +160,30 @@ await main(async () => {
 
   // 6. 冻结：套件挂载来的运行时、kit 文件拷进片子（lib/freeze.mjs）。先核对 sha：交付途中源头的文件变了，就不知道冻的是哪一份
   mkdirSync(join(F.dir, 'runtime'), { recursive: true });
+  // 6a. Node 侧（音效、烘焙）加载的运行时：与浏览器那份同名时必须同版本，否则声音和画面不是同一份代码算的
+  const nodeRec = readNodeRuntimeRecord(F.dir);
+  const nodeOnly = [], nodeWarn = [];
+  if (nodeRec) {
+    const byName = new Map(m.runtime.map((r) => [r.name, r]));
+    for (const [name, r] of Object.entries(nodeRec.files ?? {})) {
+      const b = byName.get(name);
+      if (b && b.sha256 !== r.sha256) fail(`${name}：渲染加载的与 Node 侧（${relative(F.dir, nodeRuntimeRecordPath(F.dir))}）加载的版本不同——音效/烘焙产物是用另一版代码生成的。重跑生成它的脚本（如 film-narration sfx.mjs）再 deliver`);
+      if (!b) nodeOnly.push({ name, from: r.from, sha256: r.sha256 });
+    }
+    for (const [p, r] of Object.entries(nodeRec.scripts ?? {})) {
+      const abs = p.startsWith('{skills}/') ? join(SKILLS_ROOT, p.slice('{skills}/'.length)) : null;
+      const now = abs && existsSync(abs) ? sha256(abs) : null;
+      if (now !== r.sha256) nodeWarn.push(`${p} ${now ? '生成之后改过' : '已不存在'}（${r.at}）`);
+    }
+  }
   let frozen;
   try { frozen = applyFreeze(planFreeze(F.dir, m.runtime)); } catch (e) { fail(`${e.message}。重跑 deliver`); }
+  if (nodeOnly.length) {
+    try { frozen.push(...applyFreeze(planFreeze(F.dir, nodeOnly, { what: 'Node 侧加载的运行时' }))); }
+    catch (e) { fail(`${e.message}（来自 ${relative(F.dir, nodeRuntimeRecordPath(F.dir))}）。重跑生成音效/烘焙的脚本；那些产物已经不用了就删掉这份记录`); }
+  }
   console.log(frozen.length ? `冻结进 runtime/：\n  ${frozen.join('\n  ')}` : '冻结：渲染用到的运行时都已在片内 runtime/');
+  for (const w of nodeWarn) console.log(`⚠ Node 侧生成脚本 ${w}：产物（如 out/sfx.wav）可能不是现版脚本的输出，需要时重跑它`);
 
   // 7. 收据
   const outputs = {};
@@ -176,6 +202,8 @@ await main(async () => {
     inputs: receiptInputs(F.dir),
     runtime: Object.fromEntries(m.runtime.map((r) => [r.name, { from: r.from, sha256: r.sha256 }])),
     ...(kitsOut ? { kits: kitsOut } : {}),       // 只有声明了 kits 的片子才有这个键（references/kits.md）
+    // 只有 Node 侧生成过东西（音效、烘焙）的片子才有：那边加载的运行时（已冻结、已进 inputs）与生成脚本的 sha256
+    ...(nodeRec ? { node: { runtime: nodeRec.files ?? {}, scripts: Object.fromEntries(Object.entries(nodeRec.scripts ?? {}).map(([p, r]) => [p, r.sha256])) } } : {}),
     render: { format: F.config.format, formats: F.formats, fps: m.key.fps, sub: m.key.sub, shutter: m.key.shutter, frames: m.key.frames,
       manifest: `out/.render/${F.config.format}.frames.json`, outputs },
     gates: results.map(({ id, kind, result, ms, cmd, why }) => ({ id, kind, result, ...(ms != null ? { ms } : {}), ...(cmd ? { cmd } : {}), ...(why ? { why } : {}) })),

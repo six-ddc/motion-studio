@@ -19,18 +19,14 @@
 
 import * as THREE from './three-film.module.js';
 import { hash01 } from './rand.js';
+import { addPatch, inject as patchInject, WORLD_POS, NORMAL_MAT } from './patch3d.js';
+import { GLSL } from './webfx.js';
 
 // ───────────────────────── 噪声片段（GLSL ES 3.00：需要 WebGL2；webfx 的着色器层用 GLSL.header2）─────────────────────────
-// 整数哈希（pcg3d，Jarzynski & Olano 2020）：只有整数运算，不依赖 sin/fract 的实现精度。
-const G_HASH = `
-uvec3 sf_pcg3(uvec3 v){
-  v = v * 1664525u + 1013904223u;
-  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-  v ^= v >> 16u;
-  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-  return v;
-}
-vec3 sf_hash33(vec3 p){ return vec3(sf_pcg3(uvec3(ivec3(floor(p))))) * (1.0 / 4294967296.0); }
+// 整数哈希：webfx.js 的共享 pcg3d（带 include 守卫，和 ground3d 叠在同一材质上不重定义）；sf_ 名字保留给拼接者
+const G_HASH = `${GLSL.pcg}
+uvec3 sf_pcg3(uvec3 v){ return pcg3d(v); }
+vec3 sf_hash33(vec3 p){ return pcgHash33(p); }
 float sf_hash13(vec3 p){ return sf_hash33(p).x; }
 `;
 // 3D 值噪声，输出 [0,1]，均值约 0.5。每次调用 8 次哈希。
@@ -135,7 +131,7 @@ const SPEC = {
       splash: { nullable: true, define: 'SF_SPLASH',
         sub: { groundY: ['uSfSplash', 0, 'finite'], height: ['uSfSplash', 1, '>0'], amount: ['uSfSplash', 2, '≥0'], darken: ['uSfSplash', 3, '0..1'] } },
       beads: { nullable: true, define: 'SF_BEADS',
-        sub: { amount: ['uSfBead', 0, '≥0'], size: ['uSfBead', 1, '>0'], fadePx: ['uSfBead', 2, '>0'], roughness: ['uSfBead', 3, '0..1'] } },
+        sub: { amount: ['uSfBead', 0, '≥0'], size: ['uSfBead', 1, '>0'], maxFootprint: ['uSfBead', 2, '>0'], roughness: ['uSfBead', 3, '0..1'] } },   // maxFootprint：米/像素
     },
   },
   triplanar: {
@@ -201,27 +197,14 @@ varying vec3 vSfNrmO;
 varying mat3 vSfN2V;
 #endif
 `;
+// 世界坐标与法线矩阵含 BatchedMesh / InstancedMesh（patch3d 的共享片段）
 const V_MAIN = `
-{
-  vSfPosO = transformed;
-  vec4 sfW4 = vec4(transformed, 1.0);
-  #ifdef USE_INSTANCING
-    sfW4 = instanceMatrix * sfW4;
-  #endif
-  vSfPosW = (modelMatrix * sfW4).xyz;
-  #ifdef SF_TRI
-    vSfNrmO = objectNormal;
-    mat3 sfM = normalMatrix;
-    #ifdef USE_INSTANCING
-      mat3 sfIm = mat3(instanceMatrix);
-      sfM = normalMatrix * sfIm * mat3(1.0 / dot(sfIm[0], sfIm[0]), 0.0, 0.0, 0.0, 1.0 / dot(sfIm[1], sfIm[1]), 0.0, 0.0, 0.0, 1.0 / dot(sfIm[2], sfIm[2]));
-    #endif
-    #ifdef FLIP_SIDED
-      sfM = -sfM;
-    #endif
-    vSfN2V = sfM;
-  #endif
-}
+vSfPosO = transformed;
+${WORLD_POS('vSfPosW')}
+#ifdef SF_TRI
+  vSfNrmO = objectNormal;
+  ${NORMAL_MAT('vSfN2V')}
+#endif
 `;
 const F_DECL = `
 varying vec3 vSfPosW;
@@ -309,7 +292,7 @@ const F_ALBEDO = `
     sfWetK = clamp(sfWetK, 0.0, 1.0);
     #ifdef SF_BEADS
     {
-      float sfBf = clamp(1.0 - length(fwidth(vSfPosW)) / uSfBead.z, 0.0, 1.0);   // 像素足迹（米/像素）大于 fadePx 时没有水珠
+      float sfBf = clamp(1.0 - length(fwidth(vSfPosW)) / uSfBead.z, 0.0, 1.0);   // 像素足迹（米/像素）大于 maxFootprint 时没有水珠
       if (sfBf > 0.0 && uSfBead.x > 0.0) {
         vec3 sfBp = vSfPosW / uSfBead.y;
         float sfB = sf_vnoise3(sfBp) * 0.6 + sf_vnoise3(sfBp * 2.4 + 5.0) * 0.4;
@@ -417,11 +400,7 @@ const F_SPECMAX = `
 #endif
 `;
 
-function inject(src, token, mode, code, what) {
-  const n = src.split(token).length - 1;
-  if (n !== 1) throw new Error(`surface3d: ${what} 里找不到恰好一处 "${token}"（找到 ${n} 处）。three 的着色器结构变了，注入点要跟着改`);
-  return src.replace(token, mode === 'after' ? `${token}\n${code}` : code);
-}
+const inject = (src, token, mode, code, what) => patchInject(src, token, mode, code, `surface3d(${what})`);
 
 /**
  * 给 MeshStandardMaterial / MeshPhysicalMaterial 注入表面特性。features 里出现的键 = 开启；每个特性的参数要全给。
@@ -429,14 +408,14 @@ function inject(src, token, mode, code, what) {
  *   macro       { space:'world'|'object', freq, albedo, roughness }
  *   grime       { space, ao:'aoMap'|'vertexColor'|'none', freq, amount, ramp:[lo,hi], aoWeight, darken, roughen }
  *   wet         { level, darken, roughnessMul, vertical, saturate, flatten, streakFreq:[h,v], patch:{freq, amount},
- *                 splash: null|{groundY, height, amount, darken}, beads: null|{amount, size, fadePx, roughness} }
+ *                 splash: null|{groundY, height, amount, darken}, beads: null|{amount, size, maxFootprint, roughness} }
  *   triplanar   { scale, sharpness }
  * 返回 { uniforms, set(patch), key, features }。set 只改数值；结构（空间、AO 来源、子特性开关）要换就新建材质。
  * 必须在 S.freeze() 之前调（uniform 挂在 material.uniforms 上，由舞台复位）。
+ * 可与 sky3d（雾/PCSS/前景）、ground3d 叠在同一材质上：补丁按调用顺序串在 patch3d 上，粗糙度按调用顺序依次作用。
  */
 export function applySurface(material, features) {
   if (!material || !material.isMeshStandardMaterial) throw new Error('surface3d.applySurface: 只支持 MeshStandardMaterial / MeshPhysicalMaterial');
-  if (material.userData && material.userData.__sfApplied) throw new Error('surface3d.applySurface: 这个材质已经注入过了；要换特性组合就 new 一个材质');
   if (!features || typeof features !== 'object') throw new Error('surface3d.applySurface: features 要是对象');
   const names = Object.keys(features);
   if (!names.length) throw new Error('surface3d.applySurface: features 是空的（至少开一个特性）');
@@ -481,13 +460,11 @@ export function applySurface(material, features) {
   const needNormal = !!(features.triplanar || features.wet || features.antiFlicker);
   if (needNormal) defs.push('SF_NM');
   const defBlock = defs.map((d) => `#define ${d}`).join('\n');
-  const key = `sf1|${defs.join(',')}`;
+  const key = `surface:${defs.join(',')}`;
+  if (material.uniforms) for (const u of Object.keys(uniforms)) if (u in material.uniforms) throw new Error(`surface3d: material.uniforms 里已经有 ${u}`);
 
-  const prevCompile = material.onBeforeCompile;
-  const prevKey = material.customProgramCacheKey;
-  const hadCustom = Object.prototype.hasOwnProperty.call(material, 'onBeforeCompile');
-  material.onBeforeCompile = function (shader, renderer) {
-    if (hadCustom) prevCompile.call(this, shader, renderer);
+  // 结构编进 key（patch3d 拼进 customProgramCacheKey）：默认的键是 onBeforeCompile.toString()，所有组合共用一段源码会串程序
+  addPatch(material, key, (shader) => {
     Object.assign(shader.uniforms, uniforms);
     let vs = shader.vertexShader, fs = shader.fragmentShader;
     vs = inject(vs, '#include <common>', 'after', `${defBlock}\n${V_DECL}`, '顶点着色器');
@@ -508,17 +485,9 @@ export function applySurface(material, features) {
     if (needNormal) fs = inject(fs, '#include <normal_fragment_maps>', 'replace', F_NORMAL, '片元着色器');
     fs = inject(fs, '#include <lights_fragment_end>', 'after', F_SPECMAX, '片元着色器');
     shader.vertexShader = vs; shader.fragmentShader = fs;
-  };
-  // 默认的 customProgramCacheKey 返回 onBeforeCompile.toString()：所有特性组合共用同一段函数源码 → 会串程序，必须覆盖。
-  // 材质原先自己设过键（别的注入）就串在后面。
-  const hadKey = Object.prototype.hasOwnProperty.call(material, 'customProgramCacheKey');
-  material.customProgramCacheKey = function () { return hadKey ? `${key}|${prevKey.call(this)}` : key; };
-  if (material.uniforms) {
-    for (const u of Object.keys(uniforms)) if (u in material.uniforms) throw new Error(`surface3d: material.uniforms 里已经有 ${u}`);
-    Object.assign(material.uniforms, uniforms);
-  } else material.uniforms = uniforms;   // stage3d 的 freeze/reset 认 material.uniforms：复位到 freeze 时的值
-  material.userData.__sfApplied = key;
-  material.needsUpdate = true;
+  });
+  if (material.uniforms) Object.assign(material.uniforms, uniforms);
+  else material.uniforms = { ...uniforms };   // stage3d 的 freeze/reset 认 material.uniforms：复位到 freeze 时的值（容器另建：别的补丁往里加槽不污染本表）
 
   const frozen = JSON.parse(JSON.stringify(features));
   return {

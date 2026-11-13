@@ -1,0 +1,4 @@
+<!doctype html><html><head><meta charset="utf-8"><title>_test-worldfx 对照：reflect-prevframe</title><style>html,body{margin:0;overflow:hidden;background:#162032}canvas{display:block}</style></head><body><canvas id="stage"></canvas>
+<!-- 阴性对照：平面反射在这一帧画完之后才渲染，下一次 seek 读到的是上一帧的反射 RT → 期望门 2 红 -->
+<script>window.FX_VARIANT = "reflect-prevframe";</script>
+<script type="module" src="./scene.js"></script></body></html>

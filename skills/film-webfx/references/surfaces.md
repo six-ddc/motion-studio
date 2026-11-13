@@ -4,9 +4,8 @@
 
 ## 按成因分层
 
-先分清材料本体、湿润、积垢、磨损和尺度，再把它们写进不同通道。同一张均匀噪声同时染色和改粗糙度会掩盖材料的因果关系。
-粗糙度变化决定高光是否像塑料；仅增加颜色细节，受光时仍会是一块均匀亮斑。让湿度、积水和污垢用连续斜坡，硬阈值的代价是出现贴纸般的分界。
-低频成簇噪声负责“哪里发生”，细噪声负责“局部是什么”；均匀撒斑点会消掉受力、接触和流淌方向。
+材料本体、湿润、积垢、磨损、尺度分开写进不同通道：一张均匀噪声同时染色和改粗糙度，会掩盖因果。粗糙度变化决定高光像不像塑料；只加颜色细节，受光时仍是一块均匀亮斑。
+连续斜坡的代价是多算一段过渡，硬阈值的代价是贴纸般的分界。低频成簇噪声管"哪里发生"，细噪声管"局部是什么"。
 
 ## 材质注入
 
@@ -20,7 +19,7 @@ const surface=applySurface(material,{
   wet:{level:0,darken:0.05,roughnessMul:0.62,vertical:0.65,saturate:0.5,
     flatten:0.45,streakFreq:[9,0.55],patch:{freq:0.8,amount:0.25},
     splash:{groundY:0,height:0.3,amount:0.6,darken:0.25},
-    beads:{amount:0.7,size:1/170,fadePx:1/120,roughness:0.05}},
+    beads:{amount:0.7,size:1/170,maxFootprint:1/120,roughness:0.05}},
   triplanar:{scale:2,sharpness:6}
 }); // 此例为封闭表面的配方，数值由片子的材料与镜头决定
 // 在 S.frame(t, paint) 的 paint 里：
@@ -41,7 +40,7 @@ surface.set({wet:{level:t/duration}});
 | wet.patch | `freq` 每米，`amount` 斑驳量 | 低频噪声让湿度有聚集，增加每像素计算 |
 | wet.streakFreq | `[水平频率,竖直频率]` 每米 | 竖面流痕的拉长由两轴频率比决定 |
 | wet.splash | `groundY/height` 米，`amount/darken` 或整个 null | 溅湿带位置固定在世界地面，物体搬走后不会保留历史水痕 |
-| wet.beads | `amount`，`size` 米，`fadePx` 表面足迹阈值，`roughness` 或整个 null | 用像素导数消退亚像素水珠；水珠不是额外几何，不改变剪影 |
+| wet.beads | `amount`，`size` 米，`maxFootprint` 米/像素（像素足迹超过它就不画水珠），`roughness` 或整个 null | 用像素导数消退亚像素水珠；水珠不是额外几何，不改变剪影 |
 | triplanar | `scale` 每物体米重复数，`sharpness≥1` 方向权重幂 | 三向采样，贴图读取近三倍；贴图须 RepeatWrapping。物体空间映射随物体一起动 |
 
 `macro.freq` 和 `grime.freq` 可独立动画；即使加载期相等也分别求值，避免数值更改后错误复用同一遮罩。
@@ -69,9 +68,8 @@ material.vertexColors=true;
 
 ## 注入约定与局限
 
-片段 `SURFACE_GLSL` 包含 `hash/vnoise/fbm/gradT/worleyT/all`：分别导出 `sf_pcg3/sf_hash33/sf_hash13`、`sf_vnoise3`、`sf_fbm3`、`sf_gnoiseT/sf_fbmT`、`sf_worleyT`。
-手动拼接时先 hash，再 vnoise/fbm 或 gradT/worleyT；全部是 GLSL ES 3.00。函数前缀 `sf_`，uniform `uSf`，varying `vSf`，define `SF_`。
-注入点为顶点 `common/project_vertex`，片元 `common/map_fragment/color_fragment/roughnessmap_fragment/metalnessmap_fragment/aomap_fragment/normal_fragment_maps/lights_fragment_end`。
-程序缓存键包含特性集合、空间和可选子项，原有补丁回调及自定义键保留；同一材质只应用一次。
-夹具覆盖 UV/三平面、mip 法线、全部特性与湿度动画；非均匀缩放、实例、蒙皮、位移和外部自定义法线补丁尚未做专门验证。
+`SURFACE_GLSL` 的 `hash/vnoise/fbm/gradT/worleyT/all` 导出 `sf_pcg3/sf_hash33/sf_hash13`、`sf_vnoise3`、`sf_fbm3`、`sf_gnoiseT/sf_fbmT`、`sf_worleyT`；先拼 hash（内含 webfx.js 共享的 `pcg3d`，带 include 守卫），全部 GLSL ES 3.00。前缀 `sf_/uSf/vSf/SF_`。
+补丁经 `patch3d.js` 的 `addPatch` 挂上（程序缓存键含特性集合、空间、可选子项），可以和 ground3d、sky3d 的雾/PCSS/前景叠在同一材质上，按调用顺序执行；替换掉的 chunk 留锚点，后来的补丁仍能插在它后面。
+粗糙度按调用顺序依次作用：surface 是加/乘再钳到 [minRoughness,1]，ground3d 是乘；先 surface 后 ground = 地面档位乘在已调制的粗糙度上。
+世界坐标与三平面法线矩阵处理 InstancedMesh 与 BatchedMesh。夹具覆盖 UV/三平面、mip 法线、全部特性、湿度动画与叠补丁编译；非均匀缩放、蒙皮、位移尚无专门验证。
 1080×1920大地面逐项开关实测（5帧中位数，seek+同步读回；单位ms）：SW 裸109.9、AA111.5、宏观109.9、积垢111.1、湿润115.2、三平面138.8、全开150.6；GPU依次1.5/1.5/1.7/1.7/2.2/1.3/2.1。并发开发下数字有噪声，微小差异不作加速结论；风化只占加载时间，渲染时是普通顶点色乘法。

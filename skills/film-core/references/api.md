@@ -61,7 +61,7 @@
 
 | 导出 | 签名 | 说明 |
 |---|---|---|
-| `serve` | `(root, {port=0, routes={}, mounts={}, runtime='auto', record=true}) → Promise<{server, port, url, close(), loaded(), suite()}>` | root 下有 film.json 时自动挂载运行时并写加载记录。`routes` 是内存中的页面；`mounts` 用 `{'/前缀/': 绝对目录}` 添加额外挂载；`loaded()` 返回 `[{name, from, sha256, bytes, path}]` |
+| `serve` | `(root, {port=0, routes={}, mounts={}, runtime='auto', record=true}) → Promise<{server, port, url, close(), loaded(), suite()}>` | root 下有 film.json 时自动挂载运行时并写加载记录。`routes` 是内存中的页面（值为字符串，或每次请求现算的 `() → 字符串`）；`mounts` 用 `{'/前缀/': 绝对目录}` 添加额外挂载；`loaded()` 返回 `[{name, from, sha256, bytes, path}]` |
 | `suiteRuntimeIndex` | `() → Map<名, {skill, path}>` | 套件运行时的扁平索引；有重名时抛错 |
 | `runtimeRecordPath` / `readRuntimeRecord` | `(filmDir) → path` / `(filmDir) → record\|null` | 记录文件位于 `out/.render/runtime.json` |
 | `runtimeDigest` | `(loaded) → sha256 hex` | 由名字和 sha256 算出的摘要（用作分片缓存键） |
@@ -71,7 +71,8 @@
 | 导出 | 签名 | 说明 |
 |---|---|---|
 | `launchBrowser` | `async ({backend='swiftshader', extraArgs=[]}={}) → Browser` | 启动参数固定为 `LAUNCH_ARGS` + `BACKENDS[backend]`；遵循 `FILM_CHROMIUM` 环境变量。打开某支片子的工具传 `backend: filmBackend(F)`；`backend:'gpu'` 起不来硬件 WebGL 时抛错（`code: 'BACKEND_UNAVAILABLE'`），不退回软件。`extraArgs` 只给 dev/ 下的基准脚本用，**门和渲染都不能传** |
-| `openScene` | `async (film, format, {browser?, port?, probe=false, initScripts=[], capture='cdp', scale=1, png='fast', record=true, query={}}) → {page, context, shot(t)→PNG, advance(t), info:{duration, usesWaapi, …}, errors, probeCalls(), close(), width, height, outWidth, outHeight}` | 打开场景，等待 ready 和字体就绪，处理 USES_WAAPI。传入的 browser 后端与本片 film.json `backend` 不符时不用它，自起一个对的（stderr 提示一次）。不传 port 时自带一个 serve（`record:false` 时不写加载记录，用于只读地查看别的片子）；`initScripts` 在场景脚本之前注入（探针放在这里）；`query` 是额外的 URL 参数（如 `{variant}`） |
+| `openScene` | `async (film, format, {browser?, port?, probe=false, initScripts=[], capture='cdp', scale=1, png='fast', record=true, query={}, fps=film.json fps}) → {page, context, shot(t)→PNG, advance(t), info:{duration, usesWaapi, …}, errors, probeCalls(), close(), film, width, height, outWidth, outHeight}` | 打开场景，等待 ready 和字体就绪，处理 USES_WAAPI。页面脚本之前注入只读 `window.FILM = {fps, width, height, format}`（`fps` 取这个参数：按别的帧率截帧的调用方必须传，返回值 `film` 是注入的那份）。传入的 browser 后端与本片 film.json `backend` 不符时不用它，自起一个对的（stderr 提示一次）。不传 port 时自带一个 serve（`record:false` 时不写加载记录，用于只读地查看别的片子）；`initScripts` 在场景脚本之前注入（探针放在这里）；`query` 是额外的 URL 参数（如 `{variant}`） |
+| `filmGlobals` / `filmGlobalsScript` | `(film, format, fps=film.json fps) → 冻结的 {fps, width, height, format}` / `(g) → JS 字符串` | 自己开页面（不经 openScene）的工具用它们注入同一份 `window.FILM`（fontsrc、preflight 用 `addInitScript({content})`，preview 改写入口页） |
 | `makeComparer` | `async (browser) → {compare(pngA, pngB) → {diff, max, total, identical}, close()}` | 逐像素比较 |
 | `rendererFingerprint` | `async (browser) → {chromium, playwright, args}`（gpu 后端另加 `backend, gpu, gpuDriver`） | 记录进 film.json 的 renderer 字段和收据 |
 | `filmBackend` / `browserBackend` / `backendMismatch` | `(F) → 'swiftshader'\|'gpu'` / `(browser) → 同上` / `(记录a, 记录b) → 原因\|null` | 本片声明的后端；某个浏览器由哪个后端起；两份渲染器记录（后端、显卡、驱动）可不可比 |
@@ -100,6 +101,7 @@
 | `motion.js` | `sat lerp clamp norm win wrap settle spring springInfo zetaForOvershoot follow SPRING pill labelAlpha camera applyCamera beatGrid`、镜头组合子 `sequence series loopT rate freeze`，并转导出 `seeded hash01`。`win(t, start, dur, ease)` 等于 `ease(sat((t-start)/dur))`（ease 是函数，dur ≤ 0 时为阶跃），film-motion 的 `envelope` 与 film-typography 的 `unitProgress` 都建立在它之上。`sequence(list, {start, end, overlap, align, marks}) → {at(t), cuts, boundaries, windows, marks, bounds(name), list, duration}`；`series(durations, start) → {at(t), cuts, end}`；`loopT(t, period, {from, times})`、`rate(t, k, from)`、`freeze(t, at, dur)` 返回局部时间 |
 | `layout.js` | `FORMATS makeLayout(key) layoutFromURL(fallback) pick(L, by)` |
 | `anchors.js` | `createAnchors(canvas) → A`（`A.ctxRect / A.box / A.get / A.install(draw)`，语义见 runtime.md §6） |
+| `events.js` | 事件表 `eventTrack merge channel`，响应核 `flashDecay sqrtFade expDecay gaussPulse oscillate springKick springParams riseHoldFall holdFallFlow holdFrames`，加载期规则 `throttle burstEnds snapToFrames piecewise trauma traumaOf countRing`，声音桥 `toCues toSceneEvents`，`keyOf filmFps`。可选能力，语义见 `events.md`；`snapToFrames`/`holdFrames` 的 fps 缺省读 `globalThis.FILM.fps`，两者都没有抛错。film-physics `feel.js`/`closed.js` 建在它上面 |
 | `content.js` | `loadContent() → Promise<C>`（`C.text/slot/asset/color/font/param/strings`、`C.id`），纯函数 `resolveContent validateContent parseVariant variantId expandMatrix stableStringify`。Node 侧的包装在 `lib/content.mjs`（`readContentDoc contentHash muxVariant writeVariantManifest`）。schema 见 content-json.md |
 
 ## 2. capability：跨能力懒加载
@@ -136,6 +138,10 @@ Python 侧：`film.capability('film-x') → Path`（没装时 die 1）。运行�
   `await importRuntime('narration.js', { film })` 按扁平名字获取：给了 `film`（片子目录或 resolveFilm 的返回值），并且片内 `runtime/` 有同名文件（冻结的副本或片子自己写的）时，
   取片内的那一份，否则取套件的。这与挂载表的语义相同，保证检查脚本读到的和场景在浏览器里加载的是同一份。不给 `film` 时只认套件里的文件。
   需要 Node ≥ 22.15。不要在各 skill 里另写一套本地解析实现。
+- **Node 侧加载记录** `<片子>/out/.render/runtime-node.json`：`importRuntime(name, { film })` 之后，本进程为这支片子解析到的运行时（含相对 import 的传递依赖）
+  与调用它的脚本（`process.argv[1]`，在 skills 目录下时）的 sha256 合并写入：`{ schema, at, files: {名: {from, sha256}}, scripts: {"{skills}/…": {sha256, at}} }`。
+  `readNodeRuntimeRecord(dir)` / `nodeRuntimeRecordPath(dir)` 读它。deliver 把 files 与浏览器加载的一起冻结（同名而 sha 不同 → 红），scripts 记进收据 `node.scripts`。
+  这是让 Node 里生成的产物（film-narration 的 out/sfx.wav、烘焙数据）所用的代码进入交付的唯一通道：生成脚本要用 `importRuntime(…, { film })` 加载运行时，不要按路径 import。
 
 ## 4. gates.json：每个 skill 登记自己的门
 
@@ -223,6 +229,7 @@ Python 侧：`film.capability('film-x') → Path`（没装时 die 1）。运行�
 | `inputs.files` | 片子目录里 **out/ 以外**全部文件的 sha256（不含 receipt.json 自身；film.json 去掉 `renderer` 字段后再计算；跳过 .DS_Store/__pycache__/node_modules/.git）。在冻结之后计算，所以包含 `runtime/` 里冻结的副本 |
 | `inputs.digest` | 按路径排序后，对 `路径\0sha\0…` 计算的 sha256。**accept 只比较这一个值** |
 | `runtime` | 渲染时实际加载的运行时；`from` 是冻结前的来源（`film`、skill 名或 `kit:<kit>@<版本>`） |
+| `node` | 只有片子有 Node 侧加载记录时才有：`{ runtime: {名: {from, sha256}}, scripts: {"{skills}/…/x.mjs": sha256} }`。runtime 已冻结进片内（所以在 `inputs` 里）；scripts 是生成音效/烘焙的工具脚本（与 render.mjs 同类，不冻结、不进 inputs），交付时它们若在生成之后改过，deliver 打 ⚠ |
 | `kits` | 只有 film.json 声明了 kits 时才有：`{<kit>: {version, files: {文件: sha256}}}`，记录冻结的 kit 版本，见 `kits.md` §3 |
 | `render` | 定稿渲染的参数与产物 sha256（`via: freeze` 时为 null） |
 | `gates` | 每一步的记录：`kind` 取 render / kernel / uses / checks 之一；`result` 取 pass / fail / na 之一；只有全部步骤都不是 fail 时，deliver 才写收据。`cmd` 只作记录，accept 不比对；其中不含本机绝对路径：仓库根（films/ 的父目录）下的路径写成相对路径，装 skill 那一层下的写成 `{skills}/…`，家目录下的写成 `~/…` |

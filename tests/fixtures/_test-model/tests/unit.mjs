@@ -12,4 +12,16 @@ const merged=M.mergeByMaterial(group);ok(M.modelStats(group).triangles===M.model
 assert.throws(()=>M.bevelBox(1,1,1,{}));assert.throws(()=>M.sweep([[0,0],[1,0],[0,1]],[[0,0,0],[0,0,0]]));checks+=2;
 const reflected=new T.Group(),one=M.part('reflected',shapes[0],mat);one.scale.x=-1;one.children[0].castShadow=false;reflected.add(one);const batch=M.mergeByMaterial(reflected);ok(!batch.children[0].castShadow);const rp=batch.children[0].geometry.attributes.position,rn=batch.children[0].geometry.attributes.normal;
 for(let i=0;i<rp.count;i+=3){const a=new T.Vector3().fromBufferAttribute(rp,i),b=new T.Vector3().fromBufferAttribute(rp,i+1),c=new T.Vector3().fromBufferAttribute(rp,i+2);ok(b.sub(a).cross(c.sub(a)).dot(new T.Vector3().fromBufferAttribute(rn,i))>=-1e-7);}
+// 扫掠：截面顺/逆时针、坐标架左/右手，侧面与封口都朝外（几何法线指向远离截面中心 / 远离相邻截面）
+const sq=[[-.2,-.1],[.2,-.1],[.2,.1],[-.2,.1]];
+for(const prof of [sq,sq.slice().reverse()])for(const frame of [null,{u:[1,0,0],v:[0,-1,0]}]){
+ const secs=[[0,0,0],[0,0,1]].map(at=>frame?{at,...frame}:at),g=M.sweep(prof,secs),p=g.attributes.position,n=g.attributes.normal;
+ for(let i=0;i<p.count;i+=3){const a=new T.Vector3().fromBufferAttribute(p,i),b=new T.Vector3().fromBufferAttribute(p,i+1),c=new T.Vector3().fromBufferAttribute(p,i+2),m=a.clone().add(b).add(c).divideScalar(3);
+  const f=b.clone().sub(a).cross(c.clone().sub(a));const cap=Math.abs(a.z-b.z)<1e-9&&Math.abs(a.z-c.z)<1e-9;
+  const out=cap?new T.Vector3(0,0,a.z<.5?-1:1):new T.Vector3(m.x,m.y,0);ok(f.dot(out)>0);ok(new T.Vector3().fromBufferAttribute(n,i).dot(out)>0);}}
+// 挤出 smooth：只平滑侧面，封口法线仍是 ±Z
+{const e=M.extrude([[0,0],[1,0],[1,1],[0,1]],.4,{smooth:true}),n=e.attributes.normal;for(const gr of e.groups.filter(g=>g.materialIndex===0))for(let i=gr.start;i<gr.start+gr.count;i++)ok(Math.abs(Math.abs(n.getZ(i))-1)<1e-6);}
+// 零件投影开关可关；贴花粗糙度必填
+{const q=M.part('x',shapes[0],mat,{castShadow:false,receiveShadow:false});ok(!q.children[0].castShadow&&!q.children[0].receiveShadow);}
+assert.throws(()=>M.decal({width:4,height:4,getContext(){return null}},{width:1,height:1}),/roughness/);checks++;
 console.log(`✓ model3d ${checks} 条数值断言；基元顶点 ${shapes.map(g=>g.attributes.position.count).join('/')}；合批 3→2 mesh，三角形守恒`);

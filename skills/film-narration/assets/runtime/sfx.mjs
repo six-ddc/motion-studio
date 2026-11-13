@@ -5,11 +5,12 @@
 // 合成出来听着廉价。转场 whoosh、低频 thump、tick 用合成足够；需要质感时用素材
 // （cues 里写 file，见 scripts/sfx.mjs）。
 
-import { expandRecipes, RECIPES, planTails, makeIR, convolve, muffleCurve, applyMuffle, duckCurve, applyMaster } from './sfxdsp.mjs';
+import { SR, expandRecipes, RECIPES, planTails, makeIR, convolveStereo, muffleCurve, applyMuffle, duckCurve, applyMaster } from './sfxdsp.mjs';
 // 分层配方、DSP 基元、程序化空间与总线处理在 sfxdsp.mjs；这里转导出，片子和脚本只认 sfx.mjs 一个入口
-export { RECIPES, expandRecipes, renderRecipe, stats, duckCurve, muffleCurve, applyMuffle, makeIR, planTails } from './sfxdsp.mjs';
+export { SR, RECIPES, expandRecipes, renderRecipe, stats, duckCurve, muffleCurve, applyMuffle, makeIR, planTails, spaceKey } from './sfxdsp.mjs';
 
-export const RATE = 48000;
+/** 工程采样率：唯一来源是 sfxdsp.mjs 的 SR（配方、IR、混音、WAV 头都读它） */
+export const RATE = SR;
 const TAU = Math.PI * 2;
 const env = (t, len, k) => Math.exp(-k * t) * (t < len ? 1 : 0);
 
@@ -147,7 +148,7 @@ function freeverb(inL, inR, { size, damp, width = 1 }) {
  */
 export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, room = null, spaceRule = undefined, master = null } = {}) {
   cues = expandRecipes(cues, { sounds });
-  const tails = planTails(cues, spaceRule);                       // 尾音挂在哪些 cue 上：对整张表一次性决定
+  const tails = planTails(cues, spaceRule);                       // 尾音挂在哪些 cue 上：对整张表一次性决定（显式 tail 优先）
   const spans = cues.map((c) => spanOf(c, sounds));
   const wet = cues.some((c) => c.send != null && c.send !== 0);
   if (wet && !room) throw new Error('有 cue 写了 send > 0，但没给 room（{ size, damp }）：房间的大小是片子的选择，套件不给默认');
@@ -159,7 +160,14 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
   const useDry = cues.some((c) => c.bus === 'dry');
   const DL = useDry ? new Float32Array(N) : null, DR = useDry ? new Float32Array(N) : null;
   for (const c of cues) if (c.bus != null && c.bus !== 'dry' && c.bus !== 'main') throw new Error(`bus 只认 "main"（默认，过闷音）/ "dry"（不过闷音），收到 ${JSON.stringify(c.bus)}`);
-  const tailSrc = new Map();
+  // 尾音总线：同一个 IR、同一条输出总线的干声（已乘 space.gain）先叠成一条，最后每组只卷一次（线性，结果与逐 cue 卷积相同到浮点误差）
+  const tailBus = new Map(), tailOf = new Map();
+  for (const [idx, ir] of tailIRs) {
+    if (ir.gain == null) throw new Error(`cue #${idx}（t=${cues[idx].t}）的 space 没写 gain：尾音多湿是片子的选择，写成 { preset, gain }（IR 每声道单位能量，gain 1 时尾音能量与干声相当；参考 0.08–0.2）`);
+    const dry = cues[idx].bus === 'dry', key = ir.key + (dry ? '|dry' : '|main');
+    if (!tailBus.has(key)) tailBus.set(key, { buf: new Float32Array(N), ir, out: dry ? [DL, DR] : [L, R], lo: N, hi: -1 });
+    tailOf.set(idx, { g: tailBus.get(key), gain: ir.gain });
+  }
   const WL = wet ? new Float32Array(N) : null, WR = wet ? new Float32Array(N) : null;
   cues.forEach((cue, idx) => {
     const g = param(cue.gain, 1), pn = param(cue.pan, 0), sd = param(cue.send, 0), rt = param(cue.rate, 1);
@@ -178,8 +186,8 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
     const first = Math.round(cue.t * RATE), count = Math.ceil(spans[idx] * RATE);
     let tau = 0, y = 0;
     const OL = cue.bus === 'dry' ? DL : L, OR = cue.bus === 'dry' ? DR : R;
-    const ts = tails.has(idx) ? new Float32Array(Math.max(1, count)) : null;
-    if (ts) tailSrc.set(idx, { buf: ts, first, out: [OL, OR] });
+    const tb = tailOf.get(idx), ts = tb?.g.buf, tg = tb?.gain;
+    if (tb) { tb.g.lo = Math.min(tb.g.lo, Math.max(0, first)); tb.g.hi = Math.max(tb.g.hi, Math.min(N, first + count)); }
     for (let n = 0; n < count; n++) {
       const at = first + n;
       if (at >= N) break;
@@ -198,7 +206,7 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
       const v = g(tA) * s;
       const [gl, gr] = constPan ? [cl, cr] : panGains(pn(tA));
       OL[at] += v * gl; OR[at] += v * gr;
-      if (ts) ts[n] = v;
+      if (ts) ts[at] += v * tg;
       if (wet) { const k = sd(tA); if (k) { WL[at] += v * k * gl; WR[at] += v * k * gr; } }
     }
   });
@@ -207,17 +215,13 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
     for (let n = 0; n < N; n++) { L[n] += rl[n]; R[n] += rr[n]; }
   }
   // 尾音：干声 × 程序化冲激响应（左右去相关），从 cue 起点叠回它所在的总线；超出片长的部分截掉
-  const tailInfo = [];
-  for (const [idx, { buf: src, first, out: [OL, OR] }] of tailSrc) {
-    const ir = tailIRs.get(idx);
-    for (const [h, O] of [[ir.L, OL], [ir.R, OR]]) {
-      const y = convolve(src, h);
-      for (let n = 0; n < y.length; n++) { const at = first + n; if (at >= 0 && at < N) O[at] += y[n] * ir.gain; }
-    }
-    tailInfo.push({ t: +cues[idx].t.toFixed(3), type: cues[idx].type ?? 'samples', space: tails.get(idx) });
+  for (const { buf, ir, out: [OL, OR], lo, hi } of tailBus.values()) {
+    if (hi <= lo) continue;
+    convolveStereo(buf.subarray(lo, hi), ir.L, ir.R, { L: OL, R: OR, at: lo });
   }
+  const tailInfo = [...tails.keys()].sort((a, b) => a - b).map((idx) => ({ t: +cues[idx].t.toFixed(3), type: cues[idx].type ?? 'samples', space: tails.get(idx), ...(cues[idx].id != null ? { id: cues[idx].id } : {}) }));
   const info = {};
-  if (tailInfo.length) info.tails = tailInfo;
+  if (tailInfo.length) { info.tails = tailInfo; info.tailMode = cues.some((c) => c.tail !== undefined) ? 'explicit' : 'spaceRule'; }
   // 闷音：主总线时变低通（dry 总线不过）
   const Z = muffleCurve(cues, N);
   if (Z) { applyMuffle(L, Z); applyMuffle(R, Z); info.muffle = Z; }

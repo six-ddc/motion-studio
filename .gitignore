@@ -43,3 +43,6 @@ assets/*
 # 片子与品牌/系列组件只留本地，不进开源仓库
 /films/
 /kits/
+
+# 研究对象（单文件游戏，docs/game-study.md 的行号指它；不入库）
+fps-game.html

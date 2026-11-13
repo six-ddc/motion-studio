@@ -37,7 +37,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { GENERIC, SYSTEM_FONT_RE } from '../lib/fontcss.mjs';
 import { FILM_OPTS, parseArgs, resolveFilm as coreResolve, fail } from '../lib/film.mjs';
 import { serve } from '../lib/serve.mjs';
-import { launchBrowser, FORMATS, filmBackend } from '../lib/browser.mjs';
+import { launchBrowser, FORMATS, filmBackend, filmGlobals, filmGlobalsScript } from '../lib/browser.mjs';
 
 const die = (msg, code = 2) => fail(msg, code);
 const A = parseArgs({
@@ -175,6 +175,7 @@ async function runBrowser() {
     page.on('pageerror', (e) => pageErrors.push(e.message));
     const fontRequests = [];
     page.on('request', (r) => { if (r.resourceType() === 'font' || /\.(woff2?|ttf|otf)(?:[?#]|$)/i.test(r.url())) fontRequests.push(r.url()); });
+    await page.addInitScript({ content: filmGlobalsScript(filmGlobals(F, format)) });   // window.FILM，与 openScene 同一份
     await page.addInitScript(HOOK);
     await page.goto(`${origin}/${entry}?format=${format}`, { waitUntil: 'load' });
     try { await page.evaluate(() => window.ready ?? null); } catch (e) {

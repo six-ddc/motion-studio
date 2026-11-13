@@ -292,3 +292,37 @@ render、seamcheck、font_source、preflight，以及 film-critique 的 stills�
 - 长时间渲染时 GPU 降频、温控，以及显存压力下的确定性：只测过 ≤ 25 s 的片子。
 - `sub > 1` 运动模糊、`--scale` 缩小版在 GPU 后端下的表现：没单独测（截图路径与软件后端相同，预期没有差别）。
 - 其他 skill 自己起浏览器、不经 openScene 的检查（film-physics physcheck、film-typography legibility、film-assets font_proof、film-story siblings 的拼图页）仍然用软件后端。physcheck 自己和自己比，结论不受影响，但它看到的不是 gpu 像素。
+
+## window.FILM、events.js 迁入 core、Node 侧加载记录（2026-11-13）
+
+**window.FILM**：`openScene` 在页面脚本前 `addInitScript` 注入 `Object.defineProperty(globalThis,'FILM',{value:Object.freeze({fps,width,height,format}),writable:false,configurable:false})`。
+render 传 `--fps`，seamcheck 门 1–4 传 `--fps`、门 5 传清单里的 fps，fontsrc/preflight/film-physics physcheck 用 `filmGlobals/filmGlobalsScript` 注入同一份，preview 改写入口页 `<head>`。
+
+```
+node tests/fixtures/_test-events/tests/browser.mjs          9 通过，0 失败（1.9 s）
+  fps=24/30/60：window.FILM = {"fps":N,"width":1080,"height":1920,"format":"9x16"}，赋值 window.FILM / FILM.fps 都无效
+  场景不写死帧率：24 fps 下 11 个闪白、30 fps 14 个、60 fps 13 个，每个至少 2 帧（60 fps 最少 3 帧）；峰值帧左上像素 RGB 和 71 → 636
+node skills/film-core/scripts/seamcheck.mjs --film _test-events --films-dir tests/fixtures --fps 24   「6s @ 24fps」全部通过
+node skills/film-core/scripts/seamcheck.mjs … --parallel 4                                            180 帧 0 帧不同
+node skills/film-core/scripts/accept.mjs --fixtures --deep --film _test-events --films-dir tests/fixtures   seam✓ fontsrc✓，其余 –
+```
+
+不注入的代价（单测第 4 节，对照）：按 30 fps 对齐与拉长、按 24 fps 采样，200 个 50 ms 闪光里 47 个只亮 1 帧。
+
+**events.js 从 film-physics 移到 film-core**（`git mv`，内容见 film-physics 实测记录同日条目）：挂载表扁平命名，片子里 `import './runtime/events.js'` 不变；
+feel.js / closed.js 的 `./events.js` 在浏览器走挂载表、在 Node 走 registerRuntimeResolver 的同名改指，selfcheck 依赖方向全过。
+
+**Node 侧加载记录**（交付收据之前不覆盖音频）：`importRuntime(name, {film})` 之后写 `out/.render/runtime-node.json`。
+在 `_test-sfx` 的副本上跑 `film-narration/scripts/sfx.mjs`：记录到 narration.js、rand.js、sfx.mjs、sfxdsp.mjs 四个运行时（sfxdsp/rand 是传递依赖，解析钩子记下）
+和 `{skills}/film-narration/scripts/sfx.mjs` 的 sha256。按 deliver 第 6a 步同样的 planFreeze/applyFreeze 冻结后，`receiptInputs` 多出 `runtime/{narration,rand,sfx,sfxdsp}.*` 4 个文件、摘要变化；
+再跑一次 sfx.mjs，四个文件都从片内加载（记录 `from: film`）。cues.json 本来就在输入摘要里（片子目录 out/ 以外全部文件）。
+
+countRing 谓词缓存：5000 事件、谓词 on，每次调用 359.5 µs → 1.9 µs（scratch 基准，同输入同结果）。
+
+### 没测到 / 局限
+
+- 这台机器没有 ffmpeg：**deliver 整条流程没跑**（render 第一步就退出「找不到 ffmpeg」）。6a 步（Node 侧记录冻结、同名版本冲突判红、脚本漂移 ⚠）只按上面的手动步骤验证了 planFreeze/receiptInputs 那一段。
+- 生成脚本（scripts/sfx.mjs）只记 sha、打 ⚠，不进输入摘要：它和 render.mjs 一样是工具，套件升级不该让所有已交付片子变红；代价是"脚本改了、sfx.wav 没重生成"只在 deliver 时提示一次。
+- cues.json 在 sfx.wav 生成之后改过：输入摘要会变（accept 红、要重新 deliver），但 deliver 不会替作者重跑 sfx.mjs，也不判 sfx.wav 过期——那是 film-narration 的 sfx.json 记录的事。
+- Node 侧记录是"合并写"：很久以前跑过、现在不用的脚本留下的条目也会被冻结；源头改过时 deliver 红，提示重跑或删记录。
+- 不经 openScene 自己开页的其它 skill 工具里，只有 film-physics physcheck 打开场景页，已补注入；film-critique 的拼图页、typography legibility、assets font_proof、story siblings 开的不是场景页，不需要。

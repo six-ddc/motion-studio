@@ -273,7 +273,7 @@ await main(async () => {
       const query = variant ? { variant: variant.id } : {};
       if (variant) console.log(`\n■ 变体 ${variant.id}  ${format}`);
       // 先开一个页面拿时长，它也作为 0 号 worker
-      const first = await openScene(F, format, { browser: browsers[0], port, capture, scale, png, query });
+      const first = await openScene(F, format, { browser: browsers[0], port, capture, scale, png, query , fps });
       if (variant) {
         // 场景真的按这个变体合并了内容吗：没 import content.js 的场景会一声不吭地渲出基础版（"变体从没真渲过"）
         const got = await first.page.evaluate(() => globalThis.CONTENT?.id ?? null);
@@ -337,7 +337,7 @@ await main(async () => {
       const useCache = !args.has('no-cache');
 
       const pages = [first];
-      for (let w = 1; w < nWorkers; w++) pages.push(await openScene(F, format, { browser: browsers[w % nBrowsers], port, capture, scale, png, query }));
+      for (let w = 1; w < nWorkers; w++) pages.push(await openScene(F, format, { browser: browsers[w % nBrowsers], port, capture, scale, png, query , fps }));
       if (first.info.usesWaapi) console.log('  场景声明 USES_WAAPI：每帧冻结 playbackRate=0');
       if (draft) console.log(`  ⚠ 迭代产物：--scale ${scale} → ${first.outWidth}×${first.outHeight}（定稿 ${first.width}×${first.height}），不是定稿，输出进 out/draft/`);
       if (scene.motion && !adaptive) console.log(`  场景定义了 MOTION，但${sub > 1 ? '传了 --no-adaptive' : ' sub=1（运动模糊关）'}：按固定 sub=${sub} 渲`);

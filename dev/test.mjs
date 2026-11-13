@@ -87,8 +87,9 @@ export async function syntaxSmoke() {
 const UNITS = [
   ...[
     ['_test-events', 'unit.mjs', 'events 单测：.*0 失败', '事件编排、弹簧与镜头手感对独立积分/乱序的数值验证'],
-    ['_test-sfx', 'unit.mjs', 'sfx 单测全部通过', '旧音色 PCM 基线、新配方确定性/变体/尾音/总线'],
-    ['_test-sfx', 'cli.mjs', 'sfx CLI 全部通过', '音效CLI、ffmpeg音乐全长duck恢复与统计'],
+    ['_test-events', 'browser.mjs', 'events 浏览器：.*0 失败', 'window.FILM 按实际 fps 注入且只读；24/30/60 fps 下闪白都至少 2 帧'],
+    ['_test-sfx', 'unit.mjs', 'sfx 单测全部通过', '旧音色 PCM 基线、配方 PCM 钉死/跨进程确定、变体按 id、尾音/总线、阴性对照'],
+    ['_test-sfx', 'cli.mjs', 'sfx CLI 全部通过', '音效CLI、事件表 cues、非有限数退出 1、浮点 WAV、ffmpeg音乐全长duck恢复（无 ffmpeg 时红并说明）'],
     ['_test-model', 'unit.mjs', 'model3d .*条数值断言', '几何法线/绕向/包围盒、合批三角形守恒与可动子树'],
     ['_test-surface', 'unit.mjs', 'surface3d .*条断言', '顶点风化种子/输入不变、细分预算与材质通道独立'],
     ['_test-post', 'unit.mjs', 'post exposure .*条断言', '离线测光曲线的平滑、插值和乱序一致'],
@@ -103,6 +104,14 @@ const UNITS = [
       return { ok: r.code === 0 && new RegExp(match).test(r.out), expect: `exit 0，${match}`, got: `exit ${r.code}`, r };
     },
   })),
+  { id: 'unit/_test-sfx tests/measure.py', why: '配方频谱/包络/直流的客观量（要仓库根 .venv 里的 numpy、scipy；没有就跳过并说明）',
+    async go() {
+      const py = join(ROOT, '.venv/bin/python');
+      if (!existsSync(py)) return { ok: true, expect: 'exit 0（有 .venv 时）', got: '跳过：仓库根没有 .venv/bin/python（measure.py 要 numpy/scipy）' };
+      if (!existsSync(join(FIXTURES, '_test-sfx/out/recipes/crack.wav'))) await run(process.execPath, [join(FIXTURES, '_test-sfx/tests/unit.mjs')]);   // WAV 由 unit.mjs 写
+      const r = await run(py, [join(FIXTURES, '_test-sfx/tests/measure.py')]);
+      return { ok: r.code === 0 && /sfx 客观特征全部通过/.test(r.out), expect: 'exit 0，客观特征全部通过', got: `exit ${r.code}`, r };
+    } },
   { id: 'unit/_test-shapes tests/unit.mjs', why: 'shapes.js 弧长/trim/morph/along 与 motion.js 镜头组合子的数值断言',
     async go() { const r = await run(process.execPath, [join(FIXTURES, '_test-shapes/tests/unit.mjs')]);
       return { ok: r.code === 0 && /0 失败/.test(r.out), expect: 'exit 0，0 失败', got: `exit ${r.code}`, r }; } },

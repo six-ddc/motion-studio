@@ -4,7 +4,7 @@
 // 平行光、天空着色器 uniform、雾色、环境光色，并导出一段 GLSL（SKY_GLSL：horizonColor() 等）给别的 pass 拼接。
 // 远处的雾取"视线所在方位的地平线色"，金属球反射的是同一片天（PMREM 由同一个天空着色器拍出），色相从根上统一。
 //
-// **没有任何默认颜色**：预设缺一个色值就抛错并点名。形状类数字（幂次、过渡高度）有默认，文档里写明含义。
+// **没有任何默认颜色或观感常数**：预设缺一个色值、形状数字就抛错并点名（报错里给参考量级）。只有采样数、种子这类工程参数有默认。
 //
 // 依赖：同目录 three-film.module.js、film-core 的 rand.js（噪声纹理用固定种子生成）。
 // 契约：seek 里只改 uniform / 节点上的标量（stage3d 的复位会把它们还原到 freeze 时的值）；
@@ -14,6 +14,8 @@
 
 import * as THREE from './three-film.module.js';
 import { seeded } from './rand.js';
+import { addPatch, inject, WORLD_POS } from './patch3d.js';
+import { GLSL } from './webfx.js';
 export { THREE };
 
 const DEG = Math.PI / 180;
@@ -34,28 +36,10 @@ function num(v, name, { min = -Infinity, max = Infinity } = {}) {
   return v;
 }
 const opt = (v, d) => (v === undefined ? d : v);
-
-// 同一材质可以叠几个补丁（雾 + PCSS + 前景）；保留材质原有的 onBeforeCompile
-const PATCHES = new WeakMap();
-function addPatch(mat, key, fn) {
-  if (!mat || !mat.isMaterial) throw new Error(`sky3d: ${key} 要一个 three 材质`);
-  let list = PATCHES.get(mat);
-  if (!list) {
-    list = [];
-    PATCHES.set(mat, list);
-    const prev = mat.onBeforeCompile, hadPrev = prev !== THREE.Material.prototype.onBeforeCompile;
-    const prevKey = mat.customProgramCacheKey, hadKey = prevKey !== THREE.Material.prototype.customProgramCacheKey;
-    mat.onBeforeCompile = function (shader, renderer) { if (hadPrev) prev.call(this, shader, renderer); for (const p of list) p.fn(shader, renderer); };
-    mat.customProgramCacheKey = function () { return (hadKey ? prevKey.call(this) : '') + '|sky3d:' + list.map((p) => p.key).join(','); };
-  }
-  const kind = key.split(':')[0];
-  if (list.some((p) => p.key.split(':')[0] === kind)) throw new Error(`sky3d: 材质「${mat.name || mat.type}」已经打过 ${kind} 补丁`);
-  list.push({ key, fn });
-  mat.needsUpdate = true;
-}
-function inject(src, anchor, text, where, who) {
-  if (!src.includes(anchor)) throw new Error(`sky3d(${who}): 着色器里找不到 ${anchor}（这种材质不支持，或升级 three 后 chunk 变了）`);
-  return src.replace(anchor, where === 'before' ? `${text}\n${anchor}` : `${anchor}\n${text}`);
+// 观感参数：必填，缺了报错并写出参考量级（不是推荐值）
+function req(v, name, hint, lim) {
+  if (v === undefined) throw new Error(`sky3d: ${name} 必填（${hint}；由本片 style_guide 定，没有默认值）`);
+  return num(v, name, lim);
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +111,7 @@ export const FOG_UNIFORMS = ['uFogMedium', 'uFogSun'];
 /**
  * @param {object} p  纯数据预设（所有颜色必填）：
  *   sun: { dir:[x,y,z] | elevation(度)+azimuth(度，0=-Z 北，90=+X 东), color, intensity }
- *   sky: { zenith, horizonSun, horizonAway, ground, fog, azimuthPower?=4, zenithHeight?=0.25, groundHeight?=0.2 }
+ *   sky: { zenith, horizonSun, horizonAway, ground, fog, azimuthPower, zenithHeight, groundHeight }
  */
 export function createLightRig(p) {
   if (!p || !p.sun || !p.sky) throw new Error('sky3d.createLightRig: 预设要有 sun 和 sky 两段（颜色全部由片子传入）');
@@ -151,8 +135,9 @@ export function createLightRig(p) {
     horizonAway: color(k.horizonAway, 'sky.horizonAway'),
     ground: color(k.ground, 'sky.ground'),
     fogColor: color(k.fog, 'sky.fog'),
-    shape: new THREE.Vector3(num(opt(k.azimuthPower, 4), 'sky.azimuthPower', { min: 0.01 }),
-      num(opt(k.zenithHeight, 0.25), 'sky.zenithHeight', { min: 1e-3 }), num(opt(k.groundHeight, 0.2), 'sky.groundHeight', { min: 1e-3 })),
+    shape: new THREE.Vector3(req(k.azimuthPower, 'sky.azimuthPower', '地平线色从背阳到向阳的方位过渡幂次，越大向阳色越集中；参考量级 1–8', { min: 0.01 }),
+      req(k.zenithHeight, 'sky.zenithHeight', '地平线色带向天顶过渡的高度，单位 sin(仰角)；参考量级 0.1–0.5', { min: 1e-3 }),
+      req(k.groundHeight, 'sky.groundHeight', '地平线向地面色过渡的高度，单位 sin(俯角)；参考量级 0.1–0.5', { min: 1e-3 })),
   };
   rig.ambientColor = rig.fogColor;   // 环境光色 = 雾色（同源）
 
@@ -226,6 +211,7 @@ uniform vec3 uCloudBase, uCloudDark;
 uniform vec4 uCloudLit;          // x 侧光增益, y 亮边增益, z 大气透视系数, w 自阴影对比
 uniform vec4 uCloudHole;         // x cos(外), y cos(内), z 强度
 uniform vec4 uCloudGap;          // x sin(背阳云底仰角), y sin(向阳云底仰角), z 撕碎幅度, w 启用
+uniform vec2 uCloudCover;        // x 云最厚处不透明度, y 对日盘的遮挡比例
 float n2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return texture2D(uSkyNoise, (i + f + 0.5) / 256.0).r; }
 float fbmN(vec2 p){ float a = 0.5, s = 0.0, n = 0.0; for (int i = 0; i < SKY_OCT; i++){ s += a * n2(p); n += a; p = mat2(1.6, 1.2, -1.2, 1.6) * p + 17.3; a *= 0.5; } return s / n; }
 float fbm3(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 3; i++){ s += a * n2(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p + 17.3; a *= 0.5; } return s / 0.875; }
@@ -266,8 +252,8 @@ void main(){
     warm += uSkySunColor * cov * (1.0 - cov) * 4.0 * pow(ts, 4.0) * (0.5 + 1.6 * pow(s, 6.0)) * (1.0 - hole) * uCloudLit.y;   // 亮边
     vec3 cloudC = cool + warm;
     cloudC = mix(cloudC, hc * 0.55 + cloudC * 0.45, exp(-h * uCloudLit.z));      // 大气透视
-    col = mix(col, cloudC, cov * 0.985);
-    veil = 1.0 - cov * 0.92;
+    col = mix(col, cloudC, cov * uCloudCover.x);
+    veil = 1.0 - cov * uCloudCover.y;
   }
 #endif
 #ifndef SKY_ENV
@@ -310,19 +296,23 @@ export function createSky(S, rig, o = {}) {
     const altitude = num(c.altitude, 'clouds.altitude（米）', { min: 1 }), feature = num(c.featureSize, 'clouds.featureSize（米）', { min: 1 });
     if (!Array.isArray(c.wind) || c.wind.length !== 2 || !c.wind.every(Number.isFinite)) throw new Error('sky3d: clouds.wind 必填 [vx, vz]（米/秒，世界 x、z 方向）');
     const aniso = opt(c.aniso, [1, 1]);
-    const hole = c.hole ? { r: num(c.hole.radius, 'clouds.hole.radius（度）', { min: 0 }), f: num(opt(c.hole.feather, c.hole.radius * 0.5), 'clouds.hole.feather（度）', { min: 0 }), k: num(opt(c.hole.strength, 1), 'clouds.hole.strength', { min: 0, max: 1 }) } : null;
-    const gap = c.gap ? { a: num(c.gap.away, 'clouds.gap.away（度）', { min: -10, max: 90 }), s: num(c.gap.sun, 'clouds.gap.sun（度）', { min: -10, max: 90 }), r: num(opt(c.gap.ragged, 1), 'clouds.gap.ragged', { min: 0 }) } : null;
+    const hole = c.hole ? { r: num(c.hole.radius, 'clouds.hole.radius（度）', { min: 0 }), f: req(c.hole.feather, 'clouds.hole.feather', '洞边羽化宽度（度）；参考量级为 radius 的 0.5–1.5 倍', { min: 0 }), k: req(c.hole.strength, 'clouds.hole.strength', '开洞程度 0–1，1 = 洞里完全无云', { min: 0, max: 1 }) } : null;
+    const gap = c.gap ? { a: num(c.gap.away, 'clouds.gap.away（度）', { min: -10, max: 90 }), s: num(c.gap.sun, 'clouds.gap.sun（度）', { min: -10, max: 90 }), r: req(c.gap.ragged, 'clouds.gap.ragged', '云底边缘撕碎幅度；0 = 平齐，参考量级 0–1.5', { min: 0 }) } : null;
     cloud = {
       wind: c.wind, feature,
       octaves: Math.round(num(opt(c.octaves, 5), 'clouds.octaves', { min: 1, max: 9 })),
       steps: Math.round(num(opt(c.shadowSteps, 1), 'clouds.shadowSteps', { min: 1, max: 8 })),
       seed: opt(c.seed, 1),
-      proj: new THREE.Vector4(altitude / feature, num(opt(c.horizonLift, 0.1), 'clouds.horizonLift', { min: 1e-3 }), aniso[0], aniso[1]),
+      proj: new THREE.Vector4(altitude / feature, req(c.horizonLift, 'clouds.horizonLift', '投影分母的抬升量：越大近地平线的云压得越不扁、越不密；参考量级 0.05–0.3', { min: 1e-3 }), aniso[0], aniso[1]),
       shape: new THREE.Vector4(THREE.MathUtils.lerp(0.82, 0.28, num(c.coverage, 'clouds.coverage（0–1）', { min: 0, max: 1 })),
-        num(c.softness, 'clouds.softness', { min: 1e-3 }), num(opt(c.warp, 1.3), 'clouds.warp', { min: 0 }), num(opt(c.detail, 0.16), 'clouds.detail', { min: 0, max: 1 })),
+        num(c.softness, 'clouds.softness', { min: 1e-3 }), req(c.warp, 'clouds.warp', '域扭曲幅度（噪声单位），0 = 规整团块；参考量级 0–2', { min: 0 }),
+        req(c.detail, 'clouds.detail', '脊状细节比例 0–1，0 = 软棉团、大 = 卷积云纹理；参考量级 0–0.3', { min: 0, max: 1 })),
       base: color(c.base, 'clouds.base（背光的云色）'), dark: color(c.dark, 'clouds.dark（厚云芯）'),
       lit: new THREE.Vector4(num(c.light, 'clouds.light（侧光增益）', { min: 0 }), num(c.rim, 'clouds.rim（亮边增益）', { min: 0 }),
-        num(opt(c.aerial, 11), 'clouds.aerial', { min: 0 }), num(opt(c.relief, 4.5), 'clouds.relief', { min: 0 })),
+        req(c.aerial, 'clouds.aerial', '近地平线的云向地平线色淡化的速度（越大淡化带越窄）；参考量级 4–20', { min: 0 }),
+        req(c.relief, 'clouds.relief', '自阴影对比：向光密度差放大倍数，0 = 平涂；参考量级 2–6', { min: 0 })),
+      cover: new THREE.Vector2(req(c.opacity, 'clouds.opacity', '云最厚处的不透明度 0–1；1 = 完全挡住天空', { min: 0, max: 1 }),
+        req(c.veil, 'clouds.veil', '云对日盘的遮挡比例 0–1；1 = 厚云完全遮住太阳', { min: 0, max: 1 })),
       hole: hole ? new THREE.Vector4(Math.cos((hole.r + hole.f) * DEG), Math.cos(hole.r * DEG), hole.k, 0) : new THREE.Vector4(0, 1, 0, 0),
       gap: gap ? new THREE.Vector4(Math.sin(gap.a * DEG), Math.sin(gap.s * DEG), gap.r, 1) : new THREE.Vector4(0, 0, 0, 0),
     };
@@ -341,6 +331,7 @@ export function createSky(S, rig, o = {}) {
         uSkyNoise: { value: noise }, uCloudOff: { value: new THREE.Vector2() }, uCloudProj: { value: cloud.proj.clone() },
         uCloudShape: { value: cloud.shape.clone() }, uCloudBase: { value: cloud.base.clone() }, uCloudDark: { value: cloud.dark.clone() },
         uCloudLit: { value: cloud.lit.clone() }, uCloudHole: { value: cloud.hole.clone() }, uCloudGap: { value: cloud.gap.clone() },
+        uCloudCover: { value: cloud.cover.clone() },
       });
       Object.assign(defines, { SKY_CLOUDS: '', SKY_OCT: cloud.octaves, SKY_SHADOW_STEPS: cloud.steps });
     }
@@ -414,20 +405,11 @@ export function createHeightFog(rig, p = {}) {
   function apply(mat) {
     addPatch(mat, 'fog', (shader) => {
       Object.assign(shader.uniforms, rigU, live);
-      shader.vertexShader = inject(shader.vertexShader, '#include <common>', 'varying vec3 vSkyFogWorld;', 'after', 'fog');
-      shader.vertexShader = inject(shader.vertexShader, '#include <fog_vertex>', `{
-  vec4 skyWp = vec4(transformed, 1.0);
-  #ifdef USE_BATCHING
-  skyWp = batchingMatrix * skyWp;
-  #endif
-  #ifdef USE_INSTANCING
-  skyWp = instanceMatrix * skyWp;
-  #endif
-  vSkyFogWorld = (modelMatrix * skyWp).xyz;
-}`, 'after', 'fog');
-      shader.fragmentShader = inject(shader.fragmentShader, '#include <common>', `varying vec3 vSkyFogWorld;\n${SKY_GLSL}\n${HEIGHT_FOG_GLSL}`, 'after', 'fog');
+      shader.vertexShader = inject(shader.vertexShader, '#include <common>', 'after', 'varying vec3 vSkyFogWorld;', 'sky3d(fog)');
+      shader.vertexShader = inject(shader.vertexShader, '#include <fog_vertex>', 'after', WORLD_POS('vSkyFogWorld'), 'sky3d(fog)');
+      shader.fragmentShader = inject(shader.fragmentShader, '#include <common>', 'after', `varying vec3 vSkyFogWorld;\n${SKY_GLSL}\n${HEIGHT_FOG_GLSL}`, 'sky3d(fog)');
       // 在色调映射之前、线性 HDR 里融色（three 自带雾在 tonemapping 之后，HDR 地平线色会被算错）
-      shader.fragmentShader = inject(shader.fragmentShader, '#include <opaque_fragment>', 'outgoingLight = applyHeightFog(outgoingLight, cameraPosition, vSkyFogWorld);', 'before', 'fog');
+      shader.fragmentShader = inject(shader.fragmentShader, '#include <opaque_fragment>', 'before', 'outgoingLight = applyHeightFog(outgoingLight, cameraPosition, vSkyFogWorld);', 'sky3d(fog)');
     });
     return mat;
   }
@@ -454,7 +436,7 @@ function pcssChunk(samples, blockers) {
 \t\tuniform vec3 uPcssFrustum;   // 阴影相机 宽、高、深（米）
 \t\tuniform vec4 uPcssParams;    // x 半影/遮挡距离（=2tan(太阳半角)）, y 搜索半径(米), z 最小半影(米), w 最大半影(米)
 \t\tuniform float uPcssSlope;    // 接收面深度梯度上限（每 texel）
-\t\tfloat pcssIGN(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+${GLSL.ign}
 \t\tvec2 pcssVogel(int i, int n, float phi){ float r = sqrt((float(i) + 0.5) / float(n)); float th = float(i) * 2.399963229728653 + phi; return vec2(cos(th), sin(th)) * r; }
 \t\tfloat getShadow( sampler2D shadowMap, vec2 shadowMapSize, float shadowIntensity, float shadowBias, float shadowRadius, vec4 shadowCoord ) {
 \t\t\tfloat shadow = 1.0;
@@ -469,7 +451,7 @@ function pcssChunk(samples, blockers) {
 \t\t\tbool inFrustum = shadowCoord.x >= 0.0 && shadowCoord.x <= 1.0 && shadowCoord.y >= 0.0 && shadowCoord.y <= 1.0;
 \t\t\tif ( inFrustum && shadowCoord.z <= 1.0 ) {
 \t\t\t\tvec2 m2uv = 1.0 / uPcssFrustum.xy;
-\t\t\t\tfloat phi = pcssIGN(gl_FragCoord.xy) * PI2;
+\t\t\t\tfloat phi = ign(gl_FragCoord.xy) * PI2;
 \t\t\t\tfloat zr = shadowCoord.z, sum = 0.0, nb = 0.0;
 \t\t\t\tfor (int i = 0; i < ${blockers}; i++) {
 \t\t\t\t\tvec2 o = pcssVogel(i, ${blockers}, phi) * uPcssParams.y * m2uv;
@@ -518,7 +500,7 @@ export function enablePCSS(S, light, materials, o = {}) {
   const chunk = pcssChunk(ns, nb);
   for (const m of materials) addPatch(m, `pcss:${ns}:${nb}`, (shader) => {
     Object.assign(shader.uniforms, U);
-    shader.fragmentShader = inject(shader.fragmentShader, '#include <shadowmap_pars_fragment>', '', 'after', 'pcss').replace('#include <shadowmap_pars_fragment>', chunk);
+    shader.fragmentShader = inject(shader.fragmentShader, '#include <shadowmap_pars_fragment>', 'replace', chunk, 'sky3d(pcss)');
   });
   return { uniforms: U };
 }
@@ -539,8 +521,8 @@ export function pinForeground(obj, { range = 0.05 } = {}) {
       if (seen.has(m)) continue;
       seen.add(m);
       addPatch(m, `fg:${range}`, (shader) => {
-        shader.vertexShader = inject(shader.vertexShader, '#include <project_vertex>',
-          `gl_Position.z = ${range.toFixed(6)} * (gl_Position.z + gl_Position.w) - gl_Position.w;`, 'after', 'pinForeground');
+        shader.vertexShader = inject(shader.vertexShader, '#include <project_vertex>', 'after',
+          `gl_Position.z = ${range.toFixed(6)} * (gl_Position.z + gl_Position.w) - gl_Position.w;`, 'sky3d(pinForeground)');
       });
     }
   });

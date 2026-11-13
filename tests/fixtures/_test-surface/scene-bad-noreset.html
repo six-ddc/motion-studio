@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>_test-surface 对照：noreset</title>
+<style>html,body{margin:0;background:#000;overflow:hidden} canvas{display:block}</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<!-- 阴性对照：reset:false + 湿度只在 t > 2 s 才 set（部分 set）：前半段的湿度取决于上一次 seek → 期望门 2 红 -->
+<script>window.SF_VARIANT = "noreset";</script>
+<script type="module" src="./scene.js"></script>
+</body>
+</html>

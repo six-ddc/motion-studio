@@ -27,6 +27,7 @@
 | `window.ready` | 有异步资源时必需 | 一个 Promise，表示字体、图片、JSON、wasm、库初始化全部就绪 | 加载期间没等加载完的资源，只有门 1b 能发现 |
 | `#stage` | 是（选择器可以在 film.json `stage` 里修改） | 被截图的那个元素，canvas 或 div 都可以 | 找不到时报错 |
 | `window.USES_WAAPI = true` | 页面上有 CSS/WAAPI 动画时必需 | 渲染器每次 seek 后把动画设为 `playbackRate = 0`。**`currentTime` 由场景在 seek 里自己设置** | 不声明会直接报错；声明了但不设置 `currentTime`，动画会按真实时间播放 |
+| `window.FILM` | 内核提供，场景只读 | 页面任何脚本执行前注入的冻结对象 `{ fps, width, height, format }`：这次渲染/检查实际用的帧率（含 `render --fps` 覆盖、门 5 按清单重渲的 fps）与画幅布局尺寸。render、seamcheck、preview、fontsrc、preflight 及一切经 `openScene` 开的页面都有 | 场景自己写死帧率时，`--fps` 换了它不知道：按 30 对齐的 50 ms 闪光在 24 fps 下 47/200 个只亮 1 帧（film-core `events.md` §6）。赋值无效（不可写、不可重定义） |
 
 渲染器不读取 `MARKS`、`probe`、`anchors`、`VO_OFFSET`。这些是给可选检查用的数据通道（见 `runtime.md`「层间数据」）。
 

@@ -1,4 +1,6 @@
-// events.js —— 事件表 → 多通道响应。一个事件同时驱动光、粒子、镜头、声音，各通道用自己的时间常数。
+// events.js（film-core）—— 事件表 → 多通道响应。一个事件同时驱动光、粒子、镜头、声音，各通道用自己的时间常数。
+// 事件表是画面与声音共同的时间真相源：画面用 channel()/piecewise() 读它，声音用 toCues()/toSceneEvents() 读同一张表。
+// 放在 film-core 是因为它不属于任何一种能力（物理手感、音效、字幕都读它）；文档见 film-core references/events.md。
 //
 // 纯函数视频里的写法：一张事件时刻表（加载期排好、补 id、建索引，之后是常量）+ 每个通道写成
 // "自事件起经过时间 τ 的闭式函数"，求值时对窗口内的事件求和 / 取最大 / 取最近。
@@ -7,7 +9,8 @@
 // 加载期单遍扫描算出每个事件刚发生后的状态，求值时二分找到最近事件、再走一段闭式流。O(log n)。
 //
 // 随机：每个事件按 hash01(seed, e.key, 通道名的整数键, k) 随机访问（不是顺序流）。
-// 只依赖 film-core 的 rand.js；浏览器与 Node 都能 import。没有任何幅度、颜色、时长的默认值——那是本片 style_guide 的事。
+// 只依赖 rand.js；浏览器与 Node 都能 import。没有任何幅度、颜色、时长的默认值——那是本片 style_guide 的事。
+// 帧率：snapToFrames / holdFrames 不给 fps 时读内核注入的 window.FILM.fps（kernel.md §1）；两者都没有就报错，不猜。
 import { hash01 } from './rand.js';
 
 // ---------------------------------------------------------------------------
@@ -37,14 +40,27 @@ function matcher(on) {
 
 const isTrack = (x) => x && x.__eventTrack === true;
 
+/**
+ * 这次渲染的帧率：显式给的优先，否则读内核在页面脚本前注入的 globalThis.FILM.fps（render --fps 覆盖也反映在这里）。
+ * 两者都没有（Node 里没给、或页面不是 film-core 打开的）→ 抛错。显式值与 FILM.fps 不同时由调用方判断是否相容。
+ */
+export function filmFps(fps, who = 'fps') {
+  if (fps != null) { if (!(fps > 0)) throw new Error(`${who}: fps 必须 > 0（收到 ${fps}）`); return fps; }
+  const f = globalThis.FILM?.fps;
+  if (f > 0) return f;
+  throw new Error(`${who}: 没给 fps，也没有 window.FILM.fps（film-core 打开的页面才有）。Node 里显式传 fps`);
+}
+
 // ---------------------------------------------------------------------------
 // 事件表
 // ---------------------------------------------------------------------------
 
 /**
  * eventTrack(events) → track。events 是 [{ t, type, id?, ...任意字段 }] 或另一个 track。
- * 加载期：校验 t 有限、按 t 稳定排序（同刻按原顺序）、补 id（缺省 `${type}#${本类型内第几个}`，按原表顺序计数，
+ * 加载期：校验 t 有限、按 t 稳定排序（同刻按原顺序）、补 id（缺省 `${type}:${本类型内第几个}`，按原表顺序计数，
  * 所以给别的类型加事件不会让这个类型的 id 变）、算 key = keyOf(id)、按类型建索引。事件对象被冻结。
+ * 缺省 id 的代价：在同类型事件中间**插入**一个，后面同类事件的 id 全部后移 → 它们的随机数（画面抖动、声音变体）跟着变。
+ * 要插入后不变就给显式 id。
  * 时刻约定："t 之前" = t_e ≤ t（事件当帧 τ = 0 就算发生）。
  */
 export function eventTrack(events) {
@@ -55,7 +71,7 @@ export function eventTrack(events) {
     if (!e || !Number.isFinite(e.t)) throw new Error(`eventTrack: 第 ${i} 个事件的 t 不是有限数（${e && e.t}）——vo.at 没找到字时常见`);
     const type = e.type ?? 'event';
     const n = perType.get(type) ?? 0; perType.set(type, n + 1);
-    const id = e.id ?? `${type}#${n}`;
+    const id = e.id ?? `${type}:${n}`;
     return { e, i, type, id };
   });
   tmp.sort((a, b) => a.e.t - b.e.t || a.i - b.i);
@@ -107,10 +123,11 @@ export function merge(...parts) {
  *   response  (τ, e, rnd) → 数。τ = t − e.t；rnd(k) = hash01(seed, e.key, keyOf(name), k)，随机访问
  *   support   响应的支撑时长（秒），数或 (e) → 数；τ ≥ support 当 0。缺省读 response.support（下面的核都带）
  *   lead      允许"事件之前"就开始响应的秒数（预备动作、高斯脉冲的前半），缺省读 response.lead 或 0
- *   combine   'sum'（线性叠加）| 'max'（取最亮，不叠爆）| 'last'（只看最近一个活着的事件）| { init, add(acc, v, e, τ) }
+ *   combine   'sum'（线性叠加）| 'max'（取最亮，不叠爆）| 'last'（只看最近一个活着的事件：已发生的优先，
+ *             没有已发生的才用下一个事件的预备段）| { init, add(acc, v, e, τ) }
  *   name/seed 随机键：同名通道拿到同一组随机数（相关）；要独立就换名字
  * 复杂度：每次求值 O(log n + 窗口内事件数)；窗口 = [t − max support, t + lead]，二分定位。
- * support 为 Infinity 时窗口是"之前全部"，那就是 O(n)——累积量改用 piecewise()。
+ * support 为 Infinity 时窗口是"之前全部"，那就是 O(n)——累积量改用 piecewise()。无阻尼 springKick（ζ=0）的 support 就是 Infinity。
  * ch.active(t) → [{ e, tau, rnd }]：窗口内活着的事件（画每个事件自己的粒子爆发时用）。
  */
 export function channel(track, { name = 'channel', on, response, support, lead, combine = 'sum', seed = 0 } = {}) {
@@ -137,8 +154,15 @@ export function channel(track, { name = 'channel', on, response, support, lead, 
 
   const ch = (t) => {
     const [i0, i1] = range(t);
-    if (!red) { // last：从最近的往回找第一个活着的
-      for (let i = i1 - 1; i >= i0; i--) { const e = evs[i], tau = alive(e, t); if (tau !== null) return response(tau, e, rndOf(e)); }
+    if (!red) { // last：最近一个已经发生（τ ≥ 0）且活着的；都还没发生时才取最近要发生的那个的预备段（τ < 0）
+      let fut = -1;
+      for (let i = i1 - 1; i >= i0; i--) {
+        const e = evs[i], tau = alive(e, t);
+        if (tau === null) continue;
+        if (tau >= 0) return response(tau, e, rndOf(e));
+        fut = i;   // 往回走，最后留下的是最早的那个未来事件 = 离现在最近的
+      }
+      if (fut >= 0) { const e = evs[fut]; return response(t - e.t, e, rndOf(e)); }
       return 0;
     }
     let acc = red.init;
@@ -155,7 +179,7 @@ export function channel(track, { name = 'channel', on, response, support, lead, 
 // ---------------------------------------------------------------------------
 const kernel = (f, support, lead = 0) => Object.assign(f, { support, lead });
 
-/** 线性衰减闪：τ=0 时 1，dur 秒线性降到 0。动态光、闪白的"剩余/总时长"写法 */
+/** 线性衰减闪：τ=0 时 1，dur 秒线性降到 0。动态光、闪白的"剩余/总时长"写法。film-physics closed.js 的 flash() 委托给它 */
 export function flashDecay(dur) {
   if (!(dur > 0)) throw new Error('flashDecay(dur): dur 必须 > 0');
   return kernel((tau) => (tau < 0 || tau >= dur ? 0 : 1 - tau / dur), dur);
@@ -176,43 +200,81 @@ export function expDecay(rate, { eps = 1e-4 } = {}) {
 /** 高斯脉冲：exp(−½((τ − at)/width)²)。at 可以是 0（峰值就在事件上，前半段靠 .lead 在事件前开始） */
 export function gaussPulse({ at, width }) {
   if (!(width > 0) || !Number.isFinite(at)) throw new Error('gaussPulse({at, width}): width > 0、at 有限');
+  if (at + 4 * width <= 0) throw new Error(`gaussPulse({at: ${at}, width: ${width}}): 整个脉冲（截在 at ± 4·width）都落在事件之前，事件发生后它恒为 0。`
+    + '要"事件前就开始、峰值在事件前"可以让 at 为负，但 at + 4·width 要 > 0；要整段都在事件前，就把事件时刻本身提前');
   return kernel((tau) => { const u = (tau - at) / width; return Math.abs(u) > 4 ? 0 : Math.exp(-0.5 * u * u); }, at + 4 * width, Math.max(0, 4 * width - at));
 }
 
 /**
- * 阻尼弹簧的单位速度冲量响应 h(τ)：x'' + c x' + k x = 0，x(0)=0，x'(0)=1。
+ * 阻尼振子 x'' + c x' + k (x − target) = 0 从 (x0, v0) 出发经过 t 秒的状态 { x, v }（t ≤ 0 返回初值）。
+ * 全套件唯一的一份闭式：film-physics closed.js 的 spring() 与下面的 springKick() 都调它。
+ * crit：|ζ − 1| ≤ crit 时按临界阻尼公式算（缺省 0 = 只有 ζ 恰为 1 才算临界；closed.spring 用缺省，逐位不变）。
+ */
+export function oscillate(t, x0, v0, target, k, c, { crit = 0 } = {}) {
+  const w = Math.sqrt(k);
+  return osc(t, x0, v0, target, w, c / (2 * w), crit);
+}
+function osc(t, x0, v0, target, w, z, crit) {
+  if (t <= 0) return { x: x0, v: v0 };
+  const A = x0 - target;
+  if (Math.abs(z - 1) <= crit) {
+    const B = v0 + w * A, e = Math.exp(-w * t);
+    return { x: target + e * (A + B * t), v: e * (B - w * (A + B * t)) };
+  }
+  if (z < 1) {
+    const wd = w * Math.sqrt(1 - z * z), a = z * w, B = (v0 + a * A) / wd;
+    const e = Math.exp(-a * t), co = Math.cos(wd * t), si = Math.sin(wd * t);
+    return { x: target + e * (A * co + B * si), v: e * ((B * wd - a * A) * co - (A * wd + a * B) * si) };
+  }
+  const r = w * Math.sqrt(z * z - 1), s1 = -z * w + r, s2 = -z * w - r;
+  const C2 = (v0 - s1 * A) / (s2 - s1), C1 = A - C2;
+  const e1 = Math.exp(s1 * t), e2 = Math.exp(s2 * t);
+  return { x: target + C1 * e1 + C2 * e2, v: C1 * s1 * e1 + C2 * s2 * e2 };
+}
+
+/** 弹簧参数三种写法统一成 { w, z }：{k, c}（closed.js）| {stiffness, damping}（film-core motion.js）| {omega, zeta} */
+export function springParams(p, who = 'spring') {
+  let w, z;
+  if (p.omega != null || p.zeta != null) { w = p.omega; z = p.zeta; }
+  else {
+    const k = p.k ?? p.stiffness, c = p.c ?? p.damping;
+    if ((p.k != null && p.stiffness != null) || (p.c != null && p.damping != null)) throw new Error(`${who}: {k, c} 与 {stiffness, damping} 是同一组量，只给一种`);
+    w = Math.sqrt(k); z = c / (2 * w);
+  }
+  if (!(w > 0) || !(z >= 0)) throw new Error(`${who}: 给 {k, c}、{stiffness, damping}（film-core motion.js 的写法，同义）或 {omega, zeta}；k > 0、c ≥ 0`);
+  return { w, z };
+}
+
+/**
+ * 阻尼弹簧的单位速度冲量响应 h(τ)：x'' + c x' + k x = 0，x(0)=0，x'(0)=1。就是 oscillate(τ, 0, 1, 0, k, c)。
  * 线性系统：一串冲量 v_k 的响应 = Σ v_k·h(τ_k)（channel 的 sum 就是精确解，不是近似）。
- *   欠阻尼 ζ<1：e^(−ζωτ)·sin(ω_d τ)/ω_d；临界：τ e^(−ωτ)；过阻尼：(e^(s1 τ) − e^(s2 τ))/(s1 − s2)
- * 参数给 {k, c} 或 {omega, zeta}（ω = √k，ζ = c/(2ω)）。support：包络降到 eps/ω 以下的时刻。
+ *   欠阻尼 ζ<1：e^(−ζωτ)·sin(ω_d τ)/ω_d；临界（|ζ−1| ≤ 1e−6）：τ e^(−ωτ)；过阻尼：(e^(s1 τ) − e^(s2 τ))/(s1 − s2)
+ * 参数给 {k, c}、{stiffness, damping}（同义）或 {omega, zeta}（ω = √k，ζ = c/(2ω)）。support：包络降到 eps/ω 以下的时刻。
+ * ζ = 0（无阻尼）永远不衰减：support = Infinity，channel 每次求值要扫"之前全部事件"（O(n)）；要么给一点阻尼，要么显式给 channel 的 support 截断。
+ * 过阻尼且峰值本身 < eps/ω（ζ 极大）时 support = 0：整条响应被当成 0。
  * kernel.velocity(τ) 是 h'(τ)（要速度的通道用，例如按速度拉伸的拖尾）。
  */
 export function springKick(p, { eps = 1e-4 } = {}) {
-  const w = p.omega ?? Math.sqrt(p.k), z = p.zeta ?? p.c / (2 * Math.sqrt(p.k));
-  if (!(w > 0) || !(z >= 0)) throw new Error('springKick: 给 {k, c} 或 {omega, zeta}，k > 0、c ≥ 0');
-  let f, v, sup;
-  if (Math.abs(z - 1) < 1e-6) {
-    f = (tau) => tau * Math.exp(-w * tau);
-    v = (tau) => (1 - w * tau) * Math.exp(-w * tau);
+  const { w, z } = springParams(p, 'springKick');
+  let sup;
+  if (Math.abs(z - 1) <= CRIT) {
     let lo = 1 / w, hi = 1 / w; while (hi * Math.exp(-w * hi) > eps / w) hi *= 2;
     for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (m * Math.exp(-w * m) > eps / w) lo = m; else hi = m; }
     sup = hi;
   } else if (z < 1) {
     const wd = w * Math.sqrt(1 - z * z), a = z * w;
-    f = (tau) => Math.exp(-a * tau) * Math.sin(wd * tau) / wd;
-    v = (tau) => Math.exp(-a * tau) * (Math.cos(wd * tau) - (a / wd) * Math.sin(wd * tau));
     sup = z === 0 ? Infinity : Math.log(w / (eps * wd)) / a; // |h| ≤ e^(−aτ)/ω_d < eps/ω
   } else {
-    const r = w * Math.sqrt(z * z - 1), s1 = -z * w + r, s2 = -z * w - r, d = s1 - s2;
-    f = (tau) => (Math.exp(s1 * tau) - Math.exp(s2 * tau)) / d;
-    v = (tau) => (s1 * Math.exp(s1 * tau) - s2 * Math.exp(s2 * tau)) / d;
+    const r = w * Math.sqrt(z * z - 1), s1 = -z * w + r, d = 2 * r;
     sup = Math.log(w / (eps * d)) / -s1; // |h| ≤ e^(s1 τ)/d
   }
   sup = Math.max(sup, 0);
-  const k = kernel((tau) => (tau < 0 ? 0 : f(tau)), sup);
-  k.velocity = (tau) => (tau < 0 ? 0 : v(tau));
+  const k = kernel((tau) => (tau < 0 ? 0 : osc(tau, 0, 1, 0, w, z, CRIT).x), sup);
+  k.velocity = (tau) => (tau < 0 ? 0 : osc(tau, 0, 1, 0, w, z, CRIT).v);
   k.omega = w; k.zeta = z;
   return k;
 }
+const CRIT = 1e-6;
 
 /**
  * 快起 – 保持 – 慢收（单个事件的线性响应，峰值 1）。两级：目标 x 在 τ=0 跳到 1、保持 hold 秒后以时间常数 fall 指数回零；
@@ -243,11 +305,17 @@ export function holdFallFlow(b0, x0, s, rise, hold, fall) {
 /**
  * 最短可见：把短于 minFrames 帧的核按时间拉长到恰好 minFrames/fps（峰值不变），配合 snapToFrames 用。
  * 对齐后事件落在帧上，第 j 帧取 τ = j/fps，拉长后前 minFrames 帧（j = 0..N−1）都在支撑内、值 > 0。
+ * fps 缺省读内核注入的 FILM.fps（所以 render --fps 24 时自动按 24 拉长）；显式给的 fps 大于 FILM.fps 时报错——
+ * 按 60 fps 拉长到 2 帧的核在 30 fps 渲染里只剩 1 帧。
  * 代价：响应变长、变"软"，原来 50 ms 的闪在 30 fps、N=2 时成了 66.7 ms。
  */
-export function holdFrames(k, { fps, minFrames }) {
-  if (!(k.support > 0) || !(fps > 0) || !(minFrames >= 1)) throw new Error('holdFrames(kernel, {fps, minFrames})：kernel 要带 support');
-  const need = minFrames / fps;
+export function holdFrames(k, { fps, minFrames } = {}) {
+  const f = filmFps(fps, 'holdFrames');
+  if (fps != null && globalThis.FILM?.fps > 0 && fps > globalThis.FILM.fps) {
+    throw new Error(`holdFrames: 按 ${fps} fps 拉长，但这次渲染是 ${globalThis.FILM.fps} fps，最短可见帧数会不够。去掉 fps 参数（读 FILM.fps）`);
+  }
+  if (!(k?.support > 0) || !(minFrames >= 1)) throw new Error('holdFrames(kernel, {minFrames, fps?})：kernel 要带 support，minFrames ≥ 1');
+  const need = minFrames / f;
   if (k.support >= need) return k;
   const s = k.support / need;
   return kernel((tau, e, rnd) => k(tau * s, e, rnd), need, (k.lead || 0) / s);
@@ -315,17 +383,27 @@ export function burstEnds(track, { on, gap, delay = 0, type = 'burstEnd' } = {})
 }
 
 /**
- * snapToFrames(track, fps, { mode, minFrames }) → 事件时刻对齐到帧栅格的新表（原时刻存在 e.t0，minFrames 记在 e.minFrames）。
+ * snapToFrames(track, fps?, { mode }) → 事件时刻对齐到帧栅格的新表（原时刻存在 e.t0；表上 .fps 记对齐用的帧率）。
+ *   fps 缺省读内核注入的 FILM.fps（render --fps 覆盖时跟着变）；也可写 snapToFrames(track, { mode })。
+ *   显式给的 fps 要能整除 FILM.fps（30 的栅格在 60 fps 渲染里仍在帧上；30 的栅格在 24 fps 里不在），否则报错。
  *   mode 'round'：挪动 ≤ 半帧，可能提前；'ceil'：只往后挪，≤ 1 帧。
- * 对齐后 τ 在帧上恰为 0, 1/fps, 2/fps…，响应的峰值一定被某帧采到；短于 minFrames 帧的核再套 holdFrames()。
+ * 对齐后 τ 在帧上恰为 0, 1/fps, 2/fps…，响应的峰值一定被某帧采到；短于 N 帧的核再套 holdFrames(k, { minFrames: N })。
  * 音画同步：声音要读对齐后的时刻（toCues 读的就是 e.t），否则声画差最多半帧。
  */
-export function snapToFrames(track, fps, { mode = 'round', minFrames = 1 } = {}) {
-  if (!(fps > 0)) throw new Error('snapToFrames: fps 必须 > 0');
+export function snapToFrames(track, fps, opts) {
+  if (fps != null && typeof fps === 'object') { opts = fps; fps = undefined; }
+  const { mode = 'round', ...rest } = opts ?? {};
+  if ('minFrames' in rest) throw new Error('snapToFrames: minFrames 不在这里——它只在 holdFrames(kernel, { minFrames }) 里起作用（以前写在这里是死参数）');
+  const f = filmFps(fps, 'snapToFrames');
+  const F = globalThis.FILM?.fps;
+  if (fps != null && F > 0 && Math.abs(F / fps - Math.round(F / fps)) > 1e-9) {
+    throw new Error(`snapToFrames: 按 ${fps} fps 对齐，但这次渲染是 ${F} fps，对齐后的时刻不在渲染帧上。去掉 fps 参数（读 FILM.fps）`);
+  }
   const T = isTrack(track) ? track : eventTrack(track);
   const q = mode === 'round' ? Math.round : mode === 'ceil' ? (x) => Math.ceil(x - 1e-9) : null;
   if (!q) throw new Error("snapToFrames: mode 只认 'round' / 'ceil'");
-  return eventTrack(T.events.map(({ key, index, ...e }) => ({ ...e, t0: e.t0 ?? e.t, t: q(e.t * fps) / fps, minFrames })));
+  const out = eventTrack(T.events.map(({ key, index, ...e }) => ({ ...e, t0: e.t0 ?? e.t, t: q(e.t * f) / f })));
+  return Object.freeze({ ...out, fps: f });
 }
 
 // ---------------------------------------------------------------------------
@@ -387,14 +465,22 @@ export function traumaOf(track, { on, add, decay, max = Infinity }) {
 /**
  * countRing(track, t, { on, size, fade }) → [{ e, rank, alpha }]：环形缓冲（贴花、弹孔、脚印）。
  * 只看"t 之前一共发生了几次"：rank 0 是最新的，rank ≥ size 的已被覆盖（不返回）；最老的 fade 个按 rank 渐隐：
- * alpha = rank < size − fade ? 1 : (size − rank)/(fade + 1)。on 是类型名或不给时 O(log n + size)。
+ * alpha = rank < size − fade ? 1 : (size − rank)/(fade + 1)。O(log n + size)。
+ * on 是谓词时，过滤结果按 (track, 谓词) 缓存（第一次调用时建，之后是常量）：谓词要是加载期定义的同一个函数，
+ * 每帧写一个新的箭头函数会每帧重建（O(n)）。
  */
+const ringCache = new WeakMap();
 export function countRing(track, t, { on, size, fade = 0 }) {
   if (!(size >= 1) || !(fade >= 0 && fade < size)) throw new Error('countRing: size ≥ 1，0 ≤ fade < size');
   const T = isTrack(track) ? track : eventTrack(track);
   let evs, n;
   if (on == null || typeof on === 'string') { evs = on == null ? T.events : T.of(on); n = T.count(t, on ?? undefined); }
-  else { evs = T.events.filter(matcher(on)); n = upper(Float64Array.from(evs, (e) => e.t), t); } // 谓词：O(n)，热路径先 only() 成一张表
+  else {
+    let byOn = ringCache.get(T); if (!byOn) ringCache.set(T, (byOn = new Map()));
+    let hit = byOn.get(on);
+    if (!hit) { const es = T.events.filter(matcher(on)); hit = { evs: es, times: Float64Array.from(es, (e) => e.t) }; byOn.set(on, hit); }
+    evs = hit.evs; n = upper(hit.times, t);
+  }
   const out = [];
   for (let i = Math.max(0, n - size); i < n; i++) {
     const rank = n - 1 - i;
@@ -407,34 +493,55 @@ export function countRing(track, t, { on, size, fade = 0 }) {
 // 给声音的桥（只产数据，不 import film-narration）
 // ---------------------------------------------------------------------------
 
+// 事件对象里不透传给声音的字段：type 是事件类型（cue 的 type 是音色名，事件类型改记在 cue.event / 场景事件的 kind），
+// key/index 是表内部的派生量，at/beat 是 cues.json 里"绑旁白/绑节拍"的写法（生成的 cue 一律用 t）。
+const NOT_PASSED = new Set(['type', 'key', 'index', 'at', 'beat']);
+const passFields = (e) => { const o = {}; for (const k of Object.keys(e)) if (!NOT_PASSED.has(k)) o[k] = e[k]; return o; };
+
 /**
- * toCues(track, mapping) → film-narration cues.json 的数组（cue 的 t 是成片秒数）。
+ * toCues(track, mapping, { tails? }) → film-narration cues.json 的数组（cue 的 t 是成片秒数）。
  *   mapping: { 事件类型: cue 模板 | (e) → 模板 | null }。模板里的值可以是 (e) → 值（如 gain: (e) => e.power）。
  *   模板须给 type（音色名）或 file；没列出的事件类型直接报错（写 null 表示明确不出声），和 sfx.mjs fromScene 同一规矩。
  *   e.t 已经是对齐、节流之后的时刻：声音和画面读的是同一张表。
+ * 每个 cue = { t, id, event: 事件类型, ...事件的其余字段（pan、power、t0……原样透传）, ...模板 }，模板的键覆盖透传的同名键。
+ *   透传的代价：事件字段名若恰好是 sfx 认的 cue 字段（gain / pan / rate / dur / send / lowpass / variant / tail…），声音会读它；
+ *   不想要就在模板里覆盖（写 undefined 也算覆盖：该键不出现在 cue 里）。id 稳定（见 eventTrack），声音侧按它选变体与抖动。
+ *   tails：burstEnds(...) 的结果。每串连射**最后一发**的 cue 写 tail: true（模板显式给了 tail 的不动）。
+ *   只要 cues 里出现任何显式 tail，film-narration 就严格按 tail 挂尾音、不再自己判串（CONTRACT：画面与声音用同一个 gap）。
+ *   也可以直接把 burstEnd 事件映射成 cue：mapping 里 burstEnd: { type: '…', tail: true }。
  */
-export function toCues(track, mapping) {
+export function toCues(track, mapping, { tails = null } = {}) {
   const T = isTrack(track) ? track : eventTrack(track);
+  let lastIds = null;
+  if (tails) {
+    const te = isTrack(tails) ? tails.events : tails;
+    if (!te.every((x) => x.last != null)) throw new Error('toCues: tails 要给 burstEnds(...) 的结果（每个事件带 last = 那串最后一发的 id）');
+    lastIds = new Set(te.map((x) => x.last));
+  }
   const out = [];
   for (const e of T.events) {
-    if (!(e.type in mapping)) throw new Error(`toCues: 事件类型「${e.type}」没在 mapping 里（不出声写 null）`);
+    if (!Object.hasOwn(mapping, e.type)) throw new Error(`toCues: 事件类型「${e.type}」没在 mapping 里（不出声写 null）`);
     let tpl = mapping[e.type];
     if (typeof tpl === 'function') tpl = tpl(e);
     if (tpl == null) continue;
-    const cue = { t: e.t };
-    for (const [k, v] of Object.entries(tpl)) { const x = typeof v === 'function' ? v(e) : v; if (x !== undefined) cue[k] = x; }
+    const cue = { ...passFields(e), t: e.t, id: e.id, event: e.type };
+    for (const [k, v] of Object.entries(tpl)) { const x = typeof v === 'function' ? v(e) : v; if (x !== undefined) cue[k] = x; else delete cue[k]; }
     if (cue.type == null && cue.file == null) throw new Error(`toCues: 「${e.type}」的模板要给 type（音色）或 file`);
     if ('at' in cue || 'beat' in cue) throw new Error('toCues: 生成的 cue 用 t，不要再写 at / beat');
+    if (lastIds && !Object.hasOwn(tpl, 'tail') && lastIds.has(e.id)) cue.tail = true;
     out.push(cue);
   }
   return out;
 }
 
-/** toSceneEvents(track, { kind, v, anchor, on }) → [{t, kind, v?, anchor?}]：给场景的 window.events()（sfx.mjs fromScene 读它） */
+/**
+ * toSceneEvents(track, { kind, v, anchor, on }) → [{ t, id, kind, v?, anchor?, ...事件其余字段 }]：给场景的 window.events()（sfx.mjs fromScene 读它）。
+ * 与 toCues 同样透传 id、pan 与全部非保留字段（事件类型进 kind，不再叫 type）；v / anchor 给了函数时覆盖同名字段。
+ */
 export function toSceneEvents(track, { kind = (e) => e.type, v, anchor, on } = {}) {
   const T = isTrack(track) ? track : eventTrack(track);
   return T.events.filter(matcher(on)).map((e) => {
-    const o = { t: e.t, kind: typeof kind === 'function' ? kind(e) : kind };
+    const o = { ...passFields(e), t: e.t, id: e.id, kind: typeof kind === 'function' ? kind(e) : kind };
     if (v) o.v = v(e);
     if (anchor) o.anchor = anchor(e);
     return o;

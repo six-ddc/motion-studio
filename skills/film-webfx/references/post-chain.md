@@ -16,9 +16,8 @@
     → [方向边缘 FXAA / 退让式锐化 / 三角颗粒 / 去色带抖动] → 预乘 alpha
 ```
 
-打开 `tonemap:{curves:[...]}` 选显示链；`grade`、`finish` 和镜头三项依赖它。
-AO、雾、混合泛光也能接旧链。两种泛光任选：`add` 用阈值提亮；`mix` 无阈值地扩散能量，最终混合而不加亮整幅。
-相加的代价是高强度时整体发白；混合的代价是原亮点会失去部分峰值。Karis 加权会额外压低稀疏极亮点。
+打开 `tonemap:{curves:[...]}` 选显示链；`grade`、`finish` 和镜头三项依赖它。AO、雾、混合泛光也能接旧链；两条链的故障/色差/暗角/扫描线/颗粒是同一段着色器源码。
+两种泛光：`add` 用阈值提亮，代价是高强度时整体发白；`mix` 无阈值扩散能量再混合，代价是原亮点失去部分峰值，Karis 加权还会压低稀疏极亮点。
 
 ## 2. 结构与逐帧参数
 
@@ -31,8 +30,9 @@ AO、雾、混合泛光也能接旧链。两种泛光任选：`add` 用阈值提
 | AO | `ao:{samples:16,resolution:.5}` | `ao:{radius,intensity,strength,fade:[near,far],tolerance,lit:[low,high,suppress],tint:[r,g,b]}`；radius/fade 为米，tolerance 为相对深度差；亮度×曝光由 low→high 时，遮蔽按 suppress 退让；tint=1 的通道不被压暗 |
 | 体积雾 | `volume:{steps:24,resolution:.5,light,horizonGLSL?,horizonUniforms?}` | 见下段；`light` 是已在场景中投阴影的平行光 |
 | 脏污 | `dirt:{size:128,count:50,radius:[.004,.06],seed:72}` | `dirt:{amount,color}`；固定种子在加载期生成软圆斑纹理，radius 是纹理宽高比例，乘泛光再叠加 |
-| 拉丝 | `streak:{samples:17,level:2}` | `streak:{amount,radius,color}`；从泛光第 level 级取样，radius 为横向像素半径，奇数采样数 3–65 |
-| 眩光 | `flare:{ghosts:4}` | `flare:{light:[x,y,z]或lightUV:[u,v],amount,color,radius,haloRadius,haloStrength,haloWidth,spacing,ghostRadius,visibilityRadius,depthCutoff}` |
+| 拉丝 | `streak:{samples:17,level:2}` | `streak:{amount,radius,color,threshold,knee}`；从泛光第 level 级取样再按自己的软膝阈值提亮部（曝光前 HDR 亮度），radius 为横向像素半径，奇数采样数 3–65 |
+| 眩光 | `flare:{ghosts:4}` | `flare:{light:[x,y,z]或lightUV:[u,v],amount,color,radius,haloRadius,haloStrength,haloWidth,spacing,ghostRadius,visibilityRadius,depthCutoff,offscreen:[开始,结束]}` |
+| 前景层 | `foreground:{depth}`（= pinForeground 的 range） | 无；深度 < depth 的像素不吃 AO/体积雾、景深恒在焦内 |
 | 映射 | `tonemap:{curves:['aces','agx']}`，支持 `aces/agx/neutral` 的 1–2 条曲线 | `tonemap:{mix,agxLook:[power,saturation]}`；单曲线不需 mix，无 AgX 不需 agxLook；即使空也传 `tonemap:{}` |
 | 调色 | `grade:true` | `grade:{shadow,highlight,lift,range:[low,high],contrast,saturation}`；亮度在 range 内把暗/亮部乘色平滑混合，contrast 混合 S 曲线，lift 按 `1−亮度` 抬黑，再按亮度调饱和度 |
 | 收尾 | `finish:{fxaa:true,sharpen:true,grain:true,dither:true}`，可独立选项 | `finish:{fxaa:{edgeThreshold,subpixel},sharpen:{amount,edgeThreshold},grain:{amount,fps,size,darkWeight},dither:{amount}}`；只需已启用子项 |
@@ -56,7 +56,7 @@ volume: {
 接天空用 `volume:{...,horizonGLSL:SKY_GLSL,horizonUniforms:rig.uniforms()}`，`horizonColor(vec3 worldDir)` 与 uniform 约定见 `sky.md`；声明的 uniform 槽缺失/非有限数或与内部名字冲突会报错。
 
 眩光的 UV 以左下为原点。除 visibilityRadius 是像素外，半径以画面高度为单位；spacing 控制太阳到画面中心这条线上幽灵的间隔。
-每帧对太阳周围 3×3 深度采样，深度达到 depthCutoff 才算可见，太阳在镜头后或屏幕外自动退让。
+每帧对太阳周围 3×3 深度采样，深度达到 depthCutoff 才算可见；画外的采样点按可见计，整体再按太阳投影的 NDC 距离从 offscreen[0] 到 offscreen[1] 线性淡到 0（[1,1] 附近 = 一出画就没，跳变明显）；太阳在镜头后关闭。
 作为天空显示的太阳圆盘设 `depthWrite:false`，否则其自身深度会挡住眩光；真正的前景遮挡物继续写深度。
 finish 的 FXAA 在编码域按亮度边缘方向取样（亮度存在中间 RT 的 alpha）；锐化是四邻域反锐化，强边缘按阈值退让。
 三角颗粒为两个独立均匀哈希之差，按 `floor(t·fps)` 播种；size 是像素格，darkWeight 控制暗处相对权重。
@@ -83,10 +83,11 @@ window.seek=t=>S.frame(t,()=>{ /* 从 t 设置相机与物体 */ },{
 固定曝光直接传 `P.exposure`。需要适应亮暗场时，先离线扫一次，不在 seek 里累积平均值：
 
 ```js
-// 在开发测量脚本中跑；seek 自身仍然只从 t 求值。measure 是当前帧曝光前 HDR 的 32×18 对数平均亮度。
+// 在开发测量脚本中跑；seek 自身仍然只从 t 求值。measure 读当前帧曝光前 HDR，逐级 4×4 盒子降到长边 ≤ 64（全部像素参与）。
 const table={fps:4,logAvg:[]};
 for(let i=0;i<=Math.ceil(DURATION*table.fps);i++){
-  await window.seek(Math.min(DURATION,i/table.fps));table.logAvg.push(post.measure());
+  await window.seek(Math.min(DURATION,i/table.fps));
+  table.logAvg.push(post.measure({center:[.75,.1,.55],clamp:[.002,40]}));
 }
 // 将 table 保存成片内 JSON，正式页面在 ready 里读取，然后加载期一次完成平滑。
 const exposure=exposureTrack(table,{key:.2,power:.5,min:.25,max:4,tau:.6});
@@ -94,7 +95,7 @@ const exposure=exposureTrack(table,{key:.2,power:.5,min:.25,max:4,tau:.6});
 ```
 
 `exposureTrack` 从 `post3d.js` 导入，power=1 完全补偿到 key，较小值保留场景亮暗差。查表线性插值，乱序调用不改变结果。
-measure() 会同步读回 GPU，代价只在扫片阶段付；它量的是场景，未包含 AO/雾/镜头层。测光布局固定，先确认采样能覆盖主体。
+`center:[weight,inner,outer]` 中心加权 `1−weight·smoothstep(inner,outer,|c|)`（c 以画面中心为原点、半宽为 1；`null` = 均匀），权重越大越只看画面中心；`clamp` 是平均亮度（线性）的上下限，防纯黑/纯白镜头把曝光推到极端。measure 同步读回 GPU，只在扫片阶段付；量的是场景，不含 AO/雾/镜头层。
 
 ## 5. 成本与局限
 
@@ -113,5 +114,6 @@ measure() 会同步读回 GPU，代价只在扫片阶段付；它量的是场景
 - 雾使用透视相机与单个平行光的深度阴影，不支持正交相机/VSM/彩色透明遮挡。阴影相机范围外视为受光，扩大拟合范围的代价是阴影精度下降；步数低时可能出现条带，提升步数/分辨率会直接增加成本。
 - 解析远景是高度密度梯形近似，不继续追踪阴影；镜头里很长的低空斜视线需要更多步进距离。天空/环境反射同步问题见 `sky.md`。
 - 眩光无帧间平滑，遮挡边界可能跳变；增加采样半径让遮挡更柔，代价是细遮挡物被淡化。横向拉丝取低 mip，细光源会变宽。
+- 半精度溢出：场景里超过 65504 的像素在 HalfFloat 里是 Inf（SwiftShader 下直接是 NaN）。泛光/景深/光柱/合成的入口统一把 Inf 钳到 65504、NaN 置 0，强度为 0 的子链绑黑纹理而不读上一帧的 RT；源头的 NaN 像素本身仍是黑点。comp 旧链只在合成那一遍改 `renderer.toneMappingExposure`，画完还原。
 - 显示链的 RGB 在映射后钳到 0–1；FXAA 不能恢复亚像素几何，退让锐化不替代更高采样。镜头层主要面向有背景的画面，透明画面的覆盖度仍由场景/泛光决定。
 - 时间运动模糊仍由 film-core 的子帧平均完成，不在这里重复做相机速度模糊。无自动曝光积分、TAA、SSR；曝光表方案不引入历史状态。

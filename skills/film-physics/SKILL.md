@@ -67,7 +67,9 @@ window.seek = (tRaw) => {
 
 ## 事件编排与镜头手感
 
-`events.js` 把一张事件表映射为多个闭式响应通道，提供帧对齐、节流、创伤值、弹簧冲量和声音 cue 数据桥；`feel.js` 提供创伤屏震、后坐拆分、着陆下沉、步态与相对父物体的延迟跟随。按需读 `references/events.md`，先选响应时间常数，再调幅度。非线性约束和碰撞仍走定步重放；现有 `hitShake` 等函数行为不变。
+事件表 `events.js` 在 film-core（帧对齐、节流、响应核、声音 cue 数据桥，画面与声音共用；文档 film-core `references/events.md`），片子照旧 `import './runtime/events.js'`。
+本 skill 的 `feel.js` 在它上面提供创伤屏震、后坐拆分、着陆下沉、步态与相对父物体的延迟跟随；`closed.js` 的 `hitstop`/`hitstopOf` 顿帧（重叠冻结取并集，世界时间单调）。
+哪些通道读影片时间、哪些读世界时间，以及游戏里那些数值（50 ms、35/65%、创伤值平方）的代价，见 `references/events.md`。非线性约束和碰撞仍走定步重放；`hitShake` 行为不变。
 
 ## 策略 ② 定步重放：`runtime/replay.js` + `runtime/sims.js`
 

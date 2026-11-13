@@ -22,7 +22,7 @@
 //   --dup-rate  E3 判红的倍率下限（默认 0.2：倍率 < 0.2 的定格斜坡尾部只警告，那里每帧运动不到正常的 1/5）
 import { parseArgs, resolveFilm, main, fail, FILM_OPTS } from '../../film-core/lib/film.mjs';
 import { serve } from '../../film-core/lib/serve.mjs';
-import { launchBrowser, filmBackend } from '../../film-core/lib/browser.mjs';
+import { launchBrowser, filmBackend, filmGlobals, filmGlobalsScript } from '../../film-core/lib/browser.mjs';
 import { importRuntime } from '../../film-core/lib/runtime-node.mjs';
 
 const args = parseArgs({
@@ -65,6 +65,7 @@ async function open() {
   const page = await browser.newPage({ viewport: { width: 400, height: 400 } });
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.addInitScript({ content: filmGlobalsScript(filmGlobals(Film, format, fps)) });   // window.FILM，与 openScene 同一份（kernel.md §1）
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForFunction(() => typeof window.seek === 'function', null, { timeout: 15000 });
   await page.evaluate(() => window.ready ?? null);

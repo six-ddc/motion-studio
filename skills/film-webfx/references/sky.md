@@ -1,84 +1,81 @@
 # 天空、环境反射与空气透视
 
-目录：同源光照 · 天空与云 · 环境反射 · 解析高度雾 · 软阴影 · 前景层 · 代价与局限
+目录：同源光照 · 天空与云 · 环境反射 · 解析高度雾 · 软阴影 · 前景层与代价
 
 ## 同源光照
 
-让天、雾、环境反射来自同一份 `rig`，避免反射与背景的光向不一致。所有色值由片子给出；数组是线性 RGB（可大于 1），字符串按 sRGB 转换。
+天、雾、环境反射、环境光来自同一份 `rig`，反射与背景的光向才一致。色值和形状数字全部由片子给，缺一个报错（报错里写参考量级）；数组是线性 RGB（可 > 1），字符串按 sRGB 转换。
 
 ```js
-import { createLightRig, createSky, createHeightFog, enablePCSS } from './runtime/sky3d.js';
+import { createLightRig, createSky, createHeightFog, enablePCSS, pinForeground } from './runtime/sky3d.js';
 const rig = createLightRig({
   sun: { dir: [-0.55, 0.27, -0.8], color: [1, 0.76, 0.5], intensity: 3 },
-  sky: { zenith: [0.08, 0.16, 0.3], horizonSun: [1.5, 0.7, 0.3],
-    horizonAway: [0.24, 0.38, 0.62], ground: [0.12, 0.09, 0.06], fog: [0.35, 0.36, 0.4] }
-}); // 本例是暖色低角度光的配方，代价是暖色占据大面积；按本片参照调整。
+  sky: { zenith: [0.08, 0.16, 0.3], horizonSun: [1.5, 0.7, 0.3], horizonAway: [0.24, 0.38, 0.62],
+    ground: [0.12, 0.09, 0.06], fog: [0.35, 0.36, 0.4], azimuthPower: 4, zenithHeight: 0.25, groundHeight: 0.2 }
+}); // 暖色低角度光的一种配方，代价是暖色占大面积；数值按本片参照调
 const sun = rig.createSun({castShadow:true,mapSize:1024,bias:-0.0002,normalBias:0.02});
 S.scene.add(sun, sun.target, rig.createAmbient(0.25));
-rig.fitShadow(sun, bounds, {margin:1}); // bounds 是含投影物/接收面的世界 Box3；margin 单位米
+rig.fitShadow(sun, bounds, {margin:1}); // bounds：含投影物/接收面的世界 Box3；margin 米
 ```
 
-太阳方向也可写 `elevation`、`azimuth`（度，0 指 −Z，90 指 +X），替代 `dir`。`createAmbient(intensity)` 的天色取雾色、地色取 ground；与 PMREM 叠加会增加总体照明，强度由片子权衡。
-
-`SKY_GLSL` 导出 `skyToSun(vec3 dir)`、`horizonColor(vec3 dir)`、`skyGradient(vec3 dir)`，输入为世界单位方向，输出在线性域。先拼此片段，再拼引用它的雾代码。
-`rig.uniforms()` 返回新的 `{name:{value}}` 表；`rig.fill(table)` 更新已有槽，保留槽身份。
-固定 uniform 名为 `uSkySunDir/Color/Intensity`（实际是 `uSkySunDir`、`uSkySunColor`、`uSkySunIntensity`）、`uSkyZenith`、`uSkyHorizonSun`、`uSkyHorizonAway`、`uSkyGround`、`uSkyFog`、`uSkyShape`。
-共享给后期时传 `horizonGLSL: SKY_GLSL, horizonUniforms: rig.uniforms()`，供该 pass 调用 `horizonColor`。
+太阳方向也可写 `elevation`、`azimuth`（度，0 指 −Z，90 指 +X）。`azimuthPower` 越大向阳地平线色越集中在太阳方位（小 = 整圈地平线都偏暖）；`zenithHeight/groundHeight` 是地平线色带向天顶/地面过渡的高度（sin 仰角），小 = 色带窄、天顶色占得多。
+`createAmbient(intensity)` 天色取雾色、地色取 ground；和 PMREM 叠加会抬高整体照明。
+`SKY_GLSL` 导出 `skyToSun/horizonColor/skyGradient(vec3 worldDir)`（线性域）；uniform 名固定为 `uSkySunDir/uSkySunColor/uSkySunIntensity/uSkyZenith/uSkyHorizonSun/uSkyHorizonAway/uSkyGround/uSkyFog/uSkyShape`。
+`rig.uniforms()` 返回新表，`rig.fill(table)` 更新已有槽。共享给后期：`horizonGLSL: SKY_GLSL, horizonUniforms: rig.uniforms()`。
 
 ## 天空与云
 
 ```js
 const sky = createSky(S, rig, {
-  halo:[[8,0.1],[64,0.4],[600,1.2],[6000,4]],
-  disk:{angle:0.8,intensity:60}, // 视直径为度，intensity 为线性太阳色的倍数
+  halo:[[8,0.1],[64,0.4],[600,1.2],[6000,4]], disk:{angle:0.8,intensity:60},
   clouds:{altitude:900,featureSize:1200,wind:[20,4],coverage:0.72,softness:0.12,
-    base:[0.25,0.29,0.4],dark:[0.04,0.06,0.09],light:0.8,rim:1.2,seed:17,
-    octaves:4,shadowSteps:2,hole:{radius:5,feather:6,strength:0.9},
-    gap:{away:2,sun:12,ragged:0.6}}
+    base:[0.25,0.29,0.4],dark:[0.04,0.06,0.09],light:0.8,rim:1.2,seed:17,octaves:4,shadowSteps:2,
+    horizonLift:0.1,warp:1.3,detail:0.16,aerial:11,relief:4.5,opacity:0.985,veil:0.92,
+    hole:{radius:5,feather:6,strength:0.9},gap:{away:2,sun:12,ragged:0.6}}
 });
-// 在 S.frame 的 paint 里每帧调用：
-sky.update(t); // 可给第二参数 {coverage}；偏移精确由 wind*t/featureSize 求得
+sky.update(t); // paint 里每帧；偏移 = wind·t/featureSize。第二参数可临时改 {coverage}
 ```
 
-`halo` 为 1–4 组 `[幂次,权重]`；宽晕和窄核分开调，单一宽晕的代价是整片天发白。`clouds:false` 去掉云计算。
-云的 `altitude/featureSize` 和 `wind` 使用米、米/秒；这是平面投影云层，云底有体积感来自域扭曲与向光密度差，并非三维云光线步进。
-`coverage` 为 0–1，`softness` 为密度过渡带；`aniso:[x,z]` 控制拉伸；`warp/detail` 控制域扭曲和脊状细节。
-`octaves`（1–9）与 `shadowSteps`（1–8）控制质量；每增加一阴影步会重算一组 fbm，软件渲染代价明显。
-`hole` 为太阳周围开洞（度），`gap` 为背阳/向阳云底仰角（度）；它们是构图选择，留空就不做这项。
+`halo` 1–4 组 `[幂次,权重]`：只有一层宽晕的代价是整片天发白。`clouds:false` 不算云。平面投影云层，体积感来自域扭曲与向光密度差，不是三维光线步进。
+
+| 云参数 | 含义 | 代价 / 什么时候改 |
+|---|---|---|
+| `altitude/featureSize`（米）、`wind`（米/秒）、`aniso:[x,z]` | 投影高度、团块尺度、风、拉伸 | 尺度小 = 碎云多，近地平线更易走样 |
+| `coverage` 0–1、`softness` | 覆盖率、边缘过渡带 | softness 小边缘硬，运动时闪 |
+| `horizonLift` | 投影分母抬升 | 小 = 近地平线的云压扁成一条密带 |
+| `warp`、`detail` | 域扭曲幅度、脊状细节比例 | 0/0 是规整软团；大了像卷积云，也更费 |
+| `relief`、`light`、`rim` | 自阴影对比、侧光与亮边增益 | relief 0 = 平涂；高了云底发黑 |
+| `aerial` | 近地平线向地平线色淡化的速度 | 大 = 淡化带窄、远云更"实" |
+| `opacity`、`veil` | 最厚处不透明度、对日盘的遮挡 | 1/1 = 厚云完全挡天和太阳 |
+| `hole`、`gap` | 太阳周围开洞、背/向阳云底仰角（度） | 构图选择，留空就不做 |
+| `octaves` 1–9、`shadowSteps` 1–8 | 质量（默认 5 / 1） | 每多一步阴影重算一组 fbm，软件渲染明显变慢 |
+
+云的明暗曲线（基色 × (0.55 + 0.9·relief²)、侧光 × (0.05 + 2.2·relief³)）是模型常数：它决定"背光处有多亮"，要整体更亮/更暗调 `base/dark/light`。
 
 ## 环境反射
 
-加载期、`S.freeze()` 前调用 `sky.environment({at:0,clamp:5,intensity:0.8,size:128})`。
-返回 `{texture,renderTarget}` 并设置 `S.scene.environment`。捕获时移除太阳圆盘、限制 HDR 亮度，避免太阳由 IBL 与平行光重复计算。
-`apply:false` 只生成、不赋给场景，可按镜头预拍多张；在 paint 里按 t 选 texture 与强度。
-云移动但环境静止会有反射误差；镜面主体近景值得预拍多个时刻，粗糙材质通常不敏感。使用完后由片子释放 `renderTarget`。
+加载期（`S.freeze()` 前）`sky.environment({at:0,clamp:5,intensity:0.8,size:128})`：返回 `{texture,renderTarget}` 并设 `S.scene.environment`。捕获时不画日盘、钳 HDR 上限，太阳只由平行光负责。
+`apply:false` 只生成不赋值，可按镜头预拍多张、paint 里按 t 选。云在动而环境静止会有反射误差：镜面主体近景值得预拍几个时刻。
 
 ## 解析高度雾
 
 ```js
-const fog = createHeightFog(rig, {density:0.012,baseHeight:0,scaleHeight:4,
-  maxOpacity:0.85,sunStrength:0.04,sunPower:8});
-S.scene.add(fog.node);
-fog.apply(material); // 标准材质，先雾后色调映射
+const fog = createHeightFog(rig, {density:0.012,baseHeight:0,scaleHeight:4,maxOpacity:0.85,sunStrength:0.04,sunPower:8});
+S.scene.add(fog.node); fog.apply(material); // 标准材质；色调映射之前融色
 ```
 
-密度是 `density*exp(-(y-baseHeight)/scaleHeight)`（每米）；沿相机到表面的视线做闭式积分，颜色取该方向的地平线色。它没有遮挡光柱；需要有阴影的介质用后期体积雾。
-`HEIGHT_FOG_GLSL` 导出 `heightFogDepth(ro,p)`、`heightFogColor(rd)`、`applyHeightFog(col,ro,p)`；uniform 为 `uFogMedium`（density/baseHeight/scaleHeight/maxOpacity）、`uFogSun`（sunStrength/sunPower）。`fog.fill(table)` 可同步给自写 pass。
-把 `fog.node` 加进场景后，舞台会复位它的数值；随 t 变动的参数在每帧 paint 中写回。
+密度 `density·exp(−(y−baseHeight)/scaleHeight)`（每米），视线闭式积分，颜色取该方向地平线色；没有光柱遮挡（要有阴影的介质用后期体积雾）。
+`HEIGHT_FOG_GLSL` 导出 `heightFogDepth/heightFogColor/applyHeightFog`，`fog.fill(table)` 同步给自写 pass。`fog.node` 上的数值由舞台复位，随 t 变的每帧写回。
 
 ## 软阴影
 
-```js
-enablePCSS(S, sun, materials, {sunAngle:3,maxRadius:0.5,samples:12,blockerSamples:8});
-```
-
-舞台需显式 `shadows:true, shadowType:THREE.BasicShadowMap`，先拟合 sun 的阴影视锥。
-`sunAngle` 是太阳视直径（度）；`maxRadius` 为遮挡搜索半径（米）；`minPenumbra` 为最小半影宽（米）；`slope` 限制接收面梯度偏移。
-补丁在材质 `onBeforeCompile` 内替换阴影采样 chunk，不修改 three 打包文件。它对同材质里所有方向/聚光阴影共用同一视锥尺寸，适合一盏主太阳的场景；多盏不同阴影视锥应拆分材质或使用原生 PCF。
-成本约为每个受影像素 `blockerSamples + samples` 次深度读取。静态 IGN 旋转抑制规则条纹，软影仍可能有颗粒；提高采样或渲染分辨率会更贵。
+`enablePCSS(S, sun, materials, {sunAngle:3,maxRadius:0.5,samples:12,blockerSamples:8})`，舞台要 `shadows:true, shadowType:THREE.BasicShadowMap`，先 fitShadow。
+`sunAngle` 太阳视直径（度），`maxRadius` 遮挡搜索半径（米），`minPenumbra`（米，默认 0）、`slope`（接收面梯度偏移上限，默认 0.003）。同一材质的所有阴影共用一个视锥尺寸：多盏不同视锥要拆材质或用原生 PCF。
+每个受影像素 `blockerSamples + samples` 次深度读取；静态 IGN 旋转防规则条纹，软影仍可能有颗粒。
 
 ## 前景层与代价
 
-`pinForeground(object,{range:0.05})` 把专用材质的 NDC 深度压到 [0,range]，仍写深度；共享材质会让其他物体也前移。景深与体积雾会把此深度读成极近距离，前景需要独立合成或关闭对应后期。
-在 `S.freeze()` 之前创建天空、雾与补丁；seek 里只更新值。按 t 求值不需要任何历史帧。
-1080×1920 局部实测（5帧中位数，seek+同步读回）：天空/云/球/PCSS 场景 SW 118.8ms、GPU 1.7ms；128面环境捕获含首次编译和同步读回 SW 451.5ms、GPU 28.2ms。这是整场景成本，不是天空单项增量；并发开发造成负载波动。
+`pinForeground(object,{range:0.05})` 把专用材质的深度压进 [0,range]，永远在最前、仍写深度；共享材质的别的物体也会被压前。
+后期会把前景读成贴脸近处：景深把它整块糊掉，AO/体积雾按极近距离算。`createPost(S,{…, foreground:{depth:0.05}})`（同一个 range）让前景不吃 AO/雾、景深恒在焦内（post-chain.md）。
+所有补丁（雾、PCSS、前景，以及 surface3d/ground3d）经 `patch3d.js` 按调用顺序串在同一材质上，可以叠；同一种补丁一材质一次。
+1080×1920 实测（5 帧中位数，seek+同步读回）：天空/云/球/PCSS 场景 SW 118.8 ms、GPU 1.7 ms；128 面环境捕获（含首次编译）SW 451.5 ms、GPU 28.2 ms。整场景成本，不是天空单项增量。

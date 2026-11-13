@@ -1,8 +1,10 @@
 // 音效合成的 DSP 基元、分层配方、程序化空间（冲激响应）与总线处理。纯函数，浏览器和 Node 都能 import。
 // sfx.mjs 转导出这里的东西：cue 写 "type": "<配方名>" 时，混音器先把配方渲成一段 samples，再走素材那条路径。
 //
-// 确定性：随机全部来自 film-core 的 rand.js（seeded），种子 = cue.seed ?? 名字哈希 + 变体×7919；
-// 同样的 (配方, 参数, 种子, 变体) 逐样本相同。配方里不读时钟、不用 Math.random。
+// 确定性：随机全部来自 film-core 的 rand.js（seeded），噪声种子 = cue.seed ?? 名字哈希 + 变体×7919；
+// 变体（没钉死时）与 jitter 按 hash(配方名, cue.id) 取，没有 id 时按 (配方名, 同名出现序号)。
+// 同样的 (配方, 参数, 种子, 变体, 抖动键) 逐样本相同。配方里不读时钟、不用 Math.random。
+// 采样率只在这里定义一次（SR）；sfx.mjs 的 RATE 就是它。
 // 配方各层管哪段频带和时间、听起来是什么、代价是什么：film-narration references/sfx-recipes.md。
 import { seeded } from './rand.js';
 
@@ -135,8 +137,15 @@ export function grains(r, { dur, count, from = 0, fall = 1, minLen = 0.001, maxL
   return x;
 }
 
-/** tanh 软削波（原地），按 tanh(drive) 归一：满幅输入仍落在 ±1，小信号增益约 drive/tanh(drive) */
-export function softclip(x, drive) { const k = 1 / Math.tanh(drive); for (let n = 0; n < x.length; n++) x[n] = Math.tanh(x[n] * drive) * k; return x; }
+/** tanh 软削波（原地），按 tanh(drive) 归一：满幅输入仍落在 ±1，小信号增益约 drive/tanh(drive)。drive 必须 > 0（0 时归一系数是 1/0） */
+export function softclip(x, drive) {
+  if (!(Number.isFinite(drive) && drive > 0)) throw new Error(`softclip: drive 必须有限且 > 0（0 时 1/tanh(0) = ∞，整段变 NaN），收到 ${drive}`);
+  const k = 1 / Math.tanh(drive); for (let n = 0; n < x.length; n++) x[n] = Math.tanh(x[n] * drive) * k; return x;
+}
+
+/** 二阶巴特沃斯高通去直流（原地）。只用在配方输出（非循环配方），20 Hz：30 Hz 处约 −0.8 dB */
+export const DC_HP = 20;
+export function dcBlock(x, f = DC_HP) { return filter(x, 'hp', f); }
 
 /** 等功率首尾交叉做无缝循环：输入长 loop + fade 样本，返回长 loop 的缓冲，首尾相接处没有跳变 */
 export function loopXfade(x, loop) {
@@ -167,12 +176,13 @@ const pick = (arr, v) => arr[((v % arr.length) + arr.length) % arr.length];
 
 const MATERIALS = {
   // 金属：非谐模态（频率比来自板/壳振动的非整数比），衰减随阶数加快
+  // 缓冲长度随 ring 拉长（ring ≤ 1 时与原长度相同）：余振截断点永远在同一个相对衰减处，不会因为 ring 变大被切掉
   metal: (r, p, k, v) => {
-    const o = buf(0.5), base = pick([640, 880, 745], v) * k;
+    const g = Math.max(1, p.ring), o = buf(0.5 * g), base = pick([640, 880, 745], v) * k;
     mixAt(o, noiseHit(r, { dur: 0.015, tau: 0.003, hp: 1500 }), 0, 1);
     mixAt(o, noiseHit(r, { dur: 0.04, tau: 0.008, lp: 1800 }), 0, 0.6);
     const ratios = [1, 1.58, 2.24, 2.92, 3.71, 4.93, 6.31, 8.1];
-    mixAt(o, modal(r, { dur: 0.48, modes: ratios.map((m, i) => [base * m, 0.13 * p.ring / (1 + i * 0.55), 1 / (1 + i * 0.5)]) }), 0.0005, 0.42);
+    mixAt(o, modal(r, { dur: 0.48 * g, modes: ratios.map((m, i) => [base * m, 0.13 * p.ring / (1 + i * 0.55), 1 / (1 + i * 0.5)]) }), 0.0005, 0.42);
     return o;
   },
   // 混凝土 / 石：低通闷击 + 下滑身体 + 高频碎屑颗粒
@@ -187,8 +197,8 @@ const MATERIALS = {
   },
   // 木：少数几个低模态（谐波性弱、衰减快）+ 中频碎屑
   wood: (r, p, k) => {
-    const o = buf(0.26);
-    mixAt(o, modal(r, { dur: 0.2, modes: [[238 * k, 0.03 * p.ring, 1], [512 * k, 0.022 * p.ring, 0.8], [893 * k, 0.016 * p.ring, 0.6], [1410 * k, 0.01 * p.ring, 0.4]] }), 0, 0.6);
+    const g = Math.max(1, p.ring), o = buf(0.26 * g);
+    mixAt(o, modal(r, { dur: 0.2 * g, modes: [[238 * k, 0.03 * p.ring, 1], [512 * k, 0.022 * p.ring, 0.8], [893 * k, 0.016 * p.ring, 0.6], [1410 * k, 0.01 * p.ring, 0.4]] }), 0, 0.6);
     mixAt(o, noiseHit(r, { dur: 0.03, tau: 0.006, lp: 2100 }), 0, 0.8);
     mixAt(o, noiseHit(r, { dur: 0.01, tau: 0.002, hp: 3000 }), 0, 0.5);
     mixAt(o, grains(r, { dur: 0.2, count: Math.round(6 * p.debris), from: 0.01, fall: 2, bp: 2600, q: 1.5 }), 0, 0.3);
@@ -196,21 +206,21 @@ const MATERIALS = {
   },
   // 玻璃：高频点击 + 一串散开的高频模态对（3.2–9.5 kHz，前密后疏）
   glass: (r, p, k) => {
-    const o = buf(0.45);
+    const g = Math.max(1, p.ring), o = buf(0.45 * g);
     mixAt(o, noiseHit(r, { dur: 0.01, tau: 0.002, hp: 2500 }), 0, 1);
     const n = Math.round(9 * p.debris);
     for (let i = 0; i < n; i++) {
       const f = between(r, 3200, 9500) * k;
-      mixAt(o, modal(r, { dur: 0.1, modes: [[f, between(r, 0.01, 0.03) * p.ring, 1], [f * 1.47, 0.01 * p.ring, 0.5]] }), Math.pow(r(), 2) * 0.3, between(r, 0.1, 0.35));
+      mixAt(o, modal(r, { dur: 0.1 * g, modes: [[f, between(r, 0.01, 0.03) * p.ring, 1], [f * 1.47, 0.01 * p.ring, 0.5]] }), Math.pow(r(), 2) * 0.3, between(r, 0.1, 0.35));
     }
     return o;
   },
   // 水：带通扫频的泼溅 + 嘶声 + 几个上扬的水滴啁啾 + 低频闷响
   water: (r, p, k) => {
-    const len = 0.5, o = buf(len), s = white(len * 0.9, r);
+    const len = 0.5, g = Math.max(1, p.ring), o = buf(len * g), s = white(len * 0.9 * g, r);
     sweep(s, 'bp', expRamp(1500 * k, 520 * k), 0.8);
     mixAt(o, normalize(shape(s, decay(0.085 * p.ring, 0.007))), 0, 0.9);
-    mixAt(o, noiseHit(r, { dur: len * 0.8, tau: 0.07 * p.ring, att: 0.012, hp: 3000 }), 0.01, 0.25);
+    mixAt(o, noiseHit(r, { dur: len * 0.8 * g, tau: 0.07 * p.ring, att: 0.012, hp: 3000 }), 0.01, 0.25);
     const drops = Math.round(5 * p.debris);
     for (let i = 0; i < drops; i++) {
       const f = between(r, 500, 1700) * k;
@@ -221,6 +231,11 @@ const MATERIALS = {
     return o;
   },
 };
+
+// boom 的缓冲：3√size，且装得下最晚的金属叮（1.9·size 起 + 0.2 s）和 1.6·size 的亚低频；size ≤ 1.7 时就是 3√size
+const boomLen = (size) => Math.max(3 * Math.sqrt(size), 1.9 * size + 0.2, 1.6 * size);
+// clatter 的缓冲：最晚一次撞击的上界（首间隔 ≤ 0.15，之后每次 ≤ 0.1125）+ 0.22 s 余振；默认 2–3 次时就是 0.55
+const clatterLen = (hits) => Math.max(0.55, 0.15 * Math.min(1, hits - 1) + 0.1125 * Math.max(0, hits - 2) + 0.22 + 0.01);
 
 export const RECIPES = {
   // ── 冲击 ──
@@ -251,9 +266,9 @@ export const RECIPES = {
   boom: {
     use: '冲击', about: '爆炸 / 巨物落地：爆裂 + 亚低频下滑 + 扫频冲击噪声 + 隆隆 + 碎响颗粒 + 零星金属叮；size 越大越低越长',
     variants: [1, 0.9], defaults: { size: 1, debris: 1, pings: 7, drive: 1.7 },
-    dur: (p) => 3 * Math.sqrt(p.size),
+    dur: (p) => boomLen(p.size),
     render(r, p, k) {
-      const L = 3 * Math.sqrt(p.size), o = buf(L), s = k / Math.sqrt(p.size);
+      const L = boomLen(p.size), o = buf(L), s = k / Math.sqrt(p.size);
       mixAt(o, noiseHit(r, { dur: 0.03, tau: 0.006, hp: 1500 }), 0, 1.8);                                       // 爆裂 >1.5 kHz
       mixAt(o, glide({ dur: 1.6 * p.size, f0: 96 * s, f1: 27, glide: 0.16, tau: 0.36 * p.size, att: 0.001 }), 0, 0.85); // 亚低频 96→27 Hz
       const shock = white(1.6 * p.size, r);
@@ -274,7 +289,7 @@ export const RECIPES = {
   impact: {
     use: '冲击', about: '按材质的碰撞：material = metal | concrete | wood | glass | water（必填）；ring 拉长余振，debris 改碎屑量',
     variants: [1, 1.1, 0.9], defaults: { material: null, ring: 1, debris: 1 },
-    dur: (p) => ({ metal: 0.5, concrete: 0.36, wood: 0.26, glass: 0.45, water: 0.5 })[p.material] ?? 0.5,
+    dur: (p) => (({ metal: 0.5, concrete: 0.36, wood: 0.26, glass: 0.45, water: 0.5 })[p.material] ?? 0.5) * (p.material === 'concrete' ? 1 : Math.max(1, p.ring)),
     render(r, p, k, v) {
       const m = MATERIALS[p.material];
       if (!m) throw new Error(`impact 要写 params.material：${Object.keys(MATERIALS).join(' / ')}（材质是这一下打在什么上，套件不替你选），收到 ${JSON.stringify(p.material)}`);
@@ -318,9 +333,9 @@ export const RECIPES = {
   clatter: {
     use: '物件', about: '小金属件落地弹跳（弹壳、螺丝、钥匙）：2–3 次撞击，间隔递减、增益递减；size 越大越低',
     variants: [1, 1.09, 0.93], defaults: { hits: null, size: 1 },
-    dur: () => 0.55,
+    dur: (p) => clatterLen(p.hits ?? 3),
     render(r, p, k, v) {
-      const o = buf(0.55), hits = p.hits ?? (v % 3 === 1 ? 2 : 3);
+      const hits = p.hits ?? (v % 3 === 1 ? 2 : 3), o = buf(clatterLen(hits));
       let at = 0, g = 1;
       for (let i = 0; i < hits; i++) {
         const c = k / p.size * between(r, 0.96, 1.05);
@@ -444,34 +459,55 @@ export const RECIPES = {
   },
 };
 
-/** 渲一个配方：返回 { samples, variant, seed, pitch }。jitter = 数字（音高 ±比例）或 { pitch, gain } */
-export function renderRecipe(name, { params = {}, variant = 0, seed = null, pitch = 1, jitter = 0 } = {}, recipes = RECIPES) {
+/** 规范化 JSON：对象键排序，同一个值不管键序如何都得到同一个字符串（分组、缓存的键） */
+export function canon(v) {
+  if (v instanceof Float32Array || v instanceof Float64Array) return `[${Array.from(v).join(',')}]`;
+  if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().filter((k) => v[k] !== undefined).map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`;
+  return JSON.stringify(v ?? null);
+}
+const POSITIVE = ['dur', 'size', 'ring', 'f0', 'from', 'to', 'rate', 'q', 'drive'];
+const POS_INT = ['partials', 'harmonics', 'hits'];
+
+/**
+ * 渲一个配方：返回 { samples, variant, seed, pitch, gain }。jitter = 数字（音高 ±比例）或 { pitch, gain }。
+ * jitterSeed：抖动的种子（expandRecipes 按 cue.id / 出现序号给）；不给时取噪声种子派生（同变体同抖动，旧行为）。
+ * 非循环配方输出过 20 Hz 去直流高通（DC_HP），再 edges + 归一。任何参数让输出出现 NaN/Inf 都直接报错，不写静音。
+ */
+export function renderRecipe(name, { params = {}, variant = 0, seed = null, pitch = 1, jitter = 0, jitterSeed = null } = {}, recipes = RECIPES) {
   const R = recipes[name];
   if (!R) throw new Error(`没有配方 ${name}，可选 ${Object.keys(recipes).join(' ')}`);
   const p = { ...R.defaults, ...params };
   if (!Number.isInteger(variant) || !Number.isFinite(pitch) || !(pitch > 0)) throw new Error('renderRecipe: variant 必须为整数，pitch 必须有限且 > 0');
   if (seed != null && !Number.isFinite(seed)) throw new Error('renderRecipe: seed 必须有限');
+  if (jitterSeed != null && !Number.isFinite(jitterSeed)) throw new Error('renderRecipe: jitterSeed 必须有限');
   for (const [key, value] of Object.entries(p)) {
-    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`renderRecipe: params.${key} 必须有限`);
-    if (['dur', 'size', 'ring', 'f0', 'from', 'to', 'rate', 'q'].includes(key) && value != null && !(value > 0)) throw new Error(`renderRecipe: params.${key} 必须 > 0`);
-    if (['partials', 'harmonics', 'hits'].includes(key) && value != null && !(Number.isInteger(value) && value > 0)) throw new Error(`renderRecipe: params.${key} 必须是正整数`);
+    if (typeof R.defaults?.[key] === 'number' && typeof value !== 'number') throw new Error(`renderRecipe: ${name}.params.${key} 要是数字，收到 ${JSON.stringify(value)}`);
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`renderRecipe: ${name}.params.${key} 必须有限`);
+    if (POSITIVE.includes(key) && value != null && !(value > 0)) throw new Error(`renderRecipe: ${name}.params.${key} 必须 > 0，收到 ${value}${key === 'drive' ? '（drive 是软削波的驱动量，0 时归一系数 1/tanh(0) 无穷大）' : ''}`);
+    if (POS_INT.includes(key) && value != null && !(Number.isInteger(value) && value > 0)) throw new Error(`renderRecipe: ${name}.params.${key} 必须是正整数`);
+    if (key === 'pings' && !(Number.isInteger(value) && value >= 0)) throw new Error(`renderRecipe: ${name}.params.pings 必须是 ≥ 0 的整数`);
   }
   const s = (seed ?? (nameHash(name) + variant * 7919)) >>> 0;
   const r = seeded(s);
   const jp = typeof jitter === 'number' ? jitter : (jitter?.pitch ?? 0), jg = typeof jitter === 'number' ? 0 : (jitter?.gain ?? 0);
   if (!(Number.isFinite(jp) && jp >= 0 && jp < 1 && Number.isFinite(jg) && jg >= 0 && jg <= 1)) throw new Error('renderRecipe: jitter.pitch ∈ [0,1)，jitter.gain ∈ [0,1]');
-  const jr = seeded(s ^ 0x5bd1e995);
+  const jr = seeded(jitterSeed != null ? (jitterSeed >>> 0) : (s ^ 0x5bd1e995));
   const kj = 1 + jp * (jr() * 2 - 1), gj = 1 - jg * jr();
   const k = pick(R.variants, variant) * pitch * kj;
   const x = R.render(r, p, k, variant);
-  if (!R.loop) edges(x, 0.0003, 0.012);
+  if (!R.loop) { dcBlock(x); edges(x, 0.0003, 0.012); }
   normalize(x, PEAK * gj);
+  for (let n = 0; n < x.length; n++) if (!Number.isFinite(x[n])) throw new Error(`renderRecipe: ${name} 输出第 ${n} 个样本是 ${x[n]}（参数 ${canon(p)}）：某个参数让配方算出了非有限数`);
   return { samples: x, variant, seed: s, pitch: +k.toFixed(5), gain: +gj.toFixed(4) };
 }
 
 /**
  * 把 cue 表里"type 是配方名"的 cue 展开成 samples（其他 cue 原样返回，同一个对象）。
- * variant 不写 = 按时间顺序在同名配方里轮换（第 n 次出现用变体 n mod 变体数）；写数字 = 钉死。
+ * 变体：写数字 = 钉死；不写时有 cue.id 按 hash(配方名, id) 取（插入别的事件不改它，代价是相邻两发可能同变体），
+ *   没有 id 按同名配方的时间顺序轮换（第 n 次出现用 n mod 变体数；插入一个同名 cue 会让后面的全部换变体）。
+ * jitter 的种子同理：hash(配方名, id) 或 hash(配方名, 出现序号)——不再每个变体一个固定抖动。
+ * 同一张表里参数完全相同的 cue 只渲一次（按规范化参数缓存），返回的 samples 是共享的同一个数组，不要原地改。
  */
 export function expandRecipes(cues, { recipes = RECIPES, sounds = {} } = {}) {
   const isRecipe = (c) => c && !c.samples && !c.file && c.type != null && !Object.hasOwn(sounds, c.type) && Object.hasOwn(recipes, c.type);
@@ -479,10 +515,18 @@ export function expandRecipes(cues, { recipes = RECIPES, sounds = {} } = {}) {
   const order = cues.map((c, i) => [c, i]).filter(([c]) => isRecipe(c)).sort((a, b) => a[0].t - b[0].t || a[1] - b[1]);
   const seen = {}, auto = new Map();
   for (const [c, i] of order) { const n = seen[c.type] ?? 0; seen[c.type] = n + 1; auto.set(i, n); }
+  const cache = new Map();
   return cues.map((c, i) => {
     if (!isRecipe(c)) return c;
-    const variant = Number.isInteger(c.variant) ? c.variant : auto.get(i) % recipes[c.type].variants.length;
-    const out = renderRecipe(c.type, { params: c.params, variant, seed: c.seed ?? null, pitch: c.pitch ?? 1, jitter: c.jitter ?? 0 }, recipes);
+    const who = c.id != null ? `id:${c.id}` : `n:${auto.get(i)}`;
+    const variant = Number.isInteger(c.variant) ? c.variant
+      : c.id != null ? nameHash(`${c.type}\u0000variant\u0000${who}`) % recipes[c.type].variants.length
+      : auto.get(i) % recipes[c.type].variants.length;
+    const jitter = c.jitter ?? 0, still = jitter === 0 || (typeof jitter === 'object' && !jitter.pitch && !jitter.gain);
+    const jitterSeed = still ? null : nameHash(`${c.type}\u0000jitter\u0000${who}`);
+    const key = canon([c.type, c.params ?? {}, variant, c.seed ?? null, c.pitch ?? 1, still ? 0 : jitter, jitterSeed]);
+    let out = cache.get(key);
+    if (!out) { out = renderRecipe(c.type, { params: c.params, variant, seed: c.seed ?? null, pitch: c.pitch ?? 1, jitter, jitterSeed }, recipes); cache.set(key, out); }
     return { ...c, samples: out.samples, _recipe: { variant: out.variant, seed: out.seed, pitch: out.pitch, gain: out.gain } };
   });
 }
@@ -522,15 +566,25 @@ export const SPACES = {
   },
 };
 const irCache = new Map();
-/** space: 'outdoor' | 'indoor' | { preset, gain?, scale?, bright?, seed? } → { L, R, gain }（每声道归一到单位能量） */
-export function makeIR(space) {
+/** space 的规范形：'outdoor' 与 { preset: 'outdoor' }、键序不同的对象都得到同一个 { preset, gain, scale, bright, seed } */
+export function spaceSpec(space) {
   const spec = typeof space === 'string' ? { preset: space } : { ...space };
-  if (!SPACES[spec.preset]) throw new Error(`space 只认 ${Object.keys(SPACES).join(' / ')}，或 { preset, gain?, scale?, bright?, seed? }，收到 ${JSON.stringify(space)}`);
+  if (!spec || !SPACES[spec.preset]) throw new Error(`space 只认 ${Object.keys(SPACES).join(' / ')}，或 { preset, gain, scale?, bright?, seed? }，收到 ${JSON.stringify(space)}`);
   for (const k of ['scale', 'bright']) if (spec[k] != null && !(Number.isFinite(spec[k]) && spec[k] > 0)) throw new Error(`space.${k} 必须有限且 > 0`);
   if (spec.gain != null && !(Number.isFinite(spec.gain) && spec.gain >= 0)) throw new Error('space.gain 必须有限且 ≥ 0');
-  const key = JSON.stringify([spec.preset, spec.scale ?? 1, spec.bright ?? 1, spec.seed ?? 0]);
+  return { preset: spec.preset, gain: spec.gain ?? null, scale: spec.scale ?? 1, bright: spec.bright ?? 1, seed: spec.seed ?? 0 };
+}
+/** 分组键（规范化、与键序无关）。withGain=false 时只看冲激响应本身（同一个 IR 不同 gain 共用一次卷积） */
+export const spaceKey = (space, withGain = true) => { const { gain, ...ir } = spaceSpec(space); return canon(withGain ? { ...ir, gain } : ir); };
+/**
+ * space: 'outdoor' | 'indoor' | { preset, gain, scale?, bright?, seed? } → { L, R, gain, key }（每声道归一到单位能量）。
+ * gain 没有默认值（这里返回 null，renderStereo 用到时报错）：单位能量 IR 乘 1 时尾音能量与干声相当，已经很湿；多湿是片子的选择。
+ */
+export function makeIR(space) {
+  const spec = spaceSpec(space);
+  const key = spaceKey(spec, false);
   if (!irCache.has(key)) {
-    const base = nameHash('space:' + spec.preset) + (spec.seed ?? 0) * 7919;
+    const base = nameHash('space:' + spec.preset) + spec.seed * 7919;
     const [L, R] = [0, 1].map((ch) => {
       const h = SPACES[spec.preset](seeded(base + ch * 131), spec, ch === 1);
       let e = 0; for (let n = 0; n < h.length; n++) e += h[n] * h[n];
@@ -539,25 +593,44 @@ export function makeIR(space) {
     });
     irCache.set(key, { L, R });
   }
-  return { ...irCache.get(key), gain: spec.gain ?? 1 };
+  return { ...irCache.get(key), gain: spec.gain, key };
 }
 
-// 基 2 FFT 卷积（确定：同一输入同一运算顺序）
+// 基 2 FFT（确定：同一输入同一运算顺序）。旋转因子与位反转表按长度缓存；短级（half < 64）按旋转因子外层循环，长级按块外层循环
+const twiddles = new Map(), revs = new Map();
+function twiddleOf(n) {
+  let t = twiddles.get(n);
+  if (!t) {
+    const c = new Float64Array(n >> 1), s = new Float64Array(n >> 1);
+    for (let k = 0; k < n >> 1; k++) { c[k] = Math.cos(TAU * k / n); s[k] = Math.sin(TAU * k / n); }
+    t = { c, s }; twiddles.set(n, t);
+  }
+  return t;
+}
+function revOf(n) {
+  let r = revs.get(n);
+  if (!r) { r = new Uint32Array(n); for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; r[i] = j; } revs.set(n, r); }
+  return r;
+}
 function fft(re, im, inv) {
   const n = re.length;
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
-    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
-  }
-  for (let len = 2; len <= n; len <<= 1) {
-    const half = len >> 1, a = (inv ? TAU : -TAU) / len;
-    const cw = new Float64Array(half), sw = new Float64Array(half);
-    for (let k = 0; k < half; k++) { cw[k] = Math.cos(a * k); sw[k] = Math.sin(a * k); }
-    for (let i = 0; i < n; i += len) for (let k = 0; k < half; k++) {
-      const p = i + k, q = p + half, xr = re[q] * cw[k] - im[q] * sw[k], xi = re[q] * sw[k] + im[q] * cw[k];
-      re[q] = re[p] - xr; im[q] = im[p] - xi; re[p] += xr; im[p] += xi;
+  if (n < 2) return;
+  const r = revOf(n);
+  for (let i = 1; i < n; i++) { const j = r[i]; if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+  for (let i = 0; i < n; i += 2) { const ar = re[i], ai = im[i], br = re[i + 1], bi = im[i + 1]; re[i] = ar + br; im[i] = ai + bi; re[i + 1] = ar - br; im[i + 1] = ai - bi; }
+  const { c: cw, s: sw0 } = twiddleOf(n), sg = inv ? 1 : -1;
+  for (let len = 4; len <= n; len <<= 1) {
+    const half = len >> 1, stride = n / len;
+    if (half < 64) {
+      for (let k = 0, w = 0; k < half; k++, w += stride) {
+        const c = cw[w], s = sg * sw0[w];
+        for (let p = k; p < n; p += len) { const q = p + half, qr = re[q], qi = im[q], xr = qr * c - qi * s, xi = qr * s + qi * c, pr = re[p], pi = im[p]; re[q] = pr - xr; im[q] = pi - xi; re[p] = pr + xr; im[p] = pi + xi; }
+      }
+    } else {
+      for (let i = 0; i < n; i += len) for (let k = 0, w = 0; k < half; k++, w += stride) {
+        const c = cw[w], s = sg * sw0[w];
+        const p = i + k, q = p + half, qr = re[q], qi = im[q], xr = qr * c - qi * s, xi = qr * s + qi * c, pr = re[p], pi = im[p]; re[q] = pr - xr; im[q] = pi - xi; re[p] = pr + xr; im[p] = pi + xi;
+      }
     }
   }
   if (inv) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
@@ -574,16 +647,86 @@ export function convolve(x, h) {
   return Float32Array.from(ar.subarray(0, len));
 }
 
+// IR 频谱缓存：同一个 IR 数组（makeIR 已缓存）在同一 FFT 长度下只变换一次
+const specCache = new WeakMap();
+function spectrumOf(h, M) {
+  let m = specCache.get(h); if (!m) { m = new Map(); specCache.set(h, m); }
+  let S = m.get(M);
+  if (!S) { const re = new Float64Array(M), im = new Float64Array(M); re.set(h); fft(re, im, false); S = { re, im }; m.set(M, S); }
+  return S;
+}
 /**
- * 尾音规则（对整张 cue 表一次性决定，确定）：同一个 space 的 cue 按时间排序，相邻间隔 < burstGap 的算一串；
- * 一串只在最后一个 cue 上挂尾音；edges: 'both' 也保留开头。写了 throttle 时，串中离上一次尾音 ≥ throttle 的 cue 也挂。
- * 返回 Map<cue 下标, space>
+ * 单声道输入 x 同时卷左右两条 IR：分块重叠相加（块长按"非零块数 × M log M"最小选，M ≤ max(2^18, 2·IR 长)），全零块跳过；
+ * 两个输入块拼成一个复数做正变换（实部/虚部各一块），左右 IR 各一次逆变换，实部/虚部各是一块的输出。
+ * 返回 [yL, yR]（Float64Array，长 x.length + max(hL, hR) − 1）。与 convolve() 逐路结果在浮点误差内相同。
+ * 给了 into = { L, R, at }：直接叠进 L/R 的 at 起处（越界截掉），不分配整段输出，返回 into。
  */
-export function planTails(cues, { burstGap = 0.15, throttle = null, edges = 'end' } = {}) {
+export function convolveStereo(x, hL, hR, into = null) {
+  const hLen = Math.max(hL.length, hR.length), full = x.length + hLen - 1;
+  const at = into?.at ?? 0, outLen = into ? Math.max(0, Math.min(full, into.L.length - at)) : full;
+  const yL = into ? into.L : new Float64Array(outLen), yR = into ? into.R : new Float64Array(outLen);
+  const done = () => (into ?? [yL, yR]);
+  const CH = 1024, nz = new Uint8Array(Math.ceil(x.length / CH));
+  for (let n = 0; n < x.length; n++) if (x[n] !== 0) { nz[(n / CH) | 0] = 1; n = ((n / CH) | 0) * CH + CH - 1; }
+  let p2 = 1; while (p2 < hLen) p2 <<= 1;
+  let best = null;
+  // M 的上限 2^18：实测（V8）2^18 以上每蝶形慢约 1.7 倍（数组出缓存），块数省下的抵不过
+  for (let M = p2 * 2; M <= Math.max(p2 * 2, 1 << 18); M <<= 1) {
+    const B = M - hLen + 1; let blocks = 0;
+    for (let s0 = 0; s0 < x.length; s0 += B) { for (let c = (s0 / CH) | 0; c * CH < Math.min(x.length, s0 + B); c++) if (nz[c]) { blocks++; break; } }
+    const cost = blocks * M * Math.log2(M);
+    if (!best || cost < best.cost) best = { M, B, cost };
+  }
+  if (!best || best.cost === 0) return done();
+  const { M, B } = best, HL = spectrumOf(hL, M), HR = spectrumOf(hR, M);
+  const nonzero = (s0) => { const e0 = Math.min(x.length, s0 + B); for (let c = (s0 / CH) | 0; c * CH < e0; c++) if (nz[c]) return true; return false; };
+  const starts = []; for (let s0 = 0; s0 < x.length; s0 += B) if (nonzero(s0)) starts.push(s0);
+  // 两个实数块一次正变换：z = a + i·b，h 是实数 ⇒ IFFT(Z·H) = a*h + i·(b*h)。每两块 1 次正变换 + 左右各 1 次逆变换
+  const zr = new Float64Array(M), zi = new Float64Array(M), re = new Float64Array(M), im = new Float64Array(M);
+  const addOut = (y, s0, src) => { if (s0 < 0) return; const lim = Math.min(M, outLen - s0); for (let n = 0; n < lim; n++) y[at + s0 + n] += src[n]; };
+  for (let j = 0; j < starts.length; j += 2) {
+    const a0 = starts[j], b0 = j + 1 < starts.length ? starts[j + 1] : -1;
+    zr.fill(0); zi.fill(0);
+    for (let n = a0, e = Math.min(x.length, a0 + B); n < e; n++) zr[n - a0] = x[n];
+    if (b0 >= 0) for (let n = b0, e = Math.min(x.length, b0 + B); n < e; n++) zi[n - b0] = x[n];
+    fft(zr, zi, false);
+    for (const [H, y] of [[HL, yL], [HR, yR]]) {
+      for (let i = 0; i < M; i++) { const xr = zr[i], xi = zi[i]; re[i] = xr * H.re[i] - xi * H.im[i]; im[i] = xr * H.im[i] + xi * H.re[i]; }
+      fft(re, im, true);
+      addOut(y, a0, re); addOut(y, b0, im);
+    }
+  }
+  return done();
+}
+
+/**
+ * 尾音挂在哪些 cue 上（对整张 cue 表一次性决定，确定）。返回 Map<cue 下标, space>。
+ * 显式：只要表里有任何一个 cue 写了 tail 字段（true/false），就严格按 tail——tail: true 的挂（它必须有 space），其余都不挂，
+ *   rule 不再参与（事件表 burstEnds → toCues 给连射末发写 tail: true，声音与画面读同一张表）。
+ * 自判（表里完全没有 tail 字段）：同一个 space（规范化后比较，与键序无关）的 cue 按时间排序，相邻间隔 < burstGap 算一串，
+ *   一串只在最后一个 cue 上挂；edges: 'both' 也保留开头；写了 throttle 时，串中离上一次尾音 ≥ throttle 的也挂。
+ *   burstGap 没有默认值：多近算"一串"取决于这支片的射速/步频。
+ */
+export function planTails(cues, rule) {
+  const plan = new Map();
+  if (cues.some((c) => c && c.tail !== undefined)) {
+    cues.forEach((c, i) => {
+      if (c.tail === undefined) return;
+      if (typeof c.tail !== 'boolean') throw new Error(`cue #${i}：tail 只认 true / false，收到 ${JSON.stringify(c.tail)}`);
+      if (!c.tail) return;
+      if (c.space == null) throw new Error(`cue #${i}（t=${c.t}）写了 tail: true，但没有 space（尾音是哪个空间的）`);
+      spaceSpec(c.space); plan.set(i, c.space);
+    });
+    return plan;
+  }
+  if (!cues.some((c) => c.space != null)) return plan;
+  const { burstGap, throttle = null, edges = 'end' } = rule ?? {};
+  if (burstGap == null) throw new Error('有 cue 写了 space，但表里没有任何 tail 字段，也没给 spaceRule.burstGap。二选一：'
+    + 'cue 上显式写 tail（事件表 burstEnds → toCues 给连射末发写 tail: true），或顶层写 spaceRule.burstGap（秒：相邻间隔小于它算一串，只在串尾挂尾音；'
+    + '参考量级：自动武器连射 0.1–0.2，脚步 0.3–0.5；太大会把分开的事件并成一串、吞掉尾音，太小每发都挂尾音会糊）');
   if (!(Number.isFinite(burstGap) && burstGap > 0) || (throttle != null && !(Number.isFinite(throttle) && throttle > 0)) || !['end', 'both'].includes(edges)) throw new Error('spaceRule: burstGap/throttle 要为正秒数，edges 要为 end 或 both');
   const groups = new Map();
-  cues.forEach((c, i) => { if (c.space != null) { const k = JSON.stringify(c.space); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); } });
-  const plan = new Map();
+  cues.forEach((c, i) => { if (c.space != null) { const k = spaceKey(c.space); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); } });
   for (const idx of groups.values()) {
     idx.sort((a, b) => cues[a].t - cues[b].t || a - b);
     let lastTail = -Infinity;
@@ -600,9 +743,10 @@ export function planTails(cues, { burstGap = 0.15, throttle = null, edges = 'end
 
 // ───────────────────────── 总线：闷音、压低、压缩、软削波 ─────────────────────────
 const asSpec = (v, key) => (typeof v === 'number' ? { [key]: v } : v);
-/** 闷音强度 Z(t) = max_e z_e·e^(−(t−t_e)/recover_e)；cue.muffle = 数字 z（0..1）或 { amount, recover }。recover 默认 1.1 s */
+/** 闷音强度 Z(t) = max_e z_e·e^(−(t−t_e)/recover_e)；cue.muffle = { amount, recover }，recover 必填（没有默认恢复时间） */
 export function muffleCurve(cues, N) {
-  const ev = cues.filter((c) => c.muffle != null).map((c) => { const s = asSpec(c.muffle, 'amount'), z = s.amount, tau = s.recover ?? 1.1;
+  const ev = cues.filter((c) => c.muffle != null).map((c) => { const s = asSpec(c.muffle, 'amount'), z = s.amount, tau = s.recover;
+    if (tau == null) throw new Error(`muffle 要写 { amount, recover }（t=${c.t}）：recover 是闷音恢复的时间常数（秒），参考 0.6–1.5（耳鸣式的长闷 1 以上，只想压一下高频 0.3–0.6）；越长遮蔽后面的信息越久`);
     if (!(Number.isFinite(c.t) && Number.isFinite(z) && z >= 0 && z <= 1 && Number.isFinite(tau) && tau > 0)) throw new Error('muffle: t 必须有限，amount ∈ [0,1]，recover 必须有限且 > 0');
     return { t: c.t, z, tau }; });
   if (!ev.length) return null;
@@ -628,9 +772,10 @@ export function applyMuffle(x, Z, step = 32) {
   }
   return x;
 }
-/** 配乐增益曲线 g(t) = min_e [1 − (1 − depth_e)·e^(−(t−t_e)/recover_e)]；cue.duck = 数字 depth（压到的线性增益）或 { depth, recover }。recover 默认 0.286 s */
+/** 配乐增益曲线 g(t) = min_e [1 − (1 − depth_e)·e^(−(t−t_e)/recover_e)]；cue.duck = { depth（压到的线性增益）, recover }，recover 必填 */
 export function duckCurve(cues, N) {
-  const ev = cues.filter((c) => c.duck != null).map((c) => { const s = asSpec(c.duck, 'depth'), d = s.depth, tau = s.recover ?? 0.286;
+  const ev = cues.filter((c) => c.duck != null).map((c) => { const s = asSpec(c.duck, 'depth'), d = s.depth, tau = s.recover;
+    if (tau == null) throw new Error(`duck 要写 { depth, recover }（t=${c.t}）：recover 是配乐回升的时间常数（秒），参考 0.2–0.4（短促冲击）到 1 以上（大事件后留白）；太短听得出配乐"泵"，太长配乐空掉`);
     if (!(Number.isFinite(c.t) && Number.isFinite(d) && d >= 0 && d <= 1 && Number.isFinite(tau) && tau > 0)) throw new Error('duck: t 必须有限，depth ∈ [0,1]，recover 必须有限且 > 0');
     return { t: c.t, d, tau }; });
   if (!ev.length) return null;

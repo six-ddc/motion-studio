@@ -294,3 +294,26 @@ skill 里只留结论、判据和代价数字；下面是原来写在 SKILL.md /
 - 已打开局部静帧：闪白、方块下沉/倾斜、火花和累积贴花可见。没有制作完整片子。
 
 局限：事件表浅冻结，调用方视为只读；holdFrames对起点本来为0的核不承诺每帧大于0；真正的非线性约束不能靠线性通道叠加模拟。响应时间常数与幅度属于本片，不设默认手感。
+
+## 2026-11-13 事件表移入 film-core、顿帧并集、弹簧/闪光去重、屏震避比参数化
+
+`events.js` 移到 film-core（文档拆成 film-core `references/events.md` 与本 skill `references/events.md` 的手感/顿帧部分）。
+
+```
+node tests/fixtures/_test-events/tests/unit.mjs      72 通过，0 失败（3.9 s）
+```
+
+- **顿帧**：命中 1.00/1.03、dur 0.06，t = 1.00 1.03 1.05 1.06 1.09：改前 `1.000 1.000 0.980 0.970 0.970`（世界时间倒退），改后 `1.000 1.000 1.000 1.000 1.000`，1.2 → 1.110。
+  30 组随机重叠命中单调不减；与 1e-5 s 步进的冻结计时独立参照一致；互不重叠时 30 组 × 3800 个 t 与改前**逐位**相同。新增 `hitstopOf(hits,{dur})`（O(log n)、`.inv`、`.intervals`）。
+- **combine 'last' + lead**：事件 a@1.0、b@1.2、lead 0.3，t=1.05：改前取 b 的预备段（2），改后取已发生的 a（1.05）；都未发生时取最近的那个。
+- **弹簧**：振子闭式只剩 film-core `oscillate()` 一份；closed.spring 委托它后 6 组 (k,c) × 3 组初值 × 300 个 t 与改前逐位相同；springKick 与改前公式相对误差 < 1e-12（10 个 ζ，含 1±5e-7），
+  `{stiffness,damping}` 与 `{k,c}` 逐位相同。注意：closed.spring 在 |ζ−1| < 1e-6 时用欠/过阻尼式，相对误差约 1.3e-7（抵消误差，改前就有，springKick 在这一带走临界式不受影响）。
+- **flash**：closed.flash 委托 events.js flashDecay，3 个 dur × 1300 个 t 逐位相同。
+- **屏震避比**：`shakeTermsFromSeed` 改前 band [4,13]、2000 个种子 × 3 轴里比值落在 0.9–1.1 的仍有 159 个（f1·1.37 被夹到 band 上限）、0.45–0.55 的 357 个（只查了 f2/f1）。
+  改为 `avoid:{ratios,tol}` 参数，比值取 max/min、确定性重抽：给 `{ratios:[1,2],tol:.1}` 时 6000 轴 0 个落在 1±.1 / 2±.1；不给就不避（不给时 997 个≈1、380 个≈2）。
+- **帧率**：`_test-events` 不再写死 30，读 window.FILM.fps；24/30/60 fps 每个闪白 ≥ 2 帧（见 film-core 实测记录同日条目）。
+- **单测参照换成独立实现**：throttle 对整数 tick 冷却计时器 + 601 格环形窗口（63/300 触发逐个一致）；priority（含 maxPerWindow）对暴力约束枚举；
+  approach 对显式欧拉 dt=1e-6（4.41e-7）；"对齐后在帧上"改成"每个闪光的峰值都被某帧采到"。
+- 默认值政策：`traumaShake` 的 power、`hitstopOf` 的 dur 改为必填；`cruise` 的 smoothstep、closed.js 旧接口的缺省（hitstop 0.06、flash 0.12、hitShake、squash）保留并在 references 写了代价。
+
+局限：hitstop 的"命中由物理推出"仍要调用方先在世界时间里算出命中再用 `inv` 换算，没有自动迭代；ζ=0 的 springKick 只在文档里说明 O(n)，没有运行时告警。

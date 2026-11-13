@@ -518,3 +518,19 @@ Kuwahara 第一版（−r..r 双重循环 + 四个 if 分象限）在负载 20�
 ### 2026-11-12 独立入口前向验收
 
 从实际SKILL入口和七份参考页出发，独立代理按文档在仓库外新建两场景：天空+PMREM+混合泛光/映射/FXAA，以及共享破损贴图+湿地反射+烟图集。按[0,.5,0,.8,.5]求值，两个页面errors=[]、重复时刻PNG哈希相同、不同t画面变化；截图已查看。发现并修正events的applyShot对象/尺寸签名、合批后动画需引用返回组克隆节点、反射width/resolution像素单位歧义。没有依赖能力skill私有目录，也没有运行下载来的原HTML。
+
+### 2026-11-13 webfx 修复线（审查 15 条）
+
+环境：本机全新检出，`npm ci` + `npx playwright install chromium`（headless shell 1248 / Chromium 156.0.8078.4），SwiftShader。
+
+**旧三维基线**：上面 11-12 记的四个 SHA256 是另一台机器的字节，本机同一提交截出来不同（PNG 字节依赖机器/浏览器构建）。改为 `dev/film-webfx/baseline3d.mjs --save/--against <json>`：改任何东西之前在本机 `--save`，之后 `--against`。本轮改 post3d（共享片段、fxSafe、黑纹理、曝光还原、前景、显示链）的每一步之后都跑过，`_test-3d` 9x16 的 0/0.8/3.4/6.6 s 四帧**逐字节相同**（9ba87d7f…/b3a19e99…/593e244e…/2fce310f…）。
+
+**新运行时改前/改后截图对比**（scratchpad 脚本，各 3 帧）：sky、surface、model **0 像素不同**（patch3d 统一补丁、pcg/IGN 去重、surface 的批次网格、model3d 重排都不改像素）；post 全开约 99.8% 像素变化、最大 22/255——是拉丝修复：原来 mix 泛光的无阈值 mip 被横向抹满整幅；worldfx 约 62% 像素变化、最大 39/255（涟漪重写、哈希换 pcg、地面粗糙度改乘法、反照率改 sRGB 存储）。
+
+**新断言（都先确认旧代码会红）**：
+- `_test-post/tests/browser.mjs` 27 条：拉丝开/关在画面下部 30% 的 38880 像素里 0 个变化（>1/255）、太阳带 4683 个变化；太阳在画内挪 0.004 UV 最大差 12/255、跨画框边 13/255（旧实现跨边时 3/9 可见度采样直接判 0），出画 1.4 NDC 与关闭 0 像素不同；场景里放一个 1e6 的像素（SwiftShader 写进 HalfFloat 变 NaN，972 个分量），旧链泛光开时输出 1095 个 NaN 分量，现在开/关两帧都是 0，comp 链画完 `toneMappingExposure` 还原；`foreground:{depth:.05}` 时 pinForeground 物体内部 0/646 像素被景深改动（不开 267/646）。
+- `_test-worldfx/tests/browser.mjs`：涟漪开/关 3650 像素不同，淡出区间 [0,0.01] m 时与不开 0 像素不同，乱序一致；ground+surface 两种顺序、再叠高度雾、InstancedMesh、BatchedMesh 全部编译渲染（旧代码 surface 替换 normal_fragment_maps 后 ground 注入直接抛错）。
+- `_test-model/tests/unit.mjs` 17551 条：扫掠截面顺/逆时针 × 坐标架左/右手四种组合侧面与封口都朝外（旧代码顺时针截面侧面全部朝内，16/16）；extrude smooth 的封口法线保持 ±Z（旧代码 36/36 个法线被侧面混掉）。
+- 阴性对照：`_test-worldfx/scene-bad-reflect-prevframe.html`（reset:false + 画完这一帧才更新反射）seamcheck 门 1a 8/8 时刻红、门 2 8/8 红、1b 绿；`_test-surface/scene-bad-noreset.html`（reset:false + 湿度只在 t>2 s set）只有门 2 红（4/4 时刻，约 33 万像素）。发现：默认 reset:true 时舞台把 `uGMatrix` 还原到 freeze 值，过期反射整个落到画外，门看不出来（画面上是"反射消失"），已写进 world-surfaces.md。
+
+**没做 / 没测**：涟漪对照原游戏只到公式级，没有逐像素对照；`foreground` 只验证了景深（AO/体积雾对压缩深度的物体本来就几乎不起作用，开关差异测不出）；测光改为全像素降采样后没有和旧 32×18 点采样做数值对比；sky3d 云的明暗曲线常数（0.55+0.9r²、0.05+2.2r³）只写进文档没参数化。

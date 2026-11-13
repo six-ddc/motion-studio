@@ -7,7 +7,10 @@
 //   托管方式与渲染相同（lib/serve.mjs：./runtime/* 片内优先、否则套件），所以预览看到的就是会渲出来的。
 import { resolveFilm, parseArgs, main, FILM_OPTS } from '../lib/film.mjs';
 import { serve } from '../lib/serve.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { FORMATS } from '../assets/runtime/layout.js';
+import { filmGlobals, filmGlobalsScript } from '../lib/browser.mjs';
 
 const args = parseArgs({
   usage: 'node preview.mjs --film <slug> [--format 9x16] [--port 4321]',
@@ -37,6 +40,14 @@ p.onclick=()=>{playing=!playing;p.textContent=playing?'暂停':'播放';last=per
 const tick=(now)=>{if(playing){let x=t+(now-last)/1000;if(x>D)x=lp.checked?x%D:D;go(x);}last=now;requestAnimationFrame(tick);};requestAnimationFrame(tick);
 </script>`;
   const port = args.num('port', 4321);
-  const srv = await serve(F.dir, { port, routes: { '/__preview.html': page } });
+  // 入口页每次请求现读、在 <head> 开头插入 window.FILM（与 openScene 的 addInitScript 同一份脚本）：
+  // 预览是 iframe 里的普通页面，没有 Playwright 的加载前注入，只能改写这一页的 HTML（只在预览里，渲染不走这里）
+  const inject = `<script>${filmGlobalsScript(filmGlobals(F, format, fps))}</script>`;
+  const entryHtml = () => {
+    const html = readFileSync(join(F.dir, F.config.entry), 'utf8');
+    const m = /<head[^>]*>/i.exec(html) ?? /<!doctype[^>]*>/i.exec(html);
+    return m ? html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length) : inject + html;
+  };
+  const srv = await serve(F.dir, { port, routes: { '/__preview.html': page, [decodeURIComponent(F.entryUrl)]: entryHtml } });
   console.log(`预览 ${F.slug}: http://127.0.0.1:${srv.port}/__preview.html   （画幅 ${format}，--format 切换）  Ctrl-C 停止`);
 });

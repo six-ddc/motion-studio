@@ -4,6 +4,7 @@
 // 随机来自 film-core 的 rand.js（全套件唯一的一份）：hash01(seed, i, k) 计数器式随机访问，
 // 第 i 个粒子的第 k 个属性只取决于 (seed, i, k)，不取决于之前求值过多少个数——闭式粒子能 O(在场粒子数) 求值的前提。
 import { hash01 } from './rand.js';
+import { oscillate, flashDecay, eventTrack } from './events.js';   // film-core：振子闭式与闪光核全套件只有一份
 
 // ---------------------------------------------------------------------------
 // 弹道：常重力 g，可选线性阻力 k（v' = g - k v）。逐轴独立。
@@ -59,17 +60,9 @@ export function bounce(t, y0, v0, g, floor, e = 0.6) {
 // 阻尼振子，带初速度（motion.js 的 settle 是它的特例：x0=0,v0=0,target=1）。
 // x'' + c x' + k (x - target) = 0
 // ---------------------------------------------------------------------------
+// 闭式在 film-core events.js 的 oscillate()（全套件唯一一份；events.js springKick 也用它）。要速度用 oscillate(...).v。
 export function spring(t, x0, v0, target, k = 170, c = 26) {
-  if (t <= 0) return x0;
-  const w = Math.sqrt(k), z = c / (2 * w), A = x0 - target;
-  if (z < 1) {
-    const wd = w * Math.sqrt(1 - z * z);
-    return target + Math.exp(-z * w * t) * (A * Math.cos(wd * t) + ((v0 + z * w * A) / wd) * Math.sin(wd * t));
-  }
-  if (z === 1) return target + Math.exp(-w * t) * (A + (v0 + w * A) * t);
-  const r = w * Math.sqrt(z * z - 1), s1 = -z * w + r, s2 = -z * w - r;
-  const C2 = (v0 - s1 * A) / (s2 - s1), C1 = A - C2;
-  return target + C1 * Math.exp(s1 * t) + C2 * Math.exp(s2 * t);
+  return t <= 0 ? x0 : oscillate(t, x0, v0, target, k, c).x;
 }
 
 // 单摆（小角度线性化 + 阻尼）。大角度没有初等闭式解，> ~30° 时周期误差 > 2%。
@@ -154,19 +147,58 @@ export function hitShake(t, hits, { amp = 20, decay = 12, freq = 30, rotAmp = 0,
   return { x, y, rot };
 }
 
-// 顿帧（hitstop）：命中后 dur 秒内"世界时间"冻结。返回重映射后的本地时间。
-// 用法：const tw = hitstop(t, hits, 0.06); 然后所有物理都用 tw 求值。
-// 注意 hits 是在"未冻结的时间"里给出的；若 hits 本身由物理推出，要用迭代或预先算好。
+// 顿帧（hitstop）：命中后 dur 秒内"世界时间"冻结。返回重映射后的世界时间 tw = t − |(-∞, t] ∩ ⋃[h, h+dur]|。
+// 用法：const tw = hitstop(t, hits, 0.06); 然后所有物理都用 tw 求值；闪白、屏震这类"反馈"通道读影片时间 t（冻结期间照样在动）。
+// 几次冻结重叠时取并集（同一段时间只冻一次），所以 tw 单调不减；以前逐个相减，t=1.03→1.05 会从 1.000 倒退到 0.980。
+// 互不重叠时与以前逐位相同。dur 缺省 0.06 s 是游戏里常见的量级（约 2 帧@30fps），代价：越长打击越"重"、越拖节奏，按本片定。
+// 注意 hits 是在"未冻结的时间"（影片时间）里给出的；若 hits 本身由物理推出，要用迭代或预先算好。
+// 每帧 O(n log n)；事件多时用 hitstopOf(track, {dur}) 预计算，O(log n)。
 export function hitstop(t, hits, dur = 0.06) {
-  let lost = 0;
-  for (const h of hits) lost += Math.min(Math.max(t - h, 0), dur);
-  return t - lost;
+  const hs = Array.from(hits, (h) => (typeof h === 'number' ? h : h.t)).sort((a, b) => a - b);
+  let overlap = false;
+  for (let i = 1; i < hs.length; i++) if (hs[i] - hs[i - 1] < dur) { overlap = true; break; }
+  if (!overlap) { // 不重叠：保持原来的求和顺序（逐位不变）
+    let lost = 0;
+    for (const h of hits) lost += Math.min(Math.max(t - (typeof h === 'number' ? h : h.t), 0), dur);
+    return t - lost;
+  }
+  return hitstopOf(hs, { dur })(t);
 }
 
-// 命中闪白：0..1，命中瞬间 1，按 dur 衰减
+/**
+ * hitstopOf(hits, { dur }) → tw(t)：加载期把冻结区间 [h, h+dur] 并成互不相交的并集，求值二分 O(log n)。
+ * hits：秒数数组、[{t}] 或 events.js 的事件表；dur 秒或 (e) → 秒（每次命中冻结多久可以不同）。
+ * tw(t) 单调不减（冻结段内平，段外斜率 1）；tw.intervals 是并集 [[开始, 结束], …]，tw.inv(tw) → 第一个映射到它的影片时刻。
+ */
+export function hitstopOf(hits, { dur } = {}) {
+  if (dur == null) throw new Error('hitstopOf(hits, { dur })：dur（秒，或 (e) → 秒）必填。游戏里常见 0.03–0.1 s；越长越重、越拖节奏');
+  const list = Array.isArray(hits) && hits.every((h) => typeof h === 'number') ? hits.map((t) => ({ t })) : eventTrack(hits).events;
+  const D = typeof dur === 'function' ? dur : () => dur;
+  const iv = list.map((e) => { const d = D(e); if (!(d >= 0)) throw new Error(`hitstopOf: dur 必须 ≥ 0（得到 ${d}）`); return [e.t, e.t + d]; })
+    .sort((a, b) => a[0] - b[0]);
+  const U = [];
+  for (const [a, b] of iv) { const L = U[U.length - 1]; if (L && a <= L[1]) { if (b > L[1]) L[1] = b; } else U.push([a, b]); }
+  const starts = Float64Array.from(U, (u) => u[0]), before = new Float64Array(U.length);
+  for (let i = 1; i < U.length; i++) before[i] = before[i - 1] + (U[i - 1][1] - U[i - 1][0]);
+  const find = (t) => { let lo = 0, hi = U.length; while (lo < hi) { const m = (lo + hi) >> 1; if (starts[m] <= t) lo = m + 1; else hi = m; } return lo - 1; };
+  const tw = (t) => { const k = find(t); return k < 0 ? t : t - (before[k] + Math.min(t - U[k][0], U[k][1] - U[k][0])); };
+  tw.intervals = U.map((u) => u.slice());
+  tw.inv = (w) => { // 第一个 tw(t) = w 的 t：每段开始处的世界时间是 starts[k] − before[k]
+    let lo = 0, hi = U.length; while (lo < hi) { const m = (lo + hi) >> 1; if (starts[m] - before[m] <= w) lo = m + 1; else hi = m; }
+    const k = lo - 1; if (k < 0) return w;
+    const w0 = starts[k] - before[k];
+    return w === w0 ? starts[k] : w + before[k] + (U[k][1] - U[k][0]);
+  };
+  return tw;
+}
+
+// 命中闪白：0..1，命中瞬间 1，按 dur 线性衰减，多次命中取最大。就是 events.js flashDecay(dur) 对每次命中取 max（委托给它）。
+// dur 缺省 0.12 s：代价是越长越"糊"、连击时闪成一片；按本片定。
 export function flash(t, hits, dur = 0.12) {
+  if (!(dur > 0)) return 0;   // 以前 dur ≤ 0 恒为 0；flashDecay 会对它报错
+  const k = flashDecay(dur);
   let v = 0;
-  for (const h of hits) { const s = t - h; if (s >= 0 && s < dur) v = Math.max(v, 1 - s / dur); }
+  for (const h of hits) { const x = k(t - h); if (x > v) v = x; }
   return v;
 }
 

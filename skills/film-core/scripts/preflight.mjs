@@ -28,7 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { FILM_OPTS, parseArgs, resolveFilm, fail, checkParam } from '../lib/film.mjs';
 import { hasCapability } from '../lib/env.mjs';
 import { serve } from '../lib/serve.mjs';
-import { launchBrowser, FORMATS, filmBackend } from '../lib/browser.mjs';
+import { launchBrowser, FORMATS, filmBackend, filmGlobals, filmGlobalsScript } from '../lib/browser.mjs';
 import { importRuntime } from '../lib/runtime-node.mjs';
 
 const A = parseArgs({
@@ -336,6 +336,7 @@ async function inBrowser(fmt, origin, browser) {
   const slots = slotsFor(fmt);        // 这个画幅合并出的 content.json 槽位
   const { width, height } = FORMATS[fmt];
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
+  await context.addInitScript({ content: filmGlobalsScript(filmGlobals(F, fmt)) });   // window.FILM，与 openScene 同一份
   const errors = [], external = new Set(), http = new Set();
   await context.route('**/*', (route) => {
     const u = route.request().url();

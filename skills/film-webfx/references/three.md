@@ -147,6 +147,7 @@ S.scene.add(rain.points);  // paint 里：rain.update(t, { 这一帧要变的 un
 
 - **闭式解**：粒子 i 在 t 时刻的状态 = f(i, 它的 8 个种子随机数, t)。种子在加载期由 mulberry32 生成（与 film-core `rand.js` 的 `seeded()` 是同一个算法）。
 - `PARTICLE_GLSL` 提供：`hash12/hash13/vnoise/vnoise3/fbm`（来自 webfx.js）、`lifecycle(t, life, phase)`（返回第几次生命以及本次生命内的 age）、`rebirth(id, k)`（第 k 次重生时的随机数）、`drift(p, s)`（平滑的位移场）。寿命循环的粒子在 t 时刻的状态只依赖 `(i, floor(t/life + phase))`。
+- **和 `spritefx3d.js` 的分工**：这里是点精灵 + 片子自写的闭式运动，适合大量同质粒子；事件触发、按速度拉长、受光烟图集、深度软交界走 spritefx3d（`world-surfaces.md` §4）。
 - **位移场不是平流**：`p = 出生点 + v·age + drift(出生点, age)·幅度`，粒子并不是被速度场带着走的。如果确实要沿 curl 场积分，要用 film-physics 的「从 0 重放」或检查点方案，再交给 `createCPUParticles` 绘制。
 - `createCPUParticles(S, { count, seed, fn(i, rnd, t, out) })`：每帧在 JS 里算出全部粒子并整块上传；`update(t)` 返回位置数组（锚点或碰撞需要用到位置时使用）。
 - sprite 可以用 `SPRITE.disc / soft / square / atlas(cols)`，也可以自己写 `vec4 sprite(vec4 col, float aux)`；`blending` 必须填写。不提供默认的形状和混合方式。

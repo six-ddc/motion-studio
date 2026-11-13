@@ -8,7 +8,7 @@ import { traumaShake, shakeTermsFromSeed, springDip, recoil } from './runtime/fe
 
 export function mount({ bad = false } = {}) {
   const L = makeLayout('9x16');
-  const W = L.width, H = L.height, FPS = 30, D = 6;
+  const W = L.width, H = L.height, D = 6;   // 帧率不写死：snapToFrames / holdFrames 读内核注入的 window.FILM.fps（render --fps 覆盖也跟着变）
   const canvas = document.getElementById('stage');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d', { alpha: false });
@@ -18,22 +18,24 @@ export function mount({ bad = false } = {}) {
   const raw = [];
   for (let i = 0; i < 8; i++) raw.push({ t: 0.6 + i * 0.11 + 0.02 * hash01(4, i, 0), type: 'hit', x: 250 + 500 * hash01(4, i, 1), power: 0.4 + 0.4 * hash01(4, i, 2) });
   for (let i = 8; i < 14; i++) raw.push({ t: 2.2 + (i - 8) * 0.55 + 0.1 * hash01(4, i, 0), type: 'hit', x: 250 + 500 * hash01(4, i, 1), power: 0.5 + 0.5 * hash01(4, i, 2) });
-  const hits = snapToFrames(eventTrack(raw), FPS, { minFrames: 2 });            // 闪光峰值落在帧上
+  const hits = snapToFrames(eventTrack(raw));                                     // 闪光峰值落在这次渲染的帧上
   const flashes = throttle(hits, { on: 'hit', minGap: 0.09 });                    // 闪白至少隔 0.09 s
-  const flash = channel(flashes, { name: 'flash', response: holdFrames(flashDecay(0.05), { fps: FPS, minFrames: 2 }), combine: 'max' });
+  const flash = channel(flashes, { name: 'flash', response: holdFrames(flashDecay(0.05), { minFrames: 2 }), combine: 'max' });
   const T = traumaOf(hits, { on: 'hit', add: (e) => 0.18 * e.power + 0.1, decay: 1.2, max: 1 });
-  const terms = shakeTermsFromSeed(21, { band: [4, 13], second: 0.6 });
+  const terms = shakeTermsFromSeed(21, { band: [4, 13], second: 0.6, avoid: { ratios: [1, 2], tol: 0.1 } });
   const dip = springDip(hits, { on: 'hit', impulse: (e) => 900 * e.power, k: 150, c: 11, min: -60, max: 25 });
   const tilt = recoil(hits, { on: 'hit', amount: (e) => 0.03 * (e.x < 500 ? -1 : 1) * e.power, keep: 0.25, rise: 0.03, hold: 0.09, fall: 0.25 });
   const sparks = channel(hits, { name: 'sparks', on: 'hit', response: () => 1, support: 0.9 });
   window.events = () => toSceneEvents(hits, { v: (e) => e.power });
+  // 给 tests/browser.mjs 的读数（不是页面契约）：闪白事件时刻、对齐帧率、闪白强度
+  window.__eventsFixture = { flashTimes: Array.from(flashes.times), fps: hits.fps, flash: (t) => flash(t) };
 
   let accT = 0, lastT = 0; // 只给阴性对照用：跨帧累加的创伤值
   window.DURATION = D;
   window.seek = (t) => {
     let tr = T(t);
     if (bad) { accT = Math.min(1, accT + Math.max(0, t - lastT) * 0.1); lastT = t; tr = accT; }
-    const sh = traumaShake(t, tr, { amp: { pitch: 40, yaw: 40, roll: 0.05 }, terms });
+    const sh = traumaShake(t, tr, { amp: { pitch: 40, yaw: 40, roll: 0.05 }, terms, power: 2 });
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#14171c'; ctx.fillRect(0, 0, W, H);
     ctx.setTransform(U, 0, 0, U, 0, 0);

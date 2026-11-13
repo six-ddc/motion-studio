@@ -31,6 +31,7 @@ assert lookup['crack']['peakMs'] < 15
 assert lookup['sub']['low200Pct'] > 90
 assert lookup['shimmer']['high2500Pct'] > 80
 assert all(r['nan'] == 0 and r['peak'] <= .901 for r in rows)
+assert all(abs(r['dc']) < 1e-3 for r in rows), [(r['name'], r['dc']) for r in rows if abs(r['dc']) >= 1e-3]  # 配方输出过 20 Hz 去直流高通
 print(json.dumps(rows,ensure_ascii=False,indent=1))
 (out.parent / 'measure.json').write_text(json.dumps(rows,ensure_ascii=False,indent=1)+'\n')
 print('sfx 客观特征全部通过：17 种配方/材质')

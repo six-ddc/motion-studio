@@ -30,21 +30,20 @@
 //   bloom: { mode:'mix', karis, clamp? }   能量守恒泛光：无阈值、逐级 mix 上采样、最终 mix(col, bloom, strength)
 //   ao: { samples, resolution }            屏幕空间 AO（深度重建法线、螺旋采样、深度感知模糊、联合双边上采样、只压环境光区域）
 //   volume: { steps, light, resolution, horizonGLSL?, horizonUniforms? }   步进体积雾（太阳阴影图、高度介质、双瓣 HG、解析远景）
-//   dirt / streak / flare                  镜头脏污（加载期按种子生成）/ 变形镜头拉丝 / 太阳眩光与幽灵（可见度取当帧深度）
+//   dirt / streak / flare                  镜头脏污（加载期按种子生成）/ 变形镜头拉丝（自带阈值）/ 太阳眩光与幽灵（可见度取当帧深度，出画淡出）
 //   tonemap: { curves:[a, b?] } + grade    显示链：曝光 → 两条曲线按比例混合 → 显示线性域调色 → 分段 sRGB 编码
 //   finish: { fxaa, sharpen, grain, dither }  编码之后一遍：FXAA（luma 存 alpha）、反锐化、三角颗粒、去色带抖动
-//   post.measure() / exposureTrack()       离线测光表 → exposure(t)（流程见 post-chain.md）
+//   foreground: { depth }                  pinForeground 的前景层不吃 AO / 体积雾、景深恒在焦内
+//   post.measure({center, clamp}) / exposureTrack()   离线测光表 → exposure(t)（流程见 post-chain.md）
 
 import * as THREE from './three-film.module.js';
 import { seeded } from './rand.js';
+import { GLSL } from './webfx.js';
 
 const VERT = `varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
-// 与 webfx.js GLSL.hash 同一个 hash（Dave Hoskins，不依赖 sin 的实现精度）
-const HASH = `
-float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-float hash13(vec3 p3){ p3 = fract(p3 * .1031); p3 += dot(p3, p3.zyx + 31.32); return fract((p3.x + p3.y) * p3.z); }
-`;
+// hash12/hash13（Dave Hoskins）与 IGN 都取自 webfx.js 的共享 GLSL 库，全套件一份
+const HASH = GLSL.hash;
 const LUMA = `float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }`;
 const VIEWZ = `float viewDepth(float d, float n, float f){ return (n * f) / (f - d * (f - n)); }`;   // 深度缓冲 → 到相机平面的距离
 
@@ -61,8 +60,7 @@ function vec(p, effect, k, n) {
   return v;
 }
 
-// 交错梯度噪声（Jimenez 2014）：屏幕坐标的纯函数，逐帧不变——抖动步进起点、旋转采样圈
-const IGN = `float ign(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }`;
+const IGN = GLSL.ign;
 
 // 显示链的色调映射曲线（输入：曝光后的线性 sRGB；输出：显示线性 0–1）
 const TONEMAP = {
@@ -96,6 +94,68 @@ vec3 tmAgx(vec3 color){
   float g = 1. - 1. / (0.15 * (pk - np) + 1.); return clamp(mix(c, vec3(np), g), 0., 1.); }`,
 };
 const TM_FN = { aces: 'tmAces', agx: 'tmAgx', neutral: 'tmNeutral' };
+
+// ---- 两条合成链（旧 comp 与显示链）共用的逐像素片段：同一段源码拼进两个着色器 ----
+// 场景取色时的景深混合（c、uv 已声明）。FG_DEPTH：前景层像素（深度 < FG_DEPTH）恒在焦内
+const SN_DOF = `
+#ifdef FX_DOF
+  float z = viewDepth(texture2D(tDepth, uv).x, camNear, camFar);
+  float cc = min(dofMax, dofBlur * abs(1. - dofFocus / max(z, 1e-4)));
+  #ifdef FG_DEPTH
+  if (texture2D(tDepth, uv).x < FG_DEPTH) cc = 0.;
+  #endif
+  c.rgb = mix(c.rgb, texture2D(tDof, uv).rgb, smoothstep(.5, 1.5, cc));
+#endif`;
+// 故障：横向切片按 (切片号, 时间桶) 取哈希，被选中的切片整体错位、通道再拉开（uv、split 已声明）
+const SN_GLITCH = `
+#ifdef FX_GLITCH
+  float row = floor(uv.y * glSlices);
+  float h = hash12(vec2(row, glBucket) + uSeed);
+  float on = step(1. - glAmount, h);
+  uv.x += on * (hash12(vec2(row * 1.7, glBucket + 3.1) + uSeed) - .5) * 2. * glShift;
+  split = on * vec2(glSplit, 0.);
+#endif`;
+// 色差 / 故障分色：只有开了其中之一才多取两次色（c 已声明，fn 是取色函数名）
+const SN_CHROMA = (fn) => `
+#ifdef FX_CHROMA
+  vec2 dir = (uv - .5) * chromaAmount / res.y + split;
+  c = ${fn}(uv);
+  c.r = ${fn}(uv + dir).r; c.b = ${fn}(uv - dir).b;
+#else
+  c = ${fn}(uv);
+  #ifdef FX_GLITCH
+    c.r = ${fn}(uv + split).r; c.b = ${fn}(uv - split).b;
+  #endif
+#endif`;
+// 编码之后：暗角、扫描线、按帧号播种的均匀颗粒（作用在 vec3 o 上）
+const SN_FINISH = `
+#ifdef FX_VIGNETTE
+  vec2 q = (vUv - .5) * vec2(res.x / res.y, 1.) * 2.;
+  o *= mix(1., smoothstep(vigRadius + vigSoft, vigRadius - vigSoft, length(q) / length(vec2(res.x / res.y, 1.))), vigAmount);
+#endif
+#ifdef FX_SCANLINES
+  o *= 1. - scanAmount * (.5 + .5 * cos(6.28318530718 * (vUv.y * scanCount + scanPhase)));
+#endif
+#ifdef FX_GRAIN
+  vec2 cell = floor(gl_FragCoord.xy / grainSize);
+  o += (hash13(vec3(cell, grainFrame) + uSeed) - .5) * grainAmount;
+#endif`;
+const SN_UNIFORMS = `
+uniform sampler2D tScene, tBloom, tDof, tRays, tDepth;
+uniform vec2 res; uniform float uTime, uSeed;
+uniform float bloomStrength, raysExposure;
+uniform float dofFocus, dofBlur, dofMax, camNear, camFar;
+uniform float chromaAmount;
+uniform float grainAmount, grainFrame, grainSize;
+uniform float vigAmount, vigRadius, vigSoft;
+uniform float scanCount, scanAmount, scanPhase;
+uniform float glAmount, glBucket, glSlices, glShift, glSplit;`;
+// 半精度缓冲的最大有限值。场景里超出它的像素在 HalfFloat 里变成 Inf（SwiftShader 下直接是 NaN），
+// 下游一模糊就扩散成一片、乘 0 也还是 NaN。读进模糊/合成的入口统一过 fxSafe：Inf → 65504，NaN → 0；有限值原样不动
+const HALF_MAX = '65504.';
+const SAFE = `
+vec3 fxSafe(vec3 c){ return mix(min(c, vec3(${HALF_MAX})), vec3(0.), isnan(c)); }
+vec4 fxSafe(vec4 c){ return mix(min(c, vec4(${HALF_MAX})), vec4(0.), isnan(c)); }`;
 
 /**
  * 离线测光表 → exposure(t)。纯函数：表在加载期读进来，平滑在这里一次算完，求值只是查表插值。
@@ -148,7 +208,7 @@ export function createPost(S, cfg = {}) {
     // 以下是显式开启的扩展（references/post-chain.md）；都不开时上面那条链逐像素不变
     ao: want('ao'), volume: want('volume'), dirt: want('dirt'), streak: want('streak'), flare: want('flare'),
     tonemap: want('tonemap'), grade: want('grade'), finish: want('finish') };
-  for (const k of Object.keys(cfg)) if (!['samples', 'hdr', 'output', 'seed', ...Object.keys(E)].includes(k)) throw new Error(`post3d: 不认识的效果 ${k}`);
+  for (const k of Object.keys(cfg)) if (!['samples', 'hdr', 'output', 'seed', 'foreground', ...Object.keys(E)].includes(k)) throw new Error(`post3d: 不认识的效果 ${k}`);
   for (const k of ['ao', 'volume', 'bloom', 'dof', 'godrays']) {
     const r = opt(k).resolution;
     if (E[k] && r != null && !(Number.isFinite(r) && r > 0 && r <= 1)) throw new Error(`post3d: ${k}.resolution 要在 (0,1]`);
@@ -162,6 +222,11 @@ export function createPost(S, cfg = {}) {
   if ((E.grade || E.finish) && !E.tonemap) throw new Error('post3d: grade / finish 属于显示链，要同时开 tonemap: { curves: [...] }');
   if (E.finish && E.grain) throw new Error('post3d: 开了 finish 就用 finish.grain（编码之后、FXAA 之后加颗粒）；旧的 grain 会被 FXAA 抹掉');
   if ((E.dirt || E.streak) && !E.bloom) throw new Error('post3d: dirt / streak 要从泛光链取光（dirt = 泛光 × 脏污，streak 取泛光的低级 mip），先开 bloom');
+  // 前景层（sky3d 的 pinForeground 把它的深度压进 [0, range]）：深度 < range 的像素不吃 AO / 体积雾、景深恒在焦内
+  const fg = cfg.foreground ?? null;
+  if (fg !== null && !(fg && Number.isFinite(fg.depth) && fg.depth > 0 && fg.depth < 1)) throw new Error('post3d: foreground 要是 { depth }，与 pinForeground 的 range 相同（0–1）');
+  if (fg && !(E.dof || E.ao || E.volume)) throw new Error('post3d: foreground 只影响 AO / 体积雾 / 景深，三者都没开时不要传');
+  const fgDef = fg ? `#define FG_DEPTH ${fg.depth.toFixed(6)}\n` : '';
   const curves = E.tonemap ? opt('tonemap').curves : null;
   if (E.tonemap && (!Array.isArray(curves) || curves.length < 1 || curves.length > 2 || curves.some((c) => !TM_FN[c])))
     throw new Error(`post3d: tonemap.curves 要是 1–2 条曲线（${Object.keys(TM_FN).join(' / ')}），两条时每帧传 tonemap.mix`);
@@ -381,9 +446,9 @@ void main(){
   }
 
   // HDR 合成：联合双边上采样（双线性权重 × 1/(0.015 + |Δz|/z)）→ AO 只压"环境光区域" → col·T + 散射
-  const litM = rtLit ? mat(`${E.ao ? '#define AO\n' : ''}${E.volume ? '#define VOL\n' : ''}varying vec2 vUv;
+  const litM = rtLit ? mat(`${fgDef}${E.ao ? '#define AO\n' : ''}${E.volume ? '#define VOL\n' : ''}varying vec2 vUv;
 uniform sampler2D tColor, tDepth, tAO, tZA, tVol, tZV; uniform vec2 resA, resV; uniform float near, far, exposure;
-uniform float aoStrength; uniform vec3 aoLit, aoTint; ${VIEWZ} ${LUMA}
+uniform float aoStrength; uniform vec3 aoLit, aoTint; ${VIEWZ} ${LUMA} ${SAFE}
 vec4 upsample(sampler2D tex, sampler2D tz, vec2 hres, float zc){
   vec2 hp = vUv * hres - .5, f = fract(hp), base = (floor(hp) + .5) / hres, tx = 1. / hres;
   vec4 acc = vec4(0.); float ws = 0.;
@@ -401,6 +466,9 @@ void main(){
   vec3 col = max(s.rgb, vec3(0.));
   float d = texture2D(tDepth, vUv).r;
   float zc = viewDepth(d, near, far);
+#ifdef FG_DEPTH
+  if (d < FG_DEPTH) { gl_FragColor = vec4(fxSafe(col), s.a); return; }
+#endif
 #ifdef AO
   if (d < 0.99999) {
     float occ = upsample(tAO, tZA, resA, zc).r;
@@ -413,7 +481,7 @@ void main(){
   vec4 v = upsample(tVol, tZV, resV, zc);
   col = col * v.a + v.rgb;
 #endif
-  gl_FragColor = vec4(col, s.a);
+  gl_FragColor = vec4(fxSafe(col), s.a);
 }`, { tColor: { value: rtScene.texture }, tDepth: { value: depthTex }, tAO: { value: null }, tZA: { value: null }, tVol: { value: null }, tZV: { value: null },
     resA: { value: new THREE.Vector2(1, 1) }, resV: { value: new THREE.Vector2(1, 1) }, near: { value: 0.1 }, far: { value: 100 }, exposure: { value: 1 },
     aoStrength: { value: 0 }, aoLit: { value: new THREE.Vector3() }, aoTint: { value: new THREE.Vector3() } }) : null;
@@ -430,7 +498,8 @@ void main(){
     for (let i = 0; i < L; i++) down.push(mkRT((W * res) / 2 ** i, (H * res) / 2 ** i));
     for (let i = 0; i < L - 1; i++) up.push(mkRT((W * res) / 2 ** i, (H * res) / 2 ** i));
     const pre = bloomMix ? mat(`varying vec2 vUv; uniform sampler2D tIn; uniform vec2 texel; uniform float karis, cap; ${LUMA}
-vec3 tap(vec2 o){ return min(max(texture2D(tIn, vUv + texel * o).rgb, vec3(0.)), vec3(cap)); }
+${SAFE}
+vec3 tap(vec2 o){ return min(max(fxSafe(texture2D(tIn, vUv + texel * o).rgb), vec3(0.)), vec3(cap)); }
 vec4 box(vec3 a, vec3 b, vec3 c, vec3 d){
   vec4 w = 1. / (1. + karis * vec4(luma(a), luma(b), luma(c), luma(d)));
   return vec4((a*w.x+b*w.y+c*w.z+d*w.w)/dot(w,vec4(1.)),1.);
@@ -442,11 +511,11 @@ void main(){
   vec3 j=tap(vec2(-1,1)), k=tap(vec2(1,1)), l=tap(vec2(-1,-1)), m=tap(vec2(1,-1));
   vec3 o=box(j,k,l,m).rgb*.5+(box(a,b,d,e).rgb+box(b,c,e,f).rgb+box(d,e,g,h).rgb+box(e,f,h,i).rgb)*.125;
   gl_FragColor=vec4(o,1.);
-}`, { tIn:{value:null}, texel:{value:new THREE.Vector2()}, karis:{value:opt('bloom').karis}, cap:{value:opt('bloom').clamp ?? 65504} }) : mat(`varying vec2 vUv; uniform sampler2D tIn; uniform vec2 texel; uniform float threshold, knee; ${LUMA}
+}`, { tIn:{value:null}, texel:{value:new THREE.Vector2()}, karis:{value:opt('bloom').karis}, cap:{value:opt('bloom').clamp ?? 65504} }) : mat(`varying vec2 vUv; uniform sampler2D tIn; uniform vec2 texel; uniform float threshold, knee; ${LUMA} ${SAFE}
 void main(){
-  // 4 个双线性 tap = 源的 4×4 盒子；阈值用软膝（knee）避免亮部边缘闪
-  vec3 c = .25 * (texture2D(tIn, vUv + texel * vec2(-1,-1)).rgb + texture2D(tIn, vUv + texel * vec2(1,-1)).rgb
-                + texture2D(tIn, vUv + texel * vec2(-1, 1)).rgb + texture2D(tIn, vUv + texel * vec2(1, 1)).rgb);
+  // 4 个双线性 tap = 源的 4×4 盒子；阈值用软膝（knee）避免亮部边缘闪。读入钳到半精度上限：一个 Inf 像素不会把整片光晕变成 NaN
+  vec3 c = .25 * (fxSafe(texture2D(tIn, vUv + texel * vec2(-1,-1)).rgb) + fxSafe(texture2D(tIn, vUv + texel * vec2(1,-1)).rgb)
+                + fxSafe(texture2D(tIn, vUv + texel * vec2(-1, 1)).rgb) + fxSafe(texture2D(tIn, vUv + texel * vec2(1, 1)).rgb));
   float l = luma(c);
   float s = clamp(l - threshold + knee, 0., 2. * knee); s = s * s / (4. * knee + 1e-5);
   float w = max(s, l - threshold) / max(l, 1e-5);
@@ -500,19 +569,19 @@ void main(){
     // Gustafsson 2018 "Bokeh depth of field in a single pass"：沿黄金角螺旋采样，半径随采样增长（步长 step/r），
     // 每个采样按它自己的 CoC 是否覆盖到中心来决定贡献——近处的大模糊能盖到焦内物体上，焦内物体不会糊到背景里。
     const m = mat(`varying vec2 vUv; uniform sampler2D tColor, tDepth; uniform vec2 px; uniform float focus, blur, maxBlur, near, far, step, cocScale;
-${VIEWZ}
+${VIEWZ} ${SAFE}
 // CoC 换算到本 RT 的像素（cocScale = 分辨率倍率）：采样数 ≈ (maxBlur·res)² / (2·step)，降分辨率直接省平方
 float coc(vec2 uv){ float z = viewDepth(texture2D(tDepth, uv).x, near, far); return cocScale * min(maxBlur, blur * abs(1. - focus / max(z, 1e-4))); }
 void main(){
   float cz = viewDepth(texture2D(tDepth, vUv).x, near, far);
   float cc = coc(vUv);
-  vec3 col = texture2D(tColor, vUv).rgb; float tot = 1.;
+  vec3 col = fxSafe(texture2D(tColor, vUv).rgb); float tot = 1.;
   float r = step;
   float mb = maxBlur * cocScale;
   for (float ang = 0.; ang < 4000.; ang += 2.39996323) {
     if (r >= mb) break;
     vec2 uv = vUv + vec2(cos(ang), sin(ang)) * px * r;
-    vec3 sc = texture2D(tColor, uv).rgb;
+    vec3 sc = fxSafe(texture2D(tColor, uv).rgb);
     float sz = viewDepth(texture2D(tDepth, uv).x, near, far);
     float scc = cocScale * min(maxBlur, blur * abs(1. - focus / max(sz, 1e-4)));
     if (sz > cz) scc = clamp(scc, 0., cc * 2.);
@@ -542,8 +611,8 @@ void main(){
   if (E.godrays) {
     const o = opt('godrays'), N = o.samples ?? 48, res = o.resolution ?? 0.25;
     const rtA = mkRT(W * res, H * res), rtB = mkRT(W * res, H * res);
-    const pre = mat(`varying vec2 vUv; uniform sampler2D tIn; uniform float threshold; ${LUMA}
-void main(){ vec3 c = texture2D(tIn, vUv).rgb; gl_FragColor = vec4(c * step(threshold, luma(c)), 1.); }`,
+    const pre = mat(`varying vec2 vUv; uniform sampler2D tIn; uniform float threshold; ${LUMA} ${SAFE}
+void main(){ vec3 c = fxSafe(texture2D(tIn, vUv).rgb); gl_FragColor = vec4(c * step(threshold, luma(c)), 1.); }`,
     { tIn: { value: null }, threshold: { value: 1 } });
     // GPU Gems 3 ch.13：从像素向光源屏幕位置走 N 步，逐步衰减累加
     const m = mat(`varying vec2 vUv; uniform sampler2D tIn; uniform vec2 light; uniform float density, decay, weight, aspect;
@@ -574,25 +643,11 @@ void main(){
   }
 
   // ---------- 合成一遍 ----------
-  const defs = Object.entries(E).filter(([, v]) => v).map(([k]) => `#define FX_${k.toUpperCase()}\n`).join('');
-  const comp = mat(defs + `varying vec2 vUv;
-uniform sampler2D tScene, tBloom, tDof, tRays, tDepth;
-uniform vec2 res; uniform float uTime, uSeed;
-uniform float bloomStrength, raysExposure;
-uniform float dofFocus, dofBlur, dofMax, camNear, camFar;
-uniform float chromaAmount;
-uniform float grainAmount, grainFrame, grainSize;
-uniform float vigAmount, vigRadius, vigSoft;
-uniform float scanCount, scanAmount, scanPhase;
-uniform float glAmount, glBucket, glSlices, glShift, glSplit;
-${HASH} ${VIEWZ}
+  const defs = Object.entries(E).filter(([, v]) => v).map(([k]) => `#define FX_${k.toUpperCase()}\n`).join('') + fgDef;
+  const comp = mat(defs + `varying vec2 vUv;${SN_UNIFORMS}
+${HASH} ${VIEWZ} ${SAFE}
 vec4 colorAt(vec2 uv){
-  vec4 c = texture2D(tScene, uv);
-#ifdef FX_DOF
-  float z = viewDepth(texture2D(tDepth, uv).x, camNear, camFar);
-  float cc = min(dofMax, dofBlur * abs(1. - dofFocus / max(z, 1e-4)));
-  c.rgb = mix(c.rgb, texture2D(tDof, uv).rgb, smoothstep(.5, 1.5, cc));
-#endif
+  vec4 c = fxSafe(texture2D(tScene, uv));${SN_DOF}
 #ifdef FX_BLOOM
   ${bloomMix ? 'c.rgb = mix(c.rgb, texture2D(tBloom, uv).rgb, clamp(bloomStrength, 0., 1.));' : 'c.rgb += texture2D(tBloom, uv).rgb * bloomStrength;'}
 #endif
@@ -603,26 +658,8 @@ vec4 colorAt(vec2 uv){
 }
 void main(){
   vec2 uv = vUv;
-  vec2 split = vec2(0.);
-#ifdef FX_GLITCH
-  // 横向切片按 (切片号, 时间桶) 取哈希：被选中的切片整体错位、通道再拉开。时间桶 = floor(t·rate)，任意 t 直接求值
-  float row = floor(uv.y * glSlices);
-  float h = hash12(vec2(row, glBucket) + uSeed);
-  float on = step(1. - glAmount, h);
-  uv.x += on * (hash12(vec2(row * 1.7, glBucket + 3.1) + uSeed) - .5) * 2. * glShift;
-  split = on * vec2(glSplit, 0.);
-#endif
-  vec4 c;
-#ifdef FX_CHROMA
-  vec2 dir = (uv - .5) * chromaAmount / res.y + split;
-  c = colorAt(uv);
-  c.r = colorAt(uv + dir).r; c.b = colorAt(uv - dir).b;
-#else
-  c = colorAt(uv);
-  #ifdef FX_GLITCH
-    c.r = colorAt(uv + split).r; c.b = colorAt(uv - split).b;
-  #endif
-#endif
+  vec2 split = vec2(0.);${SN_GLITCH}
+  vec4 c;${SN_CHROMA('colorAt')}
   float a = c.a;
 #ifdef FX_BLOOM
   a = max(a, clamp(dot(texture2D(tBloom, uv).rgb * bloomStrength, vec3(.333)), 0., 1.));
@@ -630,19 +667,7 @@ void main(){
   gl_FragColor = vec4(c.rgb, 1.);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
-  vec3 o = gl_FragColor.rgb;
-#ifdef FX_VIGNETTE
-  vec2 q = (vUv - .5) * vec2(res.x / res.y, 1.) * 2.;
-  o *= mix(1., smoothstep(vigRadius + vigSoft, vigRadius - vigSoft, length(q) / length(vec2(res.x / res.y, 1.))), vigAmount);
-#endif
-#ifdef FX_SCANLINES
-  o *= 1. - scanAmount * (.5 + .5 * cos(6.28318530718 * (vUv.y * scanCount + scanPhase)));
-#endif
-#ifdef FX_GRAIN
-  // 颗粒按帧号播种：同一个 t → 同一帧颗粒；运动模糊的子帧落在同一帧里，颗粒相同
-  vec2 cell = floor(gl_FragCoord.xy / grainSize);
-  o += (hash13(vec3(cell, grainFrame) + uSeed) - .5) * grainAmount;
-#endif
+  vec3 o = gl_FragColor.rgb;${SN_FINISH}
   gl_FragColor = vec4(o * a, a);
 }`, {
     tScene: { value: src.texture }, tBloom: { value: null }, tDof: { value: null }, tRays: { value: null }, tDepth: { value: depthTex },
@@ -677,39 +702,29 @@ void main(){
   for(const k of Object.keys(F))if(!['fxaa','sharpen','grain','dither'].includes(k))throw new Error(`post3d: finish 不认识 ${k}`);
   const rtDisplay=E.finish?mkRT(W,H,{type:THREE.UnsignedByteType}):null;
   const display=E.tonemap?mat(`${defs}${bloomMix?'#define BLOOM_MIX\n':''}
-varying vec2 vUv;
-uniform sampler2D tScene,tBloom,tDof,tRays,tDepth,tDirt,tStreak;
-uniform vec2 res, flareUV; uniform float exposure,tmMix,bloomStrength,raysExposure,chromaAmount;
-uniform float dofFocus,dofBlur,dofMax,camNear,camFar;
+varying vec2 vUv;${SN_UNIFORMS}
+uniform sampler2D tDirt,tStreak;
+uniform vec2 flareUV; uniform float exposure,tmMix;
 uniform vec3 gradeShadow,gradeHighlight,gradeLift; uniform vec4 gradeShape;
-uniform float dirtAmount,streakAmount,streakRadius; uniform vec3 dirtColor,streakColor;
+uniform float dirtAmount,streakAmount,streakRadius,streakThreshold,streakKnee; uniform vec3 dirtColor,streakColor;
 uniform vec3 flareColor; uniform vec4 flareShape,flareGhost; uniform float flareAmount,flareFacing;
-uniform float vigAmount,vigRadius,vigSoft,scanCount,scanAmount,scanPhase;
-uniform float uSeed,glAmount,glBucket,glSlices,glShift,glSplit,grainAmount,grainFrame,grainSize;
-${HASH} ${VIEWZ} ${LUMA}
+${HASH} ${VIEWZ} ${LUMA} ${SAFE}
 ${[...new Set(curves??[])].map(c=>TONEMAP[c]).join('\n')}
 vec3 srgb(vec3 c){c=max(c,vec3(0.));return mix(1.055*pow(c,vec3(1./2.4))-.055,12.92*c,lessThanEqual(c,vec3(.0031308)));}
 vec4 sceneAt(vec2 uv){
-  vec4 c=texture2D(tScene,uv);
-#ifdef FX_DOF
-  float z=viewDepth(texture2D(tDepth,uv).r,camNear,camFar);
-  float cc=min(dofMax,dofBlur*abs(1.-dofFocus/max(z,1e-4)));
-  c.rgb=mix(c.rgb,texture2D(tDof,uv).rgb,smoothstep(.5,1.5,cc));
-#endif
+  vec4 c=fxSafe(texture2D(tScene,uv));${SN_DOF}
   return c;
 }
+// 拉丝自己的亮部提取（软膝阈值，与 add 泛光的预滤波同一公式）：mix 泛光的各级 mip 不带阈值，直接取会把整幅画面横向抹开
+vec3 streakTap(vec2 uv){
+  vec3 c=texture2D(tStreak,uv).rgb;float l=luma(c);
+  float s=clamp(l-streakThreshold+streakKnee,0.,2.*streakKnee);s=s*s/(4.*streakKnee+1e-5);
+  return c*max(max(s,l-streakThreshold)/max(l,1e-5),0.);
+}
 void main(){
-  vec2 uv=vUv,split=vec2(0.);
-#ifdef FX_GLITCH
-  float row=floor(uv.y*glSlices);float on=step(1.-glAmount,hash12(vec2(row,glBucket)+uSeed));
-  uv.x+=on*(hash12(vec2(row*1.7,glBucket+3.1)+uSeed)-.5)*2.*glShift;split=on*vec2(glSplit,0.);
-#endif
-  vec4 c=sceneAt(uv);float a=c.a;
-#ifdef FX_CHROMA
-  vec2 dir=(uv-.5)*chromaAmount/res.y+split;c.r=sceneAt(uv+dir).r;c.b=sceneAt(uv-dir).b;
-#else
-  c.r=sceneAt(uv+split).r;c.b=sceneAt(uv-split).b;
-#endif
+  vec2 uv=vUv,split=vec2(0.);${SN_GLITCH}
+  vec4 c;${SN_CHROMA('sceneAt')}
+  float a=c.a;
 #ifdef FX_BLOOM
   vec3 b=texture2D(tBloom,uv).rgb;
   #ifdef BLOOM_MIX
@@ -729,16 +744,17 @@ void main(){
   vec3 st=vec3(0.);float sw=0.;
   for(int i=0;i<${Math.max(1,streakN)};i++){
     float q=(float(i)-float(${Math.max(1,streakN)}-1)*.5)/max(float(${Math.max(1,streakN)}-1)*.5,1.);
-    float w=exp(-q*q*4.5);st+=texture2D(tStreak,uv+vec2(q*streakRadius/res.x,0.)).rgb*w;sw+=w;
+    float w=exp(-q*q*4.5);st+=streakTap(uv+vec2(q*streakRadius/res.x,0.))*w;sw+=w;
   }
   c.rgb+=st/max(sw,1e-5)*streakColor*streakAmount;
 #endif
 #ifdef FX_FLARE
+  // 当帧深度可见度：太阳周围 3×3 采样；屏外的采样点看不到遮挡物，按可见计，整体再乘 flareFacing（含屏外淡出）
   float vis=0.;
   for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){
     vec2 q=flareUV+vec2(float(i),float(j))*flareGhost.z/res;
     float inside=step(0.,q.x)*step(q.x,1.)*step(0.,q.y)*step(q.y,1.);
-    vis+=inside*step(flareGhost.w,texture2D(tDepth,clamp(q,0.,1.)).r)/9.;
+    vis+=mix(1.,step(flareGhost.w,texture2D(tDepth,clamp(q,0.,1.)).r),inside)/9.;
   }
   vis*=flareFacing;
   vec2 aspect=vec2(res.x/res.y,1.);float r=length((uv-flareUV)*aspect);
@@ -761,21 +777,12 @@ void main(){
   o+=gradeLift*(1.-clamp(l,0.,1.));
   o=mix(vec3(luma(o)),o,gradeShape.w);
 #endif
-  o=srgb(clamp(o,0.,1.));
-#ifdef FX_VIGNETTE
-  vec2 q=(vUv-.5)*vec2(res.x/res.y,1.)*2.;o*=mix(1.,smoothstep(vigRadius+vigSoft,vigRadius-vigSoft,length(q)/length(vec2(res.x/res.y,1.))),vigAmount);
-#endif
-#ifdef FX_SCANLINES
-  o*=1.-scanAmount*(.5+.5*cos(6.28318530718*(vUv.y*scanCount+scanPhase)));
-#endif
-#ifdef FX_GRAIN
-  o+=(hash13(vec3(floor(gl_FragCoord.xy/grainSize),grainFrame)+uSeed)-.5)*grainAmount;
-#endif
+  o=srgb(clamp(o,0.,1.));${SN_FINISH}
   gl_FragColor=${E.finish?'vec4(o,luma(o))':'vec4(o*a,a)'};
 }`,{
     ...comp.uniforms,tDirt:{value:dirtTex},tStreak:{value:null},exposure:{value:1},tmMix:{value:0},tmAgxLook:{value:new THREE.Vector2(1,1)},
     gradeShadow:{value:new THREE.Vector3()},gradeHighlight:{value:new THREE.Vector3()},gradeLift:{value:new THREE.Vector3()},gradeShape:{value:new THREE.Vector4()},
-    dirtAmount:{value:0},dirtColor:{value:new THREE.Vector3()},streakAmount:{value:0},streakRadius:{value:0},streakColor:{value:new THREE.Vector3()},
+    dirtAmount:{value:0},dirtColor:{value:new THREE.Vector3()},streakAmount:{value:0},streakRadius:{value:0},streakThreshold:{value:0},streakKnee:{value:1e-4},streakColor:{value:new THREE.Vector3()},
     flareUV:{value:new THREE.Vector2()},flareShape:{value:new THREE.Vector4()},flareGhost:{value:new THREE.Vector4()},flareAmount:{value:0},flareFacing:{value:0},flareColor:{value:new THREE.Vector3()},
   }):null;
   const finish=E.finish?mat(`varying vec2 vUv;uniform sampler2D tIn,tAlpha,tBloom;uniform vec2 px;
@@ -804,14 +811,41 @@ ${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));'
 }`,{tIn:{value:rtDisplay.texture},tAlpha:{value:src.texture},tBloom:{value:null},px:{value:new THREE.Vector2(1/W,1/H)},
     edgeThreshold:{value:0},subpixel:{value:0},sharpAmount:{value:0},sharpEdge:{value:0},grainAmount:{value:0},grainFrame:{value:0},grainSize:{value:1},grainDark:{value:0},ditherAmount:{value:0},uSeed:{value:cfg.seed??0},bloomStrength:{value:0}}):null;
 
-  // 低分辨率 HDR 读回只给离线扫片使用；每次读的是当前帧，求值不依赖历史。
-  const measureRT=mkRT(32,18,{type:THREE.FloatType});
-  const measureM=mat(`varying vec2 vUv;uniform sampler2D tIn;${LUMA}void main(){gl_FragColor=vec4(log(max(luma(texture2D(tIn,vUv).rgb),1e-6)),0.,0.,1.);}`,{tIn:{value:rtScene.texture}});
-  function measure(){
-    const old=renderer.getRenderTarget();pass(measureM,measureRT);const data=new Float32Array(32*18*4);
-    renderer.readRenderTargetPixels(measureRT,0,0,32,18,data);renderer.setRenderTarget(old);
-    let sum=0;for(let i=0;i<data.length;i+=4)sum+=data[i];return sum/(32*18);
+  // 测光（只给离线扫片用；每次读的是当前帧，求值不依赖历史）：场景 HDR 逐级 4×4 盒子下采样到长边 ≤ 64，
+  // 全部像素都参与（不是稀疏点采样），再在 CPU 上按中心加权求对数平均。RT 在第一次调用时建。
+  let meter=null;
+  const meterDn=mat(`varying vec2 vUv;uniform sampler2D tIn;uniform vec2 texel;${SAFE}
+void main(){ vec3 s=vec3(0.); for(int k=0;k<4;k++){ vec2 o=vec2(k==0||k==2?-1.:1.,k<2?-1.:1.); s+=max(fxSafe(texture2D(tIn,vUv+texel*o).rgb),0.); } gl_FragColor=vec4(s*.25,1.); }`,{tIn:{value:null},texel:{value:new THREE.Vector2()}});
+  const meterLog=mat(`varying vec2 vUv;uniform sampler2D tIn;${LUMA}void main(){gl_FragColor=vec4(log(max(luma(texture2D(tIn,vUv).rgb),1e-6)),0.,0.,1.);}`,{tIn:{value:null}});
+  /**
+   * 当前帧曝光前 HDR 的对数平均亮度（自然对数），写进 exposureTrack 的 logAvg 表。
+   *   center  null（均匀）| [weight, inner, outer]：权重 1 − weight·smoothstep(inner, outer, |c|)，c 是以画面中心为原点、半宽为 1 的坐标
+   *   clamp   [lo, hi]：平均亮度（线性）钳在这个区间，再取对数
+   */
+  function measure({center,clamp}={}){
+    if(center!==null&&!(Array.isArray(center)&&center.length===3&&center.every(Number.isFinite)&&center[2]>center[1]))throw new Error('post3d.measure: center 必填：null 或 [weight, inner, outer]（outer>inner）');
+    if(!(Array.isArray(clamp)&&clamp.length===2&&clamp[0]>0&&clamp[1]>=clamp[0]))throw new Error('post3d.measure: clamp 必填：[lo, hi] 线性亮度，0<lo≤hi');
+    if(!meter){
+      const lv=[];let w=W,h=H;
+      while(Math.max(w,h)>64){w=Math.max(1,Math.ceil(w/2));h=Math.max(1,Math.ceil(h/2));lv.push(mkRT(w,h));}
+      meter={lv,log:mkRT(w,h,{type:THREE.FloatType}),w,h};
+    }
+    const old=renderer.getRenderTarget();let srcT=rtScene;
+    for(const r of meter.lv){meterDn.uniforms.tIn.value=srcT.texture;meterDn.uniforms.texel.value.set(1/srcT.width,1/srcT.height);pass(meterDn,r);srcT=r;}
+    meterLog.uniforms.tIn.value=srcT.texture;pass(meterLog,meter.log);
+    const {w,h}=meter,data=new Float32Array(w*h*4);
+    renderer.readRenderTargetPixels(meter.log,0,0,w,h,data);renderer.setRenderTarget(old);
+    let sum=0,ws=0;
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+      let k=1;
+      if(center){const cx=((x+.5)/w-.5)*2,cy=((y+.5)/h-.5)*2,d=Math.hypot(cx,cy),u=Math.min(1,Math.max(0,(d-center[1])/(center[2]-center[1])));k=1-center[0]*u*u*(3-2*u);}
+      sum+=k*data[(y*w+x)*4];ws+=k;
+    }
+    return Math.log(Math.min(clamp[1],Math.max(clamp[0],Math.exp(sum/Math.max(ws,1e-9)))));
   }
+
+  // 跳过的子链绑一张 1×1 黑纹理：旧 RT 里可能留着 Inf（半精度、无钳制的相加泛光），乘 0 也是 NaN，而且结果依赖上一帧
+  const black=new THREE.DataTexture(new Uint8Array(4),1,1);black.needsUpdate=true;
 
   const output = cfg.output ?? null;
 
@@ -820,12 +854,10 @@ ${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));'
     if (!P) throw new Error('post3d: render(t, params) 每帧要传全量参数');
     const u = comp.uniforms;
     // 场景
-    if (!Number.isFinite(P.exposure) || P.exposure < 0) throw new Error('post3d: exposure 必填且≥0');
+    if (!Number.isFinite(P.exposure) || P.exposure < 0) throw new Error('post3d: exposure 必填且≥0（色调映射前的曝光倍数，1 = 不变）');
     renderer.setRenderTarget(rtScene);
     renderer.clear();
     renderer.render(S.scene, S.camera);
-    if (!Number.isFinite(P.exposure)) throw new Error('post3d: exposure 必填（色调映射前的曝光倍数，1 = 不变）');
-    renderer.toneMappingExposure = P.exposure;
     if (rtLit) {
       for (const [r, z] of zRTs) { zMat.uniforms.near.value=S.camera.near; zMat.uniforms.far.value=S.camera.far; zMat.uniforms.scale.value=1/r; pass(zMat,z); }
       if (ao) {
@@ -849,18 +881,18 @@ ${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));'
     }
     u.tScene.value=src.texture;
     if(finish)finish.uniforms.tAlpha.value=src.texture;
-    // 强度为 0 的那一帧跳过整条子链（不是缓存：合成里它的权重恰好是 0，读到的旧纹理乘 0，输出与"跑了一遍"逐位相同）
-    if (bloom) { const p = need(P.bloom, 'bloom', bloomMix ? ['strength','radius'] : ['threshold', 'knee', 'strength', 'radius']); if (p.strength > 0 || E.dirt || E.streak) bloom.run(p); u.tBloom.value = bloom.out(); u.bloomStrength.value = Math.max(0, p.strength); }
+    // 强度为 0 的那一帧跳过整条子链，合成里绑黑纹理（权重恰好是 0：输出与"跑了一遍"逐位相同，且不读上一帧留下的 RT）
+    if (bloom) { const p = need(P.bloom, 'bloom', bloomMix ? ['strength','radius'] : ['threshold', 'knee', 'strength', 'radius']); const on = p.strength > 0 || E.dirt || E.streak; if (on) bloom.run(p); u.tBloom.value = on ? bloom.out() : black; u.bloomStrength.value = Math.max(0, p.strength); }
     if (dof) {
       const p = need(P.dof, 'dof', ['focus', 'blur', 'maxBlur']); if (p.blur > 0) dof.run(p);
-      u.tDof.value = dof.out(); u.dofFocus.value = p.focus; u.dofBlur.value = Math.max(0, p.blur); u.dofMax.value = Math.max(1, p.maxBlur);
+      u.tDof.value = p.blur > 0 ? dof.out() : black; u.dofFocus.value = p.focus; u.dofBlur.value = Math.max(0, p.blur); u.dofMax.value = Math.max(1, p.maxBlur);
       u.camNear.value = S.camera.near; u.camFar.value = S.camera.far;
     }
     if (rays) {
       const p = need(P.godrays, 'godrays', ['threshold', 'density', 'decay', 'weight', 'exposure']);
       if (!p.light && !p.lightUV) throw new Error('post3d: godrays.light（世界坐标）或 godrays.lightUV（屏幕 0–1）必填');
       if (p.exposure > 0) rays.run(p); else rays.fade = 0;
-      u.tRays.value = rays.out(); u.raysExposure.value = Math.max(0, p.exposure) * rays.fade;
+      u.tRays.value = p.exposure > 0 ? rays.out() : black; u.raysExposure.value = Math.max(0, p.exposure) * rays.fade;
     }
     if (E.chroma) u.chromaAmount.value = need(P.chroma, 'chroma', ['amount']).amount;
     if (E.grain) {
@@ -876,7 +908,8 @@ ${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));'
       u.glShift.value = p.shift; u.glSplit.value = p.split ?? 0;
     }
     u.uTime.value = t;
-    if (!display) { pass(comp, output); return; }
+    // comp 走 three 的 tonemapping_fragment，读的是渲染器的全局曝光：只在这一遍里改，画完还原
+    if (!display) { const ex = renderer.toneMappingExposure; renderer.toneMappingExposure = P.exposure; try { pass(comp, output); } finally { renderer.toneMappingExposure = ex; } return; }
     const d=display.uniforms; d.exposure.value=P.exposure;
     const tm=need(P.tonemap,'tonemap',curves.length===2?['mix']:[]);d.tmMix.value=tm.mix??0;
     if(curves.includes('agx')){vec(tm,'tonemap','agxLook',2);d.tmAgxLook.value.fromArray(tm.agxLook);}
@@ -888,12 +921,20 @@ ${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));'
       d.gradeShape.value.set(...p.range,p.contrast,p.saturation);
     }
     if(E.dirt){const p=need(P.dirt,'dirt',['amount','color']);vec(p,'dirt','color',3);d.dirtAmount.value=p.amount;d.dirtColor.value.fromArray(p.color);}
-    if(E.streak){const p=need(P.streak,'streak',['amount','radius','color']);vec(p,'streak','color',3);d.streakAmount.value=p.amount;d.streakRadius.value=p.radius;d.streakColor.value.fromArray(p.color);d.tStreak.value=bloom.mip(opt('streak').level??2).texture;}
+    if(E.streak){
+      const p=need(P.streak,'streak',['amount','radius','color','threshold','knee']);vec(p,'streak','color',3);
+      d.streakAmount.value=p.amount;d.streakRadius.value=p.radius;d.streakColor.value.fromArray(p.color);
+      d.streakThreshold.value=p.threshold;d.streakKnee.value=Math.max(1e-4,p.knee);d.tStreak.value=bloom.mip(opt('streak').level??2).texture;
+    }
     if(E.flare){
-      const p=need(P.flare,'flare',['amount','color','radius','haloRadius','haloStrength','haloWidth','spacing','ghostRadius','visibilityRadius','depthCutoff']);vec(p,'flare','color',3);
+      const p=need(P.flare,'flare',['amount','color','radius','haloRadius','haloStrength','haloWidth','spacing','ghostRadius','visibilityRadius','depthCutoff','offscreen']);vec(p,'flare','color',3);
+      const off=vec(p,'flare','offscreen',2);if(!(off[0]>=1&&off[1]>off[0]))throw new Error('post3d: flare.offscreen=[开始, 结束]（NDC，开始≥1、结束>开始）：太阳投影出画多远时眩光线性淡到 0');
       let uv=p.lightUV,facing=1;
       if(!uv){if(!p.light)throw new Error('post3d: flare.light（世界坐标）或 flare.lightUV 必填');const q=S.project(p.light,{x:0,y:0,w:1,h:1});uv=[q.x,1-q.y];facing=q.behind?0:1;}
-      vec({uv},'flare','uv',2);d.flareUV.value.fromArray(uv);d.flareFacing.value=facing;
+      vec({uv},'flare','uv',2);
+      // 出画淡出：NDC 的切比雪夫距离从 offscreen[0] 到 offscreen[1] 线性降到 0（不然太阳一出画眩光就跳没）
+      const ndc=Math.max(Math.abs(uv[0]*2-1),Math.abs(uv[1]*2-1));facing*=1-Math.min(1,Math.max(0,(ndc-off[0])/(off[1]-off[0])));
+      d.flareUV.value.fromArray(uv);d.flareFacing.value=facing;
       d.flareShape.value.set(p.radius,p.haloRadius,p.haloStrength,p.haloWidth);d.flareGhost.value.set(p.spacing,p.ghostRadius,p.visibilityRadius,p.depthCutoff);
       d.flareAmount.value=p.amount;d.flareColor.value.fromArray(p.color);
     }
@@ -904,7 +945,7 @@ ${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));'
       if(F.sharpen){const v=need(p.sharpen,'finish.sharpen',['amount','edgeThreshold']);if(!(v.edgeThreshold>0))throw new Error('post3d: finish.sharpen.edgeThreshold>0');f.sharpAmount.value=v.amount;f.sharpEdge.value=v.edgeThreshold;}
       if(F.grain){const v=need(p.grain,'finish.grain',['amount','fps','size','darkWeight']);if(!(v.fps>0&&v.size>0))throw new Error('post3d: finish.grain fps/size>0');f.grainAmount.value=v.amount;f.grainFrame.value=Math.floor(t*v.fps+1e-6)%4096;f.grainSize.value=v.size;f.grainDark.value=v.darkWeight;}
       if(F.dither){f.ditherAmount.value=need(p.dither,'finish.dither',['amount']).amount;}
-      if(bloom){f.tBloom.value=bloom.out();f.bloomStrength.value=P.bloom.strength;}
+      if(bloom){f.tBloom.value=u.tBloom.value;f.bloomStrength.value=u.bloomStrength.value;}
       pass(finish,output);
     }
 
@@ -912,7 +953,7 @@ ${E.bloom?'a=max(a,clamp(luma(texture2D(tBloom,vUv).rgb)*bloomStrength,0.,1.));'
 
   const post = {
     render, measure, effects: { ...E }, rtScene,
-    dispose() { for (const r of zRTs.values()) r.dispose(); for (const x of [zMat,blurM,litM,display,finish,measureM]) x?.dispose(); for(const r of [rtLit,rtDisplay,measureRT]) r?.dispose(); dirtTex?.dispose(); quadGeo.dispose(); for (const x of [bloom, dof, rays, ao, vol]) if (x) { x.rts.forEach((r) => r.dispose()); x.mats.forEach((m) => m.dispose()); } comp.dispose(); rtScene.dispose(); },
+    dispose() { for (const r of zRTs.values()) r.dispose(); for (const x of [zMat,blurM,litM,display,finish,meterDn,meterLog]) x?.dispose(); for(const r of [rtLit,rtDisplay,meter?.log,...(meter?.lv??[])]) r?.dispose(); dirtTex?.dispose(); black.dispose(); quadGeo.dispose(); for (const x of [bloom, dof, rays, ao, vol]) if (x) { x.rts.forEach((r) => r.dispose()); x.mats.forEach((m) => m.dispose()); } comp.dispose(); rtScene.dispose(); },
   };
   S._attachPost(post);
   return post;

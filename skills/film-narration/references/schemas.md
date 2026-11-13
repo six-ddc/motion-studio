@@ -164,9 +164,10 @@ edge 引擎用 `voice`（如 `zh-CN-YunyangNeural`，可用 `tts.py --list-edge-
 | `file` | 素材路径（相对于片子目录），与 `type` 二选一；用 ffmpeg 解码，支持任何格式 |
 | `gain` | 线性增益，默认 1 |
 | `seed` | 噪声类音色的种子，默认取 cue 的序号 |
-| `params` / `variant` / `pitch` / `jitter` | 新配方的参数、变体序号、音高倍数和音高/增益抖动。variant 省略时按同名配方的时间顺序轮换；原有音色不读这些字段 |
+| `params` / `variant` / `pitch` / `jitter` | 新配方的参数、变体序号、音高倍数和音高/增益抖动。variant 省略时有 `id` 按 hash(配方, id)，否则按同名配方的时间顺序轮换；jitter 同规则。原有音色不读这些字段 |
+| `id` | 稳定的事件 id（事件表 `toCues` 透传）。决定配方变体与抖动，插入别的事件不改变它的声音；记进 `out/sfx.json` |
 
-**可选字段**（只要出现任意一个，就走立体声路径 `renderStereo`，输出 2 声道；一个都不写时走原来的单声道路径，输出逐样本不变）：
+**可选字段**（只要出现任意一个，就走立体声路径 `renderStereo`，输出 2 声道；一个都不写时走原来的单声道路径，混音样本逐个不变，只是文件改成 32 位浮点）：
 
 | 字段 | 说明 |
 |---|---|
@@ -179,8 +180,8 @@ edge 引擎用 `voice`（如 `zh-CN-YunyangNeural`，可用 `tts.py --list-edge-
 | `lowpass` | 一阶低通的截止频率，单位 Hz |
 | `dur` | 连续层：在这段时长内循环播放音色或素材。`rate` 读取曲线时必须写 |
 | `stack` | 去重时的叠层组名：同一个 `stack` 的 cue 之间不算冲突 |
-| `space` | `outdoor/indoor` 或 `{preset,gain?,scale?,bright?,seed?}`：程序化IR尾音，按顶层spaceRule决定挂在哪个事件上 |
-| `muffle` / `duck` / `bus` | 闷音强度、配乐压低、绕过闷音的dry总线。数值/对象格式、默认恢复常数和适用范围见 `sfx-recipes.md` |
+| `space` / `tail` | `{preset,gain,scale?,bright?,seed?}`（gain 必填）：程序化IR尾音。表里任一 cue 写了 `tail` 就严格按 tail 挂，否则按顶层 spaceRule 判串 |
+| `muffle` / `duck` / `bus` | 闷音 `{amount, recover}`、配乐压低 `{depth, recover}`（recover 必填）、绕过闷音的dry总线。参考量级与适用范围见 `sfx-recipes.md` |
 
 `gain` / `pan` / `send` / `rate` / `lowpass` 可以写成**参数式**：
 `{ "probe": "曲线名", "scale": 1, "add": 0, "pow": 1, "min": -∞, "max": ∞ }`，
@@ -195,15 +196,15 @@ edge 引擎用 `voice`（如 `zh-CN-YunyangNeural`，可用 `tts.py --list-edge-
 | `room` | `{ size: 0..1, damp: 0..1, width?: 0..1 }`，共享房间混响（Freeverb）。没有默认值 |
 | `dedupe` | 单位为秒。cue 按时间排序后，和上一个保留下来的 cue 间隔小于这个值的会被丢掉（同一个 `stack` 的除外），丢掉的 cue 记进 `out/sfx.json` 的 `dropped`。不写就不去重 |
 | `curveRate` | probe 的采样率，默认 240 Hz（这是控制量的采样率，采样点之间线性插值） |
-| `fromScene` | `{ map: { kind: cue 模板 \| null }, format? }`：打开场景读取 `window.events()`，得到 `[{t, kind, anchor?, v?, pan?}]`，每个事件按 `map[kind]` 生成一个 cue（`t` 取事件时刻，再加上模板里的 `offset`；模板没写 `pan`/`anchor` 时用事件自带的）。**map 里没有列出的 kind 会直接报错**，写 `null` 表示明确不出声。没有默认映射 |
+| `fromScene` | `{ map: { kind: cue 模板 \| null }, format? }`：打开场景读取 `window.events()`，得到 `[{t, kind, anchor?, v?, pan?}]`，每个事件按 `map[kind]` 生成一个 cue（`t` 取事件时刻，再加上模板里的 `offset`；模板没写 `pan`/`anchor`、`id`、`tail` 时用事件自带的）。**map 里没有列出的 kind 会直接报错**，写 `null` 表示明确不出声。没有默认映射 |
 | `stereo` | 设为 `true` 时，即使没用到上述立体声字段也输出立体声 |
-| `spaceRule` | `{burstGap?,throttle?,edges?:"end"|"both"}`：相邻间隔小于burstGap算一串，默认每串末发补尾音 |
+| `spaceRule` | `{burstGap,throttle?,edges?:"end"|"both"}`：只在 cue 都没写 tail 时用；burstGap 必填，相邻间隔小于它算一串，默认每串末发补尾音 |
 | `master` | 可选总线末级 `{comp?,trim?,clip?}`，默认关闭；具体参数见 `sfx-recipes.md` |
 | `music` | `{src,out,muffle?}`：派生一份按cue.duck处理的配乐，合流时将out传给 `mux.sh --music`，src/out须不同 |
 
 命令：`node sfx.mjs --film <slug> --dump-events` 只打印场景事件；`--emit <path>` 把场景事件生成的 cue 写成普通数组（用于留存记录或手工修改）。用到 `anchor` / `probe` / `fromScene` 时，`sfx.mjs` 会用 film-core 的 `openScene` 打开一次场景（Playwright）。
 
-`sfx.mjs` 还会另写一份 `out/sfx.json`：`{narrationOffset, script_hash, cues[]}`。`mux.sh` 用它核对音效是否按当前偏移渲染。
+`sfx.mjs` 还会另写一份 `out/sfx.json`：`{narrationOffset, script_hash, cues[]}`。`mux.sh` 用它核对音效是否按当前偏移渲染。`out/sfx.wav` 是 32 位浮点 WAV；输出有 NaN/Inf 时退出 1、不写文件。
 立体声路径还会额外记录 `channels: 2`、`panLaw`、`mixer`（混音器来自片内运行时还是 skill）、`room`、`dedupe`、`dropped`，以及每个 cue 的参数（曲线记为 `{t0, rate, n}`）。
 
 ## out/beats.json（产出）

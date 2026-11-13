@@ -301,6 +301,30 @@ vec2  hash22(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973)); 
 float hash13(vec3 p3){ p3 = fract(p3 * .1031); p3 += dot(p3, p3.zyx + 31.32); return fract((p3.x + p3.y) * p3.z); }
 `,
 
+  // 交错梯度噪声（Jimenez 2014）：屏幕坐标的纯函数、逐帧不变——抖动步进起点、旋转采样圈。带 include 守卫，可重复拼接
+  ign: `
+#ifndef FX_IGN
+#define FX_IGN
+float ign(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+#endif
+`,
+
+  // 整数哈希 pcg3d（Jarzynski & Olano 2020），只有整数运算。**GLSL ES 3.00**（three 的材质与 ShaderMaterial 都是）。
+  // pcgHash33(p)：按 floor(p) 的格点取 [0,1)³。带 include 守卫：同一材质上叠几个补丁各自拼一次也不重定义
+  pcg: `
+#ifndef FX_PCG3D
+#define FX_PCG3D
+uvec3 pcg3d(uvec3 v){
+  v = v * 1664525u + 1013904223u;
+  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+  v ^= v >> 16u;
+  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+  return v;
+}
+vec3 pcgHash33(vec3 p){ return vec3(pcg3d(uvec3(ivec3(floor(p))))) * (1.0 / 4294967296.0); }
+#endif
+`,
+
   // value noise + fbm。需要 hash
   noise: `
 float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.-2.*f);

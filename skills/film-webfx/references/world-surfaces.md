@@ -1,87 +1,77 @@
 # 程序化贴图、湿地面与事件特效
 
-目录：分层与尺度 · 贴图烘焙 · 湿地面与反射 · 火花烟火 · 代价与局限
+目录：分层与尺度 · 贴图烘焙 · 湿地面与反射 · 火花烟火 · 代价与验证
 
 ## 1. 按形成原因分层
 
-把颜色、粗糙度、法线分开控制。漆脱落时同时露出底层的颜色、金属度、粗糙度与高度，只换颜色会像印花。用低频簇控制破损分布，高频噪声控制边界；均匀撒点会让整件物体失去干净的主形。
-地面先做覆盖整个场景的唯一遮罩，再叠两个不整比尺度的细节。湿润按积水→浸湿→潮湿→干燥连续变化，硬阈值会露出遮罩像素。所有色值和尺度从本片传入。
-模型的外形见 `modeling.md`，物体表面的湿度/污垢/抗闪烁见 `surfaces.md`，天与环境光同源见 `sky.md`。
+颜色、粗糙度、法线分开控制：漆脱落时同时露出底层的颜色、金属度、粗糙度与高度，只换颜色像印花。低频簇管破损分布、高频噪声管边界；均匀撒点的代价是物体失去干净的主形。
+地面先做覆盖全场的唯一遮罩，再叠两个不整比尺度的细节；湿润按积水→浸湿→潮湿→干燥连续变化。所有色值、尺度、幅度从本片传入，缺了报错。
+外形见 `modeling.md`，物体表面湿度/污垢/抗闪烁见 `surfaces.md`，天与环境光同源见 `sky.md`。
 
 ## 2. 加载期烘焙：texture3d.js
 
 ```js
 import { bakePaint } from './runtime/texture3d.js';
-// 这是示例物体自己的色板，线性 RGB；不作为套件默认。
-const palette = {
-  paint:  {color:[.04,.12,.2], roughness:.4, metalness:.1},
-  primer: {color:[.2,.16,.13], roughness:.7, metalness:0},
-  rust:   {color:[.19,.06,.02], roughness:.9, metalness:0},
-  metal:  {color:[.3,.31,.33], roughness:.3, metalness:1}
-};
-const T = bakePaint({size:256, seed:13, tileMeters:1, palette,
+const T = bakePaint({size:256, seed:13, tileMeters:1,
+  palette:{paint:{color:[.04,.12,.2],roughness:.4,metalness:.1}, primer:{color:[.2,.16,.13],roughness:.7,metalness:0},
+           rust:{color:[.19,.06,.02],roughness:.9,metalness:0}, metal:{color:[.3,.31,.33],roughness:.3,metalness:1}},
   layers:[{period:8, amplitude:.001}, {period:32, amplitude:.0004}],
-  damage:{amount:.52, softness:.4, depth:.001, period:4}});
-const material = new THREE.MeshStandardMaterial({map:T.map, normalMap:T.normalMap,
-  aoMap:T.aoMap, roughnessMap:T.roughnessMap, metalnessMap:T.metalnessMap,
-  roughness:1, metalness:1});
+  damage:{amount:.52, softness:.4, depth:.001, period:4, detail:.2, stages:[[0,.25],[.25,.5],[.8,.2]], ao:.2}});
+// 示例物体自己的色板（线性 RGB），不是套件默认
+const material = new THREE.MeshStandardMaterial({map:T.map, normalMap:T.normalMap, aoMap:T.aoMap,
+  roughnessMap:T.roughnessMap, metalnessMap:T.metalnessMap, roughness:1, metalness:1});
 ```
 
-`bakePaint` 输出共享 ORM（R=AO，G=粗糙度，B=金属度）、法线、反照率、`height` 米数组与破损遮罩 `masks`。`damage.amount` 控制覆盖，`softness` 控制层间过渡，`depth` 是漆层厚度米；`period` 是每个贴图周期里的簇数。`layers` 为可平铺高度噪声，`amplitude` 单位米。
-色板使用线性数据，贴图设 `NoColorSpace`；若把十六进制 sRGB 色直接除255传入，会高估反照率。ORM 与法线也不做 sRGB 解码。AO 的减弱量只是脱漆凹陷的近似，不是几何遮挡烘焙。
-
-单独使用 `bakeHeight({size,seed,layers})`、`normalFromHeight(height,size,tileMeters)`、`tileNoise(x,y,period,seed)` 与 `dataTexture(rgba,size,{repeat})`。中心差分除以实际米制采样间距，换纹理分辨率时不会改变凹凸强度。
-CPU 烘焙时间随 `size² × 层数` 增长；加载期付一次，seek 只采样。`T.dispose()` 释放共享纹理，不要分别释放同一张 ORM 多次。
-
-自定义 GPU 烘焙用 `bakeShader(renderer,{size,fragmentShader,uniforms,type}) → WebGLRenderTarget`。片元输入 `varying vec2 vUv`；输出线性数据。返回目标由调用方释放。函数恢复目标、viewport、scissor；在加载期调用，避免 seek 中创建资源。多个输出通道可分次烘焙，不内置 MRT。
+破损度 `d = sat((amount − (簇·(1−detail) + 细·detail)) / softness)`；`stages` 依次是 primer/rust/metal 露出的 `[起点, 宽度]`（窄 = 层间硬边，宽 = 糊成一片）；`ao` 是完全露底处的 AO 减弱（凹陷近似，不是几何遮挡）；`depth` 漆层厚度米；`period` 每周期簇数；`layers.amplitude` 米。
+输出共享 ORM（R=AO，G=粗糙度，B=金属度）、法线、`height` 米数组、`masks`。反照率按 sRGB 编码存 8 位（`SRGBColorSpace`，硬件解码回线性）：线性 8 位存暗部会出色带。把十六进制 sRGB 色直接除 255 当线性传入会高估反照率。
+单独可用：`bakeHeight`、`normalFromHeight(height,size,tileMeters)`（按米制采样间距差分，换分辨率不改凹凸强度）、`tileNoise`、`dataTexture(rgba,size,{repeat,colorSpace})`。CPU 时间随 `size² × 层数`；`T.dispose()` 释放共享纹理。
+`bakeShader(renderer,{size,fragmentShader,uniforms,type})` 是 GPU 加载期烘焙：输入 `varying vec2 vUv`，返回 RT（调用方释放），恢复目标/面/mip/viewport/scissor；不内置 MRT。
 
 ## 3. 湿地面与当帧反射：ground3d.js
 
 ```js
-const mask = bakeGroundMask({size:256, seed:7, bounds:[-6,-6,12,12],
-  heightRange:[-.08,.08], macroMeters:3,
-  pits:[{x:6,z:6,rx:3,rz:2,depth:.06}]});
-const reflection = createPlanarReflection(S,
-  {height:0,width:512,resolution:512,clipBias:.001,hide:[ground]});
-const wet = applyGround(ground.material, {mask,reflection,
-  dryColor:[.22,.24,.27],wetColor:[.07,.09,.12],roughness:[.8,.5,.2,.045],
-  tileMeters:[3.7,.61],seam:{spacing:2,width:.035,depth:.005},
-  transition:{damp:.06,soak:.025,puddle:.015},
-  ripple:{scale:2,speed:6,amplitude:.015}});
-// 在 freeze 前建立上述资源；在 S.frame(t, paint) 的 paint 最后执行：
-wet.set({t,waterLevel:0,wetness:1});
-reflection.render(); // 此时相机、物体、天空都已按 t 设置
+const mask = bakeGroundMask({size:256, seed:7, bounds:[-6,-6,12,12], heightRange:[-.08,.08],
+  pits:[{x:6,z:6,rx:3,rz:2,depth:.06}],
+  layers:{height:{meters:3,range:[.35,.75]}, damp:{meters:2.1,lowBias:.4},
+          oil:{meters:3,detailMeters:.6,bias:.3,gain:3}, wear:{meters:1.2}}});
+const reflection = createPlanarReflection(S, {planeY:0, size:[512,512], clipBias:.001, hide:[ground]});
+const wet = applyGround(ground.material, {mask, reflection,           // 材质 roughness:1 时下面的粗糙度就是绝对值
+  dryColor:[.22,.24,.27], wetColor:[.07,.09,.12], roughness:[.8,.5,.2,.045], tileMeters:[3.7,.61],
+  grain:{albedo:.12,roughness:.05,height:.002}, seam:{spacing:2,width:.035,depth:.005,darken:.3},
+  oil:{darken:.2,roughness:.08}, wear:{roughness:.05}, transition:{damp:.06,soak:.025,puddle:.015},
+  ripple:{layers:[{cell:.83,rate:1,angle:0,weight:1},{cell:1.31,rate:.87,angle:.64,weight:.9},{cell:.57,rate:1.13,angle:1.57,weight:.6}],
+    density:.66, radius:[.1,.36], width:[.005,.025], amplitude:.3, fade:[10,34]}});
+// freeze 前建好；paint 最后：
+wet.set({t, waterLevel:0, wetness:1}); reflection.render(); // 相机、物体、天空都已按 t 设好
 ```
 
-物理长度以米计，`bounds=[x0,z0,width,depth]`；坑的 x/z 是相对该原点的米坐标。反射目标的 `width/resolution` 分别是纹理宽/高的像素数，烘焙 `size` 也是像素数。遮罩 RGBA 分别为高度/潮湿/油污/磨损，clamp 到区域并平滑淡出。`heightRange` 用于8位高度编码，微小水位变化会受量化影响，提高纹理分辨率不能提高高度位深。
-粗糙度四项依次为干/潮/浸湿/积水，A通道磨损在非积水区作 ±.025 的粗糙度调制。斜坡宽度 `transition` 单位米（高度差）；粗细颗粒尺度 `tileMeters` 单位米；`ripple.scale` 每米周期数、`speed` 弧度/秒，`amplitude` 为法线斜率。这里涟漪是闭式周期扰动，不是真实水动力或逐滴冲击模拟。
+遮罩 RGBA = 高度/潮湿/油污/磨损，米制 `bounds=[x0,z0,width,depth]`，坑坐标相对原点；`layers.*.meters` 是噪声格尺寸，`oil/wear` 可为 null。高度按 `heightRange` 编 8 位，提分辨率不提高度位深。区域外按"最高、干、无油"处理并在边缘 5% 渐变。
+`roughness` 四档 = 干/潮/浸湿/积水，**乘**到材质已有的粗糙度上（叠了 surface3d 时按补丁调用顺序依次作用）；`grain` 的三项是颗粒对反照率 ±比例、粗糙度 ±量、水深 ±米；`seam:null` 不要板缝；`transition` 是三段斜坡宽度（米高差），窄 = 水边硬。
+`ripple` 是闭式雨滴：每层按 `cell` 米分格，每格每个周期 `floor(t·rate·抖动)` 换一滴（位置、大小、强度），寿命 = 小数部分；环剖面是高斯导数，宽度从 `width[0]` 长到 `width[1]`（米），振幅 (1−寿命)² 衰减，`density` 是每格每周期出滴的概率，`radius` 是环最大半径占格的比例（≤ 0.45，环整个落在格内所以没有格缝）。层的 `angle` 旋转网格（打破对齐），`weight` 加权。每格速率抖动 ±50%、单滴强度 0.3–1 是模型常数。
+`fade:[近,远]` 米外淡出：远处的环小于一像素，不淡出的代价是闪烁。`amplitude` 是法线斜率。`ripple:null` 关掉；它不是水动力模拟。
+平面反射：镜像相机 + 斜近平面，`size` 是 [宽,高] 像素，只支持透视相机、单平面、不递归；采集线性 HDR、按粗糙度取 mip，替换环境镜面输入（保留 three 的菲涅耳）。多一次场景绘制；接收面放进 `hide`。反射不是 SSR，能看见画外物体。
+**反射必须在 paint 里、相机与物体按 t 设好之后渲染**：画完这一帧再更新、下一帧再用（游戏的常见做法）会读到上一帧的 RT。默认 `reset:true` 时舞台把反射矩阵还原到 freeze 值，过期反射整个落到画外（看起来是"反射消失"）；`reset:false` 时就是门 1a/2 红（本仓库阴性对照 `_test-worldfx/scene-bad-reflect-prevframe.html`）。
 
-平面限定世界 y=`height`，只支持透视相机。镜像相机用斜近平面剔除水面下几何，采集线性 HDR，mip 模糊后的反射替换环境镜面输入，保留标准 PBR 菲涅耳。一次额外场景绘制；反射接收面全部放进 `hide`，避免反射自己；不递归支持多面镜。`reflection:null` 可关闭。反射不是 SSR，能看见主镜头画外的物体。
-平面下看、穿过平面的镜头、透明物体的排序和多个互相反射面需要单独设计；通用地形/倾斜水面不在此工具范围。反射应与主画面共用后期映射，反射目标里不先做色调映射。
+## 4. 火花烟火：spritefx3d.js
 
-## 4. 烟火花：spritefx3d.js
-
-`bakeSmokeAtlas({cellSize,columns,seed,erosion,lobes})` 在加载期生成 `columns²` 格 RGBA 图集（法线XY/厚度/透明度）。同一团成簇密度随寿命侵蚀，边缘透明留缝；关闭 mip 防串格。法线是二维密度导数近似，厚度不是实际体积积分。
+和 `particles3d.js` 的分工：那边是点精灵 + 片子自写的闭式运动，适合大量同质粒子；这里是实例四边形 + 事件表 + 闭式阻力弹道，自带速度拉长、受光烟图集、深度软交界。
 
 ```js
 const atlas = bakeSmokeAtlas({cellSize:64,columns:4,seed:9,erosion:.7,lobes:7});
-const smoke = createSpriteFX(S, {mode:'smoke',atlas,
+const smoke = createSpriteFX(S, {mode:'smoke', atlas,
   events:[{t:.2,life:1.4,origin:[0,.5,0],velocity:[0,.8,0],size:.4,seed:3}],
-  gravity:[0,.1,0],drag:.3,colors:[[.55,.59,.65],[.18,.22,.28]],opacity:.5,
-  stretch:0,minPixels:1,maxPixels:200,blending:'normal',
+  gravity:[0,.1,0], drag:.3, colors:[[.55,.59,.65],[.18,.22,.28]], opacity:.5, stretch:0, minPixels:1, maxPixels:200,
+  blending:'normal', grow:{size:2.4,fadeIn:.12},
   light:{direction:[2,5,3],color:[1.2,1.05,.8],ambient:[.25,.3,.4],wrap:.5,backscatter:.7}});
-S.scene.add(smoke.mesh); // 加载期
-// 每帧在相机更新后调 smoke.update(t)
+S.scene.add(smoke.mesh);  // 加载期；paint 里相机更新之后 smoke.update(t)
 ```
 
-`mode:'spark'` 用瞬时透视投影速度方向拉长的实例四边形，`stretch` 为拖影秒数，不要套用点精灵的最大点尺寸；像素宽度下限配透明度补偿避免远景闪烁。这里不含相机运动的速度模糊，完整运动模糊仍用子帧平均。`colors` 是初/末线性 HDR，降温随寿命插值。直出时先色调映射/编码再预乘，HDR目标保持线性。
-`mode:'flame'` 使用同一图集的厚度与寿命色，不要求光照表；用 normal 混合时，前景烟可以遮挡火焰。add 的代价是亮度不断相加且不能遮挡。
-烟使用包裹漫反射与逆光近似；重叠烟团仍依赖透明排序，不是体积多次散射。GPU 内实例不能逐粒深度排序；需要时在加载期按镜头分组，或使用较低不透明度。
-`softDepth:{texture,width,height,near,far,distance}` 可接同一相机**当帧**不含粒子的深度图；distance 为淡交界宽度米，解决烟切入地面的硬边。反射副相机不使用主相机这张图，副视角的软交界需独立深度。深度图用前一帧会破坏乱序确定性，见本仓库 `_test-worldfx` 的不含粒子预绘制示例。
-`particleState(age,{origin,velocity,gravity,drag})` 提供 CPU 侧同类解析弹道，`rainPosition(i,t,{seed,box,velocity,center})` 提供跟随相机的周期雨盒位置。碰撞与力场积分仍走 film-physics。
+图集 `columns²` 格（法线 xy/厚度/alpha），同一团密度随寿命侵蚀；格边留透明、不生成 mip。法线是二维密度导数近似。`grow`（烟/火必填）= 寿命末尺寸倍数与淡入占寿命比例：倍数大 = 烟团散得开，淡入短 = 出现时有硬跳。
+`spark` 按透视屏幕速度拉长，`stretch` 为拖影秒数；像素下限配面积比补偿 alpha 防远景闪；不含相机速度模糊（用子帧平均）。`colors` 初/末线性 HDR；直出时先映射/编码再预乘。`flame` 用同一图集的厚度；`add` 的代价是只会变亮、不能遮挡。
+烟是包裹漫反射 + 逆光近似；实例不逐粒深度排序，重叠烟团的顺序靠加载期分组或降低不透明度。`softDepth:{texture,width,height,near,far,distance}` 接同一相机**当帧**不含粒子的深度（distance 米），解决烟切地面的硬边；用上一帧的深度会破坏乱序一致；反射副相机不用它。
+`particleState(age,{origin,velocity,gravity,drag})` 是 CPU 侧同一条弹道，`rainPosition(i,t,{seed,box,velocity,center})` 是跟随相机的周期雨盒。碰撞与力场积分走 film-physics。
 
 ## 5. 代价与验证
 
-本仓库 `_test-worldfx`：128²破损贴图/唯一遮罩、256²平面反射、50火花+12烟+1火焰。`tests/unit.mjs` 检查周期、米制法线、ORM、解析弹道对 RK4、侵蚀与雨盒；`tests/browser.mjs` 检查反射/湿度/软粒子开关真的改变画面、反射随当帧改变、乱序重现与烘焙状态恢复。
-运行 `dev/film-webfx/worldfx-bench.mjs` 测预热后 `seek + readPixels` 的真实完成耗时；设备、分辨率、场景成本会改变结果，数字见仓库 `docs/verified/film-webfx.md`。
-本页能力均可选，不引入交付门。色板、材质参数和烟火花配方应按本片意图调试；局部验证不等于整片观感已经验收。
+本仓库 `_test-worldfx`：128² 破损贴图/唯一遮罩、256² 平面反射、三层涟漪、50 火花 + 12 烟 + 1 火焰。`tests/unit.mjs` 查周期、米制法线、ORM、解析弹道对 RK4、侵蚀、雨盒；`tests/browser.mjs` 查各开关真的改变画面、涟漪淡出/乱序、反射随当帧变化、ground+surface+雾叠补丁（含实例/批次网格）编译渲染、烘焙状态恢复。
+`dev/film-webfx/worldfx-bench.mjs` 测预热后 `seek + readPixels`；数字见仓库 `docs/verified/film-webfx.md`。全部是可选能力，不引入交付门；局部验证不等于整片观感已验收。

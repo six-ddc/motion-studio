@@ -77,7 +77,7 @@ await main(async () => {
   const fmtDiff = (r) => (r.identical ? '逐像素一致' : `${r.diff} 像素不同，最大差 ${r.max}/255`);
 
   try {
-    const A = await openScene(F, format, { browser, port, probe: true });
+    const A = await openScene(F, format, { browser, port, probe: true, fps });
     const D = A.info.duration;
     const frames = Math.round(D * fps);
     const lastT = (frames - 1) / fps;
@@ -160,7 +160,7 @@ await main(async () => {
     // ---- 门 1b：重新加载 ----
     console.log();
     console.log('门 1b  全新页面重新加载，同一批 t 再求一次：');
-    const B = await openScene(F, format, { browser, port, probe: false });
+    const B = await openScene(F, format, { browser, port, probe: false, fps });
     let ok1b = true;
     for (const t of times) {
       const r = await cmp.compare(ref.get(t), await B.shot(t));
@@ -187,14 +187,14 @@ await main(async () => {
       const bounds = Array.from({ length: nSeg + 1 }, (_, i) => Math.round((i * frames) / nSeg));
       const seq = new Array(frames);
       const qs = [];
-      for (let w = 0; w < nSeg; w++) qs.push(await openScene(F, format, { browser, port }));
+      for (let w = 0; w < nSeg; w++) qs.push(await openScene(F, format, { browser, port, fps }));
       await Promise.all(qs.map(async (S, w) => {
         for (let k = 0; k < bounds[w]; k++) await S.advance(k / fps);
         for (let k = bounds[w]; k < bounds[w + 1]; k++) seq[k] = md5(await S.shot(k / fps));
       }));
       for (const S of qs) { allErrors.push(...S.errors); await S.close(); }
       const ps = [];
-      for (let w = 0; w < parallel; w++) ps.push(await openScene(F, format, { browser, port }));
+      for (let w = 0; w < parallel; w++) ps.push(await openScene(F, format, { browser, port, fps }));
       const par = new Array(frames);
       await Promise.all(ps.map(async (S, w) => { for (let k = frames - 1 - w; k >= 0; k -= parallel) par[k] = md5(await S.shot(k / fps)); }));
       for (const S of ps) { allErrors.push(...S.errors); await S.close(); }
@@ -318,7 +318,7 @@ async function relaunchGate(F, format, { port, srv, fps, D, hasMotion, runs, eve
     const odd = [];
     try {
       const pages = [];
-      for (let w = 0; w < nW; w++) pages.push(await openScene(F, format, { browser: browsers[w % nB], port, scale, png: P.png }));
+      for (let w = 0; w < nW; w++) pages.push(await openScene(F, format, { browser: browsers[w % nB], port, scale, png: P.png, fps: P.fps }));
       let next = 0;
       await Promise.all(pages.map(async (S) => {
         while (next < chunks.length) {

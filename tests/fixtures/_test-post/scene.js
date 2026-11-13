@@ -22,7 +22,7 @@ for(let i=0;i<4;i++){
 }
 const emitter=new THREE.Mesh(new THREE.SphereGeometry(.17,20,12),new THREE.MeshBasicMaterial({color:new THREE.Color(18,9,3)}));emitter.position.set(-2.1,2.5,-.5);S.scene.add(emitter);
 const sun=new THREE.Mesh(new THREE.SphereGeometry(.3,24,16),new THREE.MeshBasicMaterial({color:new THREE.Color(35,25,12),depthWrite:false}));sun.position.copy(light.position);S.scene.add(sun);
-const horizon=Q.has('horizon')?createLightRig({sun:{dir:[-4,8,-5],color:[1,.8,.55],intensity:6},sky:{zenith:[.025,.035,.055],horizonSun:[.2,.3,.5],horizonAway:[.1,.18,.3],ground:[.02,.02,.025],fog:[.08,.1,.16]}}).uniforms():null;
+const horizon=Q.has('horizon')?createLightRig({sun:{dir:[-4,8,-5],color:[1,.8,.55],intensity:6},sky:{zenith:[.025,.035,.055],horizonSun:[.2,.3,.5],horizonAway:[.1,.18,.3],ground:[.02,.02,.025],fog:[.08,.1,.16],azimuthPower:4,zenithHeight:.25,groundHeight:.2}}).uniforms():null;
 const cfg={seed:173,samples:Number(Q.get('samples')??0),tonemap:{curves:['aces','agx']},
  ...(enabled('bloom')||enabled('dirt')||enabled('streak')?{bloom:{mode:'mix',levels:5,resolution:.5,karis:.6}}:{}),
  ...(enabled('ao')?{ao:{samples:16,resolution:Number(Q.get('half')??.5)}}:{}),
@@ -38,7 +38,7 @@ S.freeze();
 function params(t){return {exposure:exposure(t),tonemap:{mix:.35,agxLook:[1,1]},
  bloom:{strength:.12,radius:.7},ao:{radius:1.2,intensity:1.1,strength:.8,fade:[30,60],tolerance:.15,lit:[.3,2,.85],tint:[0,0,0]},
  volume:{sigma:.032,maxDist:horizon?4:35,skyDistance:35,shadowBias:.001,ambientShadow:.25,sun:[3,2,.9],ambient:[.08,.1,.16],height:[0,5,.2],far:[.4,.5,.6],phase:[.65,.15,.6,1.5],near:[1.8,.5,1,25],tolerance:.18,farColor:[.2,.3,.5]},
- dirt:{amount:.3,color:[1,.9,.7]},streak:{amount:.08,radius:90,color:[.8,.9,1]},flare:{light:[-4,8,-5],amount:1.1,color:[1,.7,.35],radius:.025,haloRadius:.07,haloStrength:.05,haloWidth:.018,spacing:.7,ghostRadius:.035,visibilityRadius:6,depthCutoff:.999},
+ dirt:{amount:.3,color:[1,.9,.7]},streak:{amount:.08,radius:90,color:[.8,.9,1],threshold:2,knee:.5},flare:{light:[-4,8,-5],amount:1.1,color:[1,.7,.35],radius:.025,haloRadius:.07,haloStrength:.05,haloWidth:.018,spacing:.7,ghostRadius:.035,visibilityRadius:6,depthCutoff:.999,offscreen:[1,1.3]},
  grade:{shadow:[.94,.98,1.04],highlight:[1.03,1,.95],lift:[.001,.001,.002],range:[.03,.7],contrast:.1,saturation:.95},chroma:{amount:.6},
  finish:{fxaa:{edgeThreshold:.12,subpixel:.75},sharpen:{amount:.2,edgeThreshold:.12},grain:{amount:.004,fps:12,size:1,darkWeight:.5},dither:{amount:1}}};}
 window.DURATION=1.25;
