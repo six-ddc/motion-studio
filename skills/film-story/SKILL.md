@@ -1,151 +1,104 @@
 ---
 name: film-story
-description: 一支片子"讲什么、凭什么可信、靠什么撑起来、怎么排"：选题调研与事实核查（带出处的 docs/facts.md，旁白数字对账 factcheck）、参考片拆解、撑起整支片子的视觉机制、讲法与长相的发散和近作对照（siblings）、分镜与镜头设计（景别、机位、运镜）、可执行 spec（shotlist.md，时刻以 narration.json 实测为准）、本片法律 style_guide.md、参考锚与风格帧比稿、粗剪预演、解说片配方和画面先行配方。用户说调研、查资料、事实核查、fact check、出处、别编数字、这数据哪来的、有没有争议、参考片、拆解、出创意、画面方案、怎么拍、分镜、shotlist、storyboard、运镜、镜头语言、镜头设计、电影感、节奏、构图、视觉方向、照着这个风格、出几个方向比一下、风格帧、animatic、粗剪，嫌丑、没创意、太平、平铺、千篇一律、像模板、和上一支长得一样、重要事件一闪而过时加载；用户只说"做一支讲唐朝的片子"没提调研，也先用它调研。转场实现归 film-motion，旁白合成归 film-narration，成片检查归 film-critique。
+description: 一支片子在写渲染代码之前的"文戏与导演设计"——按主题选叙事策略、KOL传播力与前3秒钩子、中段完播留存、营销种草与转化弧线（CTA）、听觉化台词打磨、选题调研与事实核查（docs/facts.md 与 factcheck 对账）、参考片拆解、视觉机制与音画关系、讲法与视觉方向比选及近作对照（siblings）、镜头设计与可执行分镜（shotlist.md 对齐 narration.json）、本片法律 style_guide.md、风格帧比稿与粗剪预演。用户说写脚本、写台词、出创意、前3秒钩子、吸引人、完播率、传播性、爆款感、像博主/KOL一样讲、带货转化、痛点种草、调研、查资料、事实核查、fact check、出处、别编数字、拆解参考片、画面方案、怎么拍、分镜、shotlist、storyboard、运镜、镜头设计、电影感、构图、视觉方向、风格帧、animatic、粗剪，或嫌没创意、太平、像PPT模板、和上一支撞脸、重要事件一闪而过时加载；用户只说"做一支讲某事的片子"也先用它立意或调研。转场实现归 film-motion，语音合成归 film-narration，成片检查归 film-critique。
 ---
 
 # film-story
 
-本 skill 负责片子在写代码之前的三件事：**事实从哪来**（调研）、**整支片子靠什么撑起来**（机制）、**按什么时间铺开**（分镜），外加把三者串起来的解说片配方。它要防住两种真实发生过的失败。一是**拿记忆冒充事实**：模型的记忆是看起来可信的生成内容，用记忆核对记忆，会把错的确认成对的。二是**管线的默认值决定了画面**：这里的默认指的是"挑实现成本最低的那个"这个动作，而不是某种固定长相，之前两支片子都因此画成了网格。所以本 skill 不列默认长相，只要求作者先写出本题的默认画法（候选 0），再用判据淘汰它。
+本 skill 负责片子进入画面编码之前的**立意、调研、脚本、传播设计与分镜编排**。它提供可按题型自由组合的方法论工具箱，**不规定固定的先后八股或单一审美套路**——硬套死流程只会把不同题材压成同一种腔调。
 
-本 skill 不负责：机制怎么实现（film-motion / film-typography / film-physics / film-webfx）；素材能不能用、授权、下载（film-assets）；旁白合成与时间戳（film-narration）；成片检查（film-critique）。和 film-assets 的分界是：这里判断"这个说法可信吗、出处在哪"，film-assets 判断"这个文件能不能用"。
+本 skill 不负责：画面渲染实现（film-motion / film-typography / film-physics / film-webfx）；素材授权与下载（film-assets）；语音合成与时间戳生成（film-narration）；成片质检（film-critique）。
 
-## 产出
+## 三条技术硬约束（其余皆是方法参考，按需取舍）
+
+1. **事实有据，不拿模型记忆冒充出处**：凡进入台词、屏幕或代码数据数组的客观数字、日期、专名与因果断言，都要查证原页并记入 `docs/facts.md`；搜索前先写 `memory-snapshot.md` 抓记忆偏差。纯虚构或纯视觉抽象片无需调研。
+2. **有声同步时只读实测时间**：旁白与画面同步的片子先经 `film-narration` 产出 `narration.json`（或配乐产出 `beats.json`），分镜时刻只写锚点与具名 `pads`，片头/片尾留白只写进 `film.json`（`narrationOffset` / `narrationTail`），手填猜测秒数会导致重录后全片错位。
+3. **状态断言在念读区间内成立**：台词一旦断言画面正在发生某种状态（"只剩一点余墨""延迟掉下来"），该状态在念这句话的区间里要在画面上真实成立。
+
+## 1. 按主题与传播目的选路（不写死先后顺序）
+
+不同题型的核心抓手、音画主从关系和创作起点不同，动笔前先选路，不必每支片子都走同一套顺序：
+
+| 题型与目标 | 适合从哪入手 | 音画关系怎么配 | 错套其他路线的代价 |
+|---|---|---|---|
+| **抽象原理 / 机制科普**（算法、物理、协议、金融机制） | **视觉机制先行或音画同写**：找准核心变量映射成连续演化的视觉变量（`references/mechanism.md`） | **音画同构**为主：画面自己演化因果，台词点破画面正在发生的事 | 若先写满篇书面解释再找图配，画面极易退化成网格卡片与箭头 PPT |
+| **历史 / 人物 / 事故与案例复盘** | **冲突弧线与调研先行**：抓反常结局、命运拐点与具体细节，按叙事权重而非物理年份分时长 | **证据 + 情绪对位**：关键处亮一手证据或尺度对比，不必把复杂人事硬压成单一数学变量 | 强套单一连续变量会让故事变得生硬做作；按时间均分则会让高潮一闪而过 |
+| **KOL 观点 / 行业洞察 / 认知拆解** | **核心论点与钩子先行**：像视频博主面对面拆解误区，靠反直觉判断、层层递进与金句抓人 | **音画对位与留白**：嘴上说表面常识、画面亮反差证据，或停顿半秒让画面自己说话 | 逐句按字面意思弹图标配图，会彻底沦为枯燥的动态朗读稿 |
+| **产品种草 / 商业营销 / 工具发布** | **受众痛点与转化弧线先行**：具体摩擦 → 旧法瓶颈 → 核心爽点实证（USP）→ 低门槛下一步（CTA） | **真实交互与前后反差**：把镜头给最痛那一步的前后对比（微距特写 + 拉远揭示），少堆砌功能清单 | 一上来报产品名罗列十项功能，非老粉会在前 3 秒划走 |
+| **品牌情绪 / 预告片 / 节拍视觉片** | **画面与节拍先行**（`--recipe visual`，`references/lookdev.md`）：先定镜头张力、风格帧与节拍栅格 | **画面主导，声音贴画面**：台词极简点睛或按定好的镜头时长回写 | 用长句旁白去驱动宣传片，镜头会被切成毫无呼吸感的等长配图 |
+
+## 2. 传播力、KOL 钩子与听觉文案设计
+
+完整方法、钩子原型表、留存机制与平台差异见 `references/creator-playbook.md`。动笔写 `brief.md` 与 `script.json` 时重点把握五件事：
+
+- **前 3 秒停留理由 + 0 秒静音首帧**：信息流里观众默认划走。开场优先用反常识颠覆、具象痛点嘴替、终局倒叙或极端数字反差建立"认知缺口"，避免百科定义式慢热开场；同时检查静音看前 2 秒画面与大字能否独立留人。
+- **中段完播滑梯**：避免前 3 秒抛完钩子就退回平行罗列。用未闭合悬念环（Open Loop）、逐层推翻浅解释的认知滑梯或中段节奏换挡（景别跳切、`[停顿 0.5]`）维持期待；高潮闭环后干脆收尾，非清单查阅片少做拖沓的尾部总结。
+- **说话姿态（Persona）与给耳朵写的口播**：先定"我是谁、在对谁说话"（同行老友拆解 / 冷静观察者 / 直给痛点的主理人），句式与 `film-narration` 的 `voices.py` 选角及 `instruction` 语气对齐。长定语拆短句、消解同音歧义、每 30 秒只留 1–2 个承重数字；合成前跑 `python3 <film-narration>/scripts/_timing.py estimate <script.json>` 摸底秒数，超长就砍字，别靠拉高倍速硬塞。
+- **社交货币与丝滑转化（CTA）**：明确本片主攻**转发**（替受众发声的凝练金句）、**收藏**（可复用的结构框架）还是**评论**（真实两难分岔）。营销转化片让产品作为痛点拆解后的自然解法出场，需要测试多组开场钩子或渠道 CTA 时配合 `content.json`（见 `<film-core>/references/content-json.md`）出变体。
+- **平台与画幅语境**：`9x16` 竖版对应被动刷屏，核心画面与字幕避开底部约 20% 文案遮挡区和右侧互动栏；`16x9` 横版对应主动点播，允许更完整的空间调度与论证纵深，不必照搬竖版短视频的催促腔。
+
+## 3. 模块化能力与工具（按需选用）
+
+### 产出文件概览（按片子需要裁剪）
 
 ```
 films/<slug>/docs/
-├── memory-snapshot.md  第一次搜索之前写的记忆快照                      ← 调研第 0 步
-├── facts.md            事实总表 + 详情段 + 核心变量 + 叙事骨架          ← 调研
-├── mechanism.md        核心变量、机制候选与结局、讲法                   ← 第 1–3 步
-├── shotlist.md         镜头表 + ```json spec（锚点/曲线/断言/关键帧）   ← 第 5–6 步
-└── style_guide.md      顶部：视觉方向候选与近作对照；其余：本片法律     ← 第 3 步末起草，第 7 步写完
+├── brief.md            目标、平台语境、受众起点/误区、说话姿态、调性换算数值
+├── memory-snapshot.md  搜索前写下的记忆快照（涉及客观事实调研时用）
+├── facts.md            事实总表 + 原文出处 + 叙事权重骨架（有事实断言时用）
+├── mechanism.md        视觉机制或叙事主轴、开场钩子、可选讲法比选
+├── shotlist.md         镜头设计与 ```json 可执行分镜 spec（多镜/音画对账时用）
+└── style_guide.md      参考锚、视觉方向与近作对照、配色/字体/运动/本片拒绝项
 ```
 
-另有两份可选产出：`look/<名>.html` 风格帧（一个视觉方向一页，比稿用）和画面先行配方的 `docs/beats.md`（节奏骨架）。
+另可选 `look/<名>.html`（风格帧比稿）与 `docs/beats.md`（`--recipe visual` 节奏骨架）。用 `node <film-core>/scripts/new-film.mjs <slug> --recipe explainer`（或 `visual`）可一键生成模板；字段细节见 `references/templates.md`，完整解说片协作流见 `references/explainer.md`。
 
-模板在 `assets/`（只有占位符，没有可以照抄的画面）；`node <film-core>/scripts/new-film.mjs <slug> --recipe explainer` 一次写齐，字段说明见 `references/templates.md`。
+### A. 调研与事实对账（涉及数据、历史、科学、外部事实时用）
 
-**解说片配方（可选）**的顺序是：brief、调研、机制、旁白（音频先行）、分镜（读实测时长）、实现、静帧闸门、渲染、自检、合流、deliver。唯一的技术约束是**有旁白时音频先行**：机制排在旁白之前，因为旁白要按机制写；分镜排在旁白之后，因为时长要读实测值。其余顺序只是推荐做法，非解说片怎么排、各步要点和声明的检查见 `references/explainer.md`。
+核心原则是**把"以为记得的"和"查到原文的"分开落盘**：
+1. **搜索前写 `docs/memory-snapshot.md`**：按打算上片的原话写下数字、事件日期（分清发生/发表/实施）、地点、人名与结论；搜完逐条比对，记错且易顺嘴说出的列为 `否决` 条目交给脚本守门。
+2. **读原页写 `docs/facts.md`**：搜索摘要不算来源，打开原页拿到原文句子才算；承重事实用独立双源或一手源。匹配词带单位（`22辆`、`30 km/h`）；有争议写明分歧与片中措辞；定性建构曲线写明锚点且画面不标精确刻度。详见 `references/facts-format.md`、`references/fact-check.md`、`references/tools.md`。
+3. **脚本对账**（自动剥离 `script.json` 里的 `[#语气]`、`[停顿 0.6]`、`[@区间]` 控制标记后核对数值、单位与状态）：
+   ```bash
+   node <film-story>/scripts/factcheck.mjs --film <slug>
+   node <film-story>/scripts/factcheck.mjs --film <slug> --also out/critique/onscreen.txt --strict
+   ```
 
-**先看后写（可选，`references/lookdev.md`）。** 长相和节奏只在文字里定，要到成片才第一次被看见，那时改动最贵。三件事把判断提前：**参考锚**（style_guide 写明审美参照谁、取什么、不取什么）、**风格帧比稿**（候选方向各画一帧，`stills.mjs --entries` 拼图后让用户挑）、**粗剪预演**（占位形状按真实时刻跑通，确认节奏后再精修）。镜头节奏比台词重要的片子（宣传片、片头、MV、logo 演绎）用**画面先行配方** `--recipe visual`：镜头先定，声音去贴。
+### B. 参考拆解与"先看后写"（防闭门造车与成片返工）
 
-# 调研与事实核查
+- **拆解同类好片**：拆对方怎么抓钩子、怎么映射核心关系、信息密度与运动手感（`scripts/motionprint.mjs` 测速度/静止占比/能量曲线），不照搬具体表皮。见 `references/deconstruct.md`。
+- **参考锚、风格帧比稿、粗剪预演**：在 `style_guide.md` 写清参考锚取什么不取什么；拿不准长相时先画 2–3 张静态风格帧拼图让用户挑，拿不准节奏时先用占位几何跑粗剪预演。见 `references/lookdev.md`。
+- **近作对照**：跑 `node <film-story>/scripts/siblings.mjs --film <slug>` 生成 `out/siblings.png`，看清仓库里已有片子的真实画面，决定本片要拉开哪些维度，还是作为系列片有意沿用。
 
-每一步都在做同一件事：**把"记得的"和"查到的"分开写进文件，方便比对。** 步骤依次是：0 写记忆快照，1 定核心变量，2 列候选事实，3 按判据分级，4 搜索并读原页，5 写入 facts.md，6 搭叙事骨架，7 旁白写完后对账。
+### C. 视觉机制与防默认诊断透镜（防退回廉价 PPT 模板）
 
-### 第 0 步：先写记忆快照，再搜索
+当片子需要一个贯穿全片的视觉主轴，或感觉初稿画面像通用卡片网格时，可用两套诊断透镜（详见 `references/mechanism.md`、`references/divergence.md`）：
+- **机制三刀诊断**：把核心变量映射到物质、空间、时间、文字、视角或力维度的视觉变量，检验：① **换题测试**（去掉专名套进菜谱/融资/一天还成立，说明只是通用容器而非专属机制）；② **自演化**（后续画面能否由规则自然推出）；③ **音画咬合**（画面是否在直接证明或有力对位台词，而非摆图标配图）。容器、图标与一次性变形都能用做局部辅助，只是撑不起整片主梁。
+- **"候选 0"与多方案比选（可选留痕）**：如果担心第一反应落回最偷懒的默认画法或百科流水账，先把那个第一反应显式写成"候选 0"，再跨类别想 1–2 个替代方案比对代价。若在 `film.json` 的 `checks` 显式加入 `"divergence"`，`check_shotlist.py` 会校验讲法、视觉方向与近作对照是否留下了比选或跳过理由。
 
-这是**唯一能发现"我记错了"的环节**：factcheck 只核对旁白和 facts.md 是否一致，而 facts.md 本身是从作者的记忆出发搜出来的。
-1. 在**第一次搜索之前**写 `docs/memory-snapshot.md`；搜索之后补写的不算，因为内容已经受到搜索结果影响。
-2. 每条写成**打算在片子里怎么说**的那句话，并标出把握（高/中/低）。要写的内容包括数字、日期**以及这是什么事件的日期**（发生/发表/公布/实施）、地点、机构、人名，以及现成的"一句话结论"。
-3. 搜完后逐条对照，在 facts.md 每条写 `记忆值: … —— 一致 / 错 / 不知道有分歧`。
-4. **记错了而且差点说出口的，登记成 `否决` 条目**，匹配词写那句错话；它如果再混进旁白，factcheck 会直接报错。判据：如果一条差异都没有，说明搜得不够细，或者只在找印证，应该回去搜反方观点、搜一手来源。
+### D. 镜头设计与可执行分镜（`shotlist.md`）
 
-### 第 1–6 步
+- **镜头设计**：每镜明确景别、机位角度、运动与**动机**（揭示、强调、跟随或对比什么）、视觉焦点、交棒方式。整片正面平铺不动是偷懒默认值，确需平面排版时在 `style_guide.md` 写明理由。运镜词汇、代价及 2D/CSS 3D/Three.js 实现指路见 `references/cinematography.md`、`references/vocabulary.md`。
+- **切镜与权重分配**：避免机械地每念完一句就切一镜同景别画面——按状态转折、情绪换挡或句中关键词揭示切镜更有呼吸感（快节奏排比金句除外）。物理跨度不等于叙事权重，重要转折在 `segments` 里单独绑定锚点区间，防止被线性时间压缩成 0.1 秒闪过。
+- **可执行 spec 与对账**（`shotlist.md` 首个 ```json 块，字段规范见 `references/templates.md`）：
+  - 锚点支持句/词边界（`s3`、`s3.end`、`s3@裂痕`、`s3@一#2`，大小写不敏感且遵守分词边界，与 `narration.js` `vo.at()` 一致）以及 `script.json` 里的语义区间（`span:rule`、`span:rule.end`）。
+  - 转场交叠可在顶层或单镜声明 `"overlap"`（秒数或 `pads` 名），与 `sequence(..., { overlap })` 对齐；未声明的重叠会报错。
+  - 曲线来源 `curves.source` 支持 `curve`（默认钉点插值）与仿真/实测类的 `scene` / `pixels` / `anchor`（见 `references/claims.md`）。
+  ```bash
+  python3 <film-story>/scripts/check_shotlist.py --film <slug> --write
+  ```
 
-- **核心变量**：20 秒的片子只能承载**一个**正在变化的量。解释它为什么变化的事实是关键事实，其余都是背景。同时写下**受众已经知道什么**。
-- **分级**：判据是"较真的评论区能不能指着它说你错了"，以及错了代价有多大；**只有进入画面或旁白的事实才算**，拿不准的按需要出处处理。判据表与六种状态见 `references/facts-format.md` 第 1–2 节。
-- **搜索，然后读原页**：搜索摘要不算来源，打开页面拿到原文句子才算；关键事实不能只靠百科。工具与已知坑见 `references/tools.md`；核查步骤、来源分级见 `references/fact-check.md`。
-- **写入 facts.md**：总表加上每条一个详情段，匹配词带单位（`22辆`、`30 km/h`）。格式与匹配规则见 `references/facts-format.md` 第 3–4 节；模板是 `assets/facts.template.md`。
-- **叙事骨架**：关键节点的**叙事权重（1–5）**和**物理时间跨度**分两列写。分镜按权重分配秒数，不按年份。
-- **争议、精度上限和定性曲线（建构）**：有分歧不能装作没有；来源给不出的精度不要硬说；国运、热度这类建构出来的量要有锚点，并且只用读不出具体数值的方式呈现。完整规则见 `references/fact-check.md` 第 4–5 节。产品 UI 类主题见 `references/facts-format.md` 第 6 节。
+### E. 本片法律（`style_guide.md`）
 
-### 第 7 步：对账
-
-```bash
-node <film-story>/scripts/factcheck.mjs --film <slug>                              # 旁白（script.json）里的每个数字都要在 facts.md 有记录
-node <film-story>/scripts/factcheck.mjs --film <slug> --also out/critique/onscreen.txt --strict   # 加上画面文字
-```
-
-值、单位和事实状态都要对得上；建构被念成精确数字、否决条目被写回旁白，都会直接报错；旁白还空着时只验证结构。退出码 0 表示通过，1 表示有错，2 表示前置文件缺失。细节见 `references/facts-format.md` 第 5 节。
-
-### 参考影片拆解
-
-拆解 2–3 支同类短片**是怎么做到的**（核心变量、映射到哪个视觉量、钩子、信息密度、高潮、旁白和画面谁带谁），不拆解它们**长什么样**（借用画面的代价是同质化和版权风险）。运动手感用数字对照（t80、峰值速度、静止占比、能量图；只测量，不评判），工具是 `scripts/motionprint.mjs`。方法与拆解表见 `references/deconstruct.md`。
-
-# 机制与分镜
-
-### 第 1 步：核心变量
-
-读 `docs/brief.md` 和 `docs/facts.md`，回答**什么东西在变？** 写 1–3 个核心变量，每个带上**变化形状**（断崖、渐变、振荡、阈值翻转、累积、分岔……）。facts.md 看不出形状就回去调研；自己编出来的曲线，会让整支片子建立在没有出处的形状上。
-
-### 第 2 步：机制
-
-**机制是一条把核心变量映射到某个视觉变量的规则，整支片子靠它撑起来。** 每个候选写成固定句式：
-
-> **[核心变量] 就是 [视觉变量]**，因为 [主题自身的什么性质]。它自己会 [怎么演化]。旁白可以直接说："[一句画面正在做的事]"。
-
-**三刀判据，按顺序检验**（操作细节、四种"不是机制"的东西、正反案例见 `references/mechanism.md`）：
-
-1. **换题测试**：去掉名词只留句子骨架，套进三个固定对照题（一道菜的做法 / 一家公司的融资轮次 / 一个人的一天），看"因为"子句还成不成立。如果理由来自渲染层面（清楚、好排、整齐、好实现、观众熟悉），就判定它只是容器。能在同类主题之间迁移不算失败。
-2. **它自己会演化吗？** 后面的画面是由规则推出来的，还是要一镜一镜另外构思？
-3. **旁白能不能直接说出画面正在做的事？** 如果旁白只能"介绍"、画面只是在"配图"，说明两个变量没有接上。
-
-**候选 0 是本题的默认画法**（协议就画时序图，历史就画时间轴，数据就画柱子，清单就画网格），要把它当正式候选去过三刀，**让判据淘汰它，而不是作者主动回避它**。brief 明文排除的画法也照样写、照样过三刀，另外标注"brief 禁止"。然后再发散出 2–3 个**视觉变量属于不同类别**的候选（同一类换个外观不算新候选；再想一个只会更弱时就停止）。类别有：**物质**（浓度、湿度、温度、重量、硬度、磨损、腐蚀、结晶）、
-**空间**（距离、领土、拓扑、遮挡、尺度）、**时间**（速度、节律、延迟、残影、回放）、**文字**（可读性、字重、排列、字即物体）、**视角**（谁在看、看得到什么、离多远）、**力**（重力、张力、平衡、压强）。
-
-如果选定的恰好是**实现成本最低**的那个，要多写一句"主题为什么需要它，除了它好写"，写不出来就重选。**以下情况可以跳过发散**：brief 已经给定机制（只过三刀，没通过就告诉用户是哪一刀没过）；系列片沿用已有的 style_guide；第一个候选三刀全部通过，而且清楚它为什么属于这个主题（仍要写候选 0）。**不能跳过的情况**：一看就知道怎么拍的主题，那个"知道"多半就是默认画法。
-
-**两个候选都通过三刀时**，优先选能演出核心变量**完整形状**的那个，其次比较代价（`references/mechanism.md` 第 5 节）。候选的结局有四种：选定、死于刀 N、两个都通过但落选（写明取舍）、**吸收**（撑不起整支片子，但对钩子镜头等关键镜头有用，写明进 style_guide 哪一节）。mechanism.md 还要写机制的**状态变量**（会进入 shotlist 的 curves，如"墨量 0..1"）和机制**不负责**的东西。容器可以出现在片子里，只是不能靠它撑起整支片子。
-
-### 第 3 步：确定机制后再发散两次：讲法和长相
-
-写法同上（候选 0 是默认值，其余候选分属不同类别）。方法、类别表、判据、跳过条件见 `references/divergence.md`。
-- **讲法**（写在 mechanism.md「讲法」一节，在旁白草稿之前）：用两刀检验，一是最关键的那一刻是不是高潮，二是讲法有没有一路走向观众能复述的那句话。
-- **长相**（写在 style_guide.md 顶部「视觉方向」，在排分镜之前；候选在像素上比更可靠，见 `references/lookdev.md` §2）：先运行 `node <film-story>/scripts/siblings.mjs --film <slug>` 并打开 `out/siblings.png`；这里的候选 0 是最省事的画法加上上一支片子的长相。
-- **近作对照**（写在 style_guide「近作对照」）：点名可能撞脸的片子，写明拉开了哪些差别，或者有意重复了什么、为什么。
-
-### 第 4 步：让旁白和画面同构，然后交给 film-narration
-
-mechanism.md 附一版旁白草稿，每句说的都是画面在那一刻正在做的事。有两条约束会被脚本检查。一是**旁白每断言一次机制状态，这个状态在念这句话的整个区间里都必须为真**（"只剩一点余墨"念 4 秒，余墨就得 4 秒都在）。二是重要事件要有自己的一句话，至少有一个词；没有可以锚定的字，它就分不到时长。
-
-### 第 5 步：分镜（读 narration.json）
-
-旁白合成之后再开始；没有 narration.json 时 `check_shotlist.py` 直接报错，不去猜时间。
-- **每个镜头都要有镜头设计，写进 shotlist**：景别、机位与角度、运动、**这次运动的动机**（揭示、强调或跟随什么）、焦点在哪、怎么交棒。**平铺是候选 0**（所有元素正面摆满、镜头不动），要用平铺就在 style_guide 写出理由。词汇与代价、只改镜头就过关的样例、实现指路、CSS 3D 的坑见 `references/cinematography.md`。
-- **按机制状态切镜头，不按句子切**：一个镜头对应状态变量的一个阶段（爬升、顶点、断裂、衰减），旁白句子只用来定位时刻。
-- **叙事权重和物理时长是两回事**：把自变量（年份、字节、金额）线性映射到秒，最重要的转折可能一闪而过（唐片里安史之乱实测只占 0.111 秒）。做法是分段映射，把钉点对齐到旁白锚点上（`"年份": [["s3@裂痕", 755], ["s3.end", 757]]`），再在 `segments` 里声明重要区间和权重，由脚本量出它实际拿到几秒。
-- **交棒**：机制驱动的片子，最自然的交棒是状态变量本身的延续；只有主题里真有断裂的地方才硬切。要固定某处交接，可以写可选字段 `carry`（场景登记的锚点名，film-critique 的 `continuity` 能据此对上）。其他手法与代价见 `references/vocabulary.md`。
-- **关键帧**（给静帧闸门用，3–5 个，锚定在词上）各写一段**剪影描述**（没听旁白的人眯着眼看 360px 宽的画面，会说"这是什么形状"；逐个写出位置和大小）和**形似风险**（要像什么、不能像什么；速查表在 `references/vocabulary.md`）。
-
-### 第 6 步：可执行 spec 与对账
-
-`shotlist.md` 由两部分组成：给人看的镜头表，和一个给机器读的 ```json 块，包含 `pads`（唯一允许写秒数的地方）、`shots[]`、`curves{}`、`segments[]`、`claims[]`、`keyframes[]`。逐字段写法、锚点语法（`s3`、`s3.end`、`s3@裂痕`、`s3@一#2`、`+pad名`；**写数字字面量会报错**）和 `pixels` 规格见 `references/templates.md`。锚点都是成片时间；片头/片尾留白只在 film.json 里写（`narrationOffset` / `narrationTail`）。实现方用同一套锚点调用 `vo.at()`，曲线照 `curves` 写，钉点值不能改。
-
-```bash
-python3 <film-story>/scripts/check_shotlist.py --film <slug>          # 检查（任意 cwd；--film 也可以给目录）
-python3 <film-story>/scripts/check_shotlist.py --film <slug> --write  # 检查，并把实测时间表写回 shotlist.md
-```
-
-它检查六项：0 留白对账（与 film.json 一致）；1 时刻从哪来；2 覆盖（镜头首尾相接、不重叠，每句旁白都有镜头负责）；3 重要区间的屏幕时长（`--floor`，默认 1.0s）；4 每条旁白断言在实测区间上是否逐毫秒为真；5 发散留痕（声明了 `divergence` 才查）。exit 1 表示分镜有 bug，exit 2 表示输入缺失或格式错误。它**不**检查构图和形似。`rising` / `falling` 只比较区间首尾的值；旁白说"正在发生"时，要再补一条水平断言。
-
-**断言验证的是意图还是画面（`curves.source`）**：脚本验证的是**作者钉下的曲线**。如果关键变量由仿真、物理库或数据推出，曲线就和画面脱钩了，脚本照样会通过。判断方法是**改钉点测试**：改掉钉点值后画面跟着变，就用 `source: curve`（默认）；画面不变，就标 `scene` / `pixels` / `anchor`，由 film-critique 的 `check.mjs` 在实现之后逐帧验证。三种来源各验证什么、各有什么代价见 `references/claims.md`。
-
-### 第 7 步：style_guide.md（本片法律）
-
-把「视觉方向」展开成配色、字体、运动和拒绝项，手法从 `references/vocabulary.md` 选；brief 调性里的形容词先换算成数值（`references/templates.md`「docs/brief.md」）。style_guide 是唯一能写"本片不用 X"的地方，可以覆盖任何 skill 的默认值；
-**每条拒绝都要指回机制或 brief**，写不出"因为"的只是口味，删掉。film-critique 的打分项里，**"机制是否承重"本身就是一项**。分镜层的典型问题（脸、一闪而过、音画矛盾、形似）以及该在哪一步发现，见 `references/mechanism.md` 第 6 节。
-
-## 硬约束与可选留痕
-
-**技术约束**（有旁白、用 shotlist 时适用；违反了就会音画错位）：时刻只能是 narration 锚点或具名 pad；没有 `narration.json` 就不排时间轴；旁白断言在念的区间里要在**画面**上成立；留白只写在 film.json。
-**流程留痕（候选 0、视觉方向、近作对照、讲法）是推荐做法**：走别的思路（Lottie、游戏、MV、生成艺术）的片子可以不走这套流程；这里只要求留下记录，不规定选什么。
+汇总本片的配色、字体、运动数值、形似风险（关键帧剪影要像什么、避免误看成脸或齿轮）以及"本片拒绝项"。每条拒绝都指回本片目标、机制或平台语境（写得出"因为什么代价不值得付"才写入，不写无理由的个人口味）。
 
 ## 声明的检查（`gates.json`）
 
-film.json `checks` 里的 id 与门的对应关系：`shotlist` 对应门 shotlist，运行 `check_shotlist.py` 第 0–4 项，同时声明了 `divergence` 时加查第 5 项；`divergence` 也对应门 shotlist，只声明它时只查发散留痕（格式宽松、实质严格，见 `references/divergence.md` 第 5 节）；`facts.script` 对应门 factcheck，运行 `factcheck.mjs` 做旁白数字对账。
-accept --deep 和 deliver 按声明运行；`--recipe explainer` 会声明全部三项。其他一切（用不用网格、淡入、居中、留白多久）都由本片 style_guide 决定。
-
-## 交付前自检
-
-- [ ] memory-snapshot.md 写于第一次搜索之前，facts.md 每条都有 `记忆值` 对照，且至少有一条"和记忆不一样"
-- [ ] 记错且可能被说出口的都登记成了 `否决`；旁白、屏幕文字、**代码里的数据数组**中的每个数都能对应到一条 id
-- [ ] 每条建构都有锚点和呈现方式；叙事骨架的权重和物理跨度分开写
-- [ ] mechanism.md 有候选 0 及其结局、选定机制的状态变量；style_guide 有视觉方向与近作对照
-- [ ] `factcheck.mjs` 与 `check_shotlist.py` 都 exit 0；关键帧写了剪影描述与形似风险；每个镜头写了镜头设计（用平铺的写了理由）
+`film.json` 的 `checks` 按需声明：`shotlist` 运行 `check_shotlist.py` 第 0–4 项（留白、锚点、覆盖与 `overlap`、重要区间时长、旁白状态断言）；`divergence`（可选）加查讲法、视觉方向与近作对照留痕；`facts.script` 运行 `factcheck.mjs` 核对台词事实与数字。`--recipe explainer` 默认开启 `shotlist` 与 `facts.script`（需强制比选留痕时再加 `divergence`）。
 
 ## 下层文件
 
-- 调研：`references/facts-format.md`（判据、状态、格式、匹配词、factcheck、产品 UI）· `references/fact-check.md`（核查步骤、来源分级、争议、建构）· `references/tools.md`（工具与已知坑）· `references/deconstruct.md`（参考片拆解、motionprint）
-- 机制与分镜：`references/mechanism.md`（判据、案例、代价）· `references/divergence.md`（讲法、长相、近作、门）· `references/templates.md`（产出文件字段、shotlist json）· `references/claims.md`（`curves.source`）· `references/vocabulary.md`（转场/节奏/构图/形似） · `references/cinematography.md`（镜头设计、运镜代价、实现指路）
-- 先看后写与画面先行：`references/lookdev.md`（参考锚、风格帧比稿、粗剪预演、`visual` 配方）
-- 配方 `references/explainer.md`、`assets/recipes/explainer/`、`assets/recipes/visual/`；模板 `assets/`；`scripts/factcheck.mjs` · `scripts/check_shotlist.py`（`--plan` / `--verdict` 给 film-critique，`--divergence` 给 siblings）· `scripts/siblings.mjs` · `scripts/motionprint.mjs`
+- 传播与脚本：`references/creator-playbook.md`（前 3 秒钩子、静音首帧、中段留存、KOL 听觉口播与人设、传播驱动力与营销转化弧线、平台画幅语境）
+- 调研与拆解：`references/facts-format.md`（分级、状态、格式、匹配规则、产品 UI）· `references/fact-check.md`（核查步骤、来源分级、争议与建构）· `references/tools.md`（搜索与 PDF 工具坑）· `references/deconstruct.md`（参考片拆解、`motionprint`）
+- 机制、镜头与分镜：`references/mechanism.md`（机制判据、适用边界、正反案例、代价）· `references/divergence.md`（讲法/视觉方向/近作比选与可选 `divergence` 门）· `references/cinematography.md`（运镜词汇与代价、实现指路、CSS 3D 坑）· `references/vocabulary.md`（转场/节奏/构图/形似菜单）· `references/templates.md`（各文档字段与 shotlist json 规范）· `references/claims.md`（`curves.source` 选型）
+- 先看后写与配方：`references/lookdev.md`（参考锚、风格帧比稿、粗剪预演、`visual` 配方）· `references/explainer.md`（解说片协作流）· 配方 `assets/recipes/explainer/`、`assets/recipes/visual/` · 模板 `assets/` · 脚本 `scripts/factcheck.mjs`、`scripts/check_shotlist.py`、`scripts/siblings.mjs`、`scripts/motionprint.mjs`

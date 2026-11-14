@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "name": "explainer",
-  "tags": ["解说片", "科普", "旁白先行", "调研", "分镜", "explainer"],
-  "about": "解说片配方：brief → 调研 → 机制 → 旁白（音频先行）→ 分镜 → 实现 → 静帧 → 渲染 → 自检 → 合流 → 交付。写全套文档模板，并在 film.json checks 声明这套流程用到的检查。",
+  "tags": ["解说片", "科普", "KOL观点", "种草转化", "旁白先行", "调研", "分镜", "explainer"],
+  "about": "旁白与叙事配方：按主题选切入路线（原理机制 / 冲突故事 / KOL观点 / 痛点种草），音频先行拿实测时长再排分镜，写出模板并声明常用客观检查。",
   "files": [
     { "dest": "docs/brief.md", "from": "brief.md" },
     { "dest": "docs/PROGRESS.md", "from": "PROGRESS.md" },
@@ -16,17 +16,16 @@
                     "speechRate": 0, "gap": 0.6, "pronunciationDict": { "tone": [] }, "lines": [{ "id": "s1", "text": "" }] } }
   ],
   "film": { "narrationOffset": 0, "narrationTail": 0 },
-  "checks": ["shotlist", "divergence", "facts.script", "facts.screen", "verify",
+  "checks": ["shotlist", "facts.script", "facts.screen", "verify",
              "narration", "mp4", "truepeak", "loop", "readability", "contrast", "style-guide",
              "laws", "still", "empty", "marks", "claims", "tilt", "page"],
   "next": [
-    "1. 填 docs/brief.md —— 时长和画幅先定，改动成本最高",
-    "2. 调研 → docs/facts.md",
-    "3. 机制 → docs/mechanism.md + docs/style_guide.md（机制 → 讲法 → 视觉方向，三次发散都留痕）",
-    "4. 旁白 → narration.json（音频先行，时长从这来）",
-    "5. 分镜 → docs/shotlist.md",
-    "6. 写 scene.html（守 film-core references/kernel.md）",
-    "7. 静帧闸门，别直接渲整片",
+    "1. 填 docs/brief.md —— 先定画幅、时长、传播目标与说话姿态（人设）",
+    "2. 涉及客观数据/历史/外部事实时做调研 → docs/memory-snapshot.md + docs/facts.md",
+    "3. 按题型定主轴、前 3 秒钩子与视觉方向 → docs/mechanism.md + docs/style_guide.md（可跑 siblings.mjs 看近作）",
+    "4. 写听觉化台词进 script.json（先跑 _timing.py estimate 估时长），再合成 narration.json",
+    "5. 按实测锚点排分镜 → docs/shotlist.md（跑 check_shotlist.py --write）",
+    "6. 写 scene.html（守 film-core references/kernel.md），先过静帧闸门再渲整片",
     "中途停下时在 docs/PROGRESS.md 记当前问题和下一步（几行，过时就删）"
   ]
 }

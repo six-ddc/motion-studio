@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "film-core" / "lib"))
 import film as core  # noqa: E402  film-core 的找片 / 参数守卫 / checks 读取
 
-PUNCT = re.compile(r"[\s，。、！？；：,.!?;:“”\"'（）()《》…—-]")
+PUNCT = re.compile(r"[\s，。、；：！？,.;:!?\"'“”‘’()（）《》—…·\-]")
 BEGIN, END = "<!-- timeline:begin -->", "<!-- timeline:end -->"
 
 
@@ -41,7 +41,7 @@ def die(msg, code=2):
 
 class Timeline:
     """把锚点字符串解析成秒。锚点语法：
-       start | end | vo.end | s3 | s3.start | s3.end | s3@裂痕 | s3@裂痕.end | s3@一#2
+       start | end | vo.end | s3 | s3.start | s3.end | s3@裂痕 | s3@裂痕.end | s3@一#2 | span:rule | span:rule.end
        后面可接 +pad名 / -pad名（pad 在 pads 里具名声明）。
     """
 
@@ -49,6 +49,7 @@ class Timeline:
         self.lines = {l["id"]: l for l in nar.get("lines", [])}
         if not self.lines:
             die("narration.json 里没有 lines[]")
+        self.spans = nar.get("spans") or {}
         self.pads = pads
         self.off = float(off)          # film.json narrationOffset：旁白第 0 秒落在成片第几秒
         self.tail = tail               # film.json narrationTail（没写时退回 shotlist pads.tail，并提示迁过去）；None = 没声明
@@ -63,21 +64,31 @@ class Timeline:
         return float(self.pads[name])
 
     def _word_span(self, line, word, nth):
-        chars, owner = [], []
+        # Match film-narration/assets/runtime/narration.js: strip punctuation, casefold, and enforce token boundaries.
+        chars, owner, word_start = [], [], set()
         for i, w in enumerate(line.get("words", [])):
-            for ch in PUNCT.sub("", w["w"]):
+            k = PUNCT.sub("", w["w"]).lower()
+            if not k:
+                continue
+            word_start.add(len(chars))
+            for ch in k:
                 chars.append(ch)
                 owner.append(i)
         text = "".join(chars)
-        target = PUNCT.sub("", word)
-        pos, k = -1, 0
-        while k < nth:
+        target = PUNCT.sub("", word).lower()
+        if not target:
+            raise ValueError(f"关键词「{word}」去掉标点后为空")
+        word_end = lambda p: p == len(text) or p in word_start
+        pos, seen = -1, 0
+        while True:
             pos = text.find(target, pos + 1)
             if pos < 0:
-                raise ValueError(f"{line['id']} 里找不到第 {nth} 个「{word}」（该句文本：{line['text']}）")
-            k += 1
-        ws = line["words"]
-        return ws[owner[pos]]["start"], ws[owner[pos + len(target) - 1]]["end"]
+                raise ValueError(f"{line['id']} 里找不到第 {nth} 个「{word}」（共见到 {seen} 次；该句文本：{line['text']}）")
+            if pos in word_start and word_end(pos + len(target)):
+                seen += 1
+                if seen == nth:
+                    ws = line["words"]
+                    return ws[owner[pos]]["start"], ws[owner[pos + len(target) - 1]]["end"]
 
     def resolve(self, a):
         if isinstance(a, (int, float)):
@@ -104,6 +115,10 @@ class Timeline:
             if self.tail is None:
                 raise ValueError("用了锚点 end，但 film.json 没有 narrationTail（片尾留白，秒）")
             return self.vo_end + self.off + float(self.tail)
+        sm = re.fullmatch(r"span:([A-Za-z0-9_.\u4e00-\u9fff]+?)(?:\.(start|end))?", b)
+        if sm:
+            sa, sb = self.named_span(sm.group(1))
+            return sa if (sm.group(2) or "start") == "start" else sb
         m = re.fullmatch(r"([A-Za-z0-9_]+)(?:@([^.#]+)(?:#(\d+))?)?(?:\.(start|end))?", b)
         if not m or m.group(1) not in self.lines:
             raise ValueError(f"锚点 {b!r} 指向不存在的旁白句（已有：{', '.join(self.lines)}）")
@@ -113,6 +128,13 @@ class Timeline:
         else:
             s, e = line["start"], line["end"]
         return (s if edge == "start" else e) + self.off
+
+    def named_span(self, sid):
+        if sid not in self.spans:
+            have = ", ".join(self.spans) or "无"
+            raise ValueError(f"语义区间 {sid!r} 在 narration.json spans 里不存在（已有：{have}）")
+        sp = self.spans[sid]
+        return sp["start"] + self.off, sp["end"] + self.off
 
     def line_span(self, lid):
         l = self.lines[lid]
@@ -462,7 +484,7 @@ def divergence(film):
                             "见 references/divergence.md")
         out["rows"].append("  --  讲法      没有这一节（只警告）")
     else:
-        errs, summ, _ = _judge(_candidates(body), body, "讲法", need_default=True)
+        errs, summ, _ = _judge(_candidates(body), body, "讲法", need_default=False)
         out["errors"] += errs
         out["rows"].append(f"  {'OK ' if not errs else 'BAD'} 讲法      「{name}」 {summ}")
     return out
@@ -563,9 +585,38 @@ def main():
             errors.append(f"镜头 {s['id']}: 结束 {b:.3f} 不晚于开始 {a:.3f}")
         shots.append((a, b, s))
     shots.sort(key=lambda x: x[0])
+    def _overlap_limit(raw, label):
+        if raw is None:
+            return 0.0
+        if isinstance(raw, str):
+            v = tl._pad(raw)
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            v = float(raw)
+        else:
+            raise ValueError(f"{label} 的 overlap 必须是非负秒数或 pads 里的名字，写的是 {raw!r}")
+        if v < 0:
+            raise ValueError(f"{label} 的 overlap 不能为负（{v}）")
+        return v
+
+    default_ov = 0.0
+    if "overlap" in spec:
+        try:
+            default_ov = _overlap_limit(spec.get("overlap"), "shotlist 顶层")
+        except ValueError as e:
+            errors.append(str(e))
+
     for (a0, b0, s0), (a1, b1, s1) in zip(shots, shots[1:]):
-        if a1 < b0 - 1e-3:
-            errors.append(f"镜头 {s0['id']} 与 {s1['id']} 重叠 {b0 - a1:.3f}s")
+        max_ov = default_ov
+        if "overlap" in s1:
+            try:
+                max_ov = _overlap_limit(s1.get("overlap"), f"镜头 {s1.get('id', '?')}")
+            except ValueError as e:
+                errors.append(str(e))
+        if a1 < b0 - max_ov - 1e-3:
+            if max_ov > 0:
+                errors.append(f"镜头 {s0['id']} 与 {s1['id']} 重叠 {b0 - a1:.3f}s（超过声明的 overlap {max_ov:g}s）")
+            else:
+                errors.append(f"镜头 {s0['id']} 与 {s1['id']} 重叠 {b0 - a1:.3f}s")
         elif a1 > b0 + 1e-3:
             warns.append(f"镜头 {s0['id']} → {s1['id']} 之间空 {a1 - b0:.3f}s 没人负责（有意留白就补一个镜头写明）")
     for lid in tl.lines:
@@ -676,7 +727,7 @@ def main():
     for i, c in enumerate(spec.get("claims", [])):
         try:
             if "span" in c:
-                sa, sb = (tl.resolve(c["span"][0]), tl.resolve(c["span"][1]))
+                sa, sb = tl.named_span(c["span"]) if isinstance(c["span"], str) else (tl.resolve(c["span"][0]), tl.resolve(c["span"][1]))
             else:
                 sa, sb = tl.line_span(c["line"])
             if c.get("op") not in (*OPS, "rising", "falling", "steady"):

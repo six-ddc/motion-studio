@@ -205,13 +205,21 @@ const CN_CASES = [
     if (bad.length) console.log(bad.map(b => '      ✗ ' + b).join('\n'));
   }
 }
-// 端到端：省略写法后面直接跟量词
+// 端到端：省略写法后面直接跟量词 + film-narration 行内标记剥离
 cases.push(
   { name: 'cn-elided-unit', expect: 0, why: '"三百五米"应 = 350米，命中匹配词 350米',
     facts: build(['| F01 | 长 350 米 | 350米 | 数字 | 支撑 | 已核 | 高 |'], [`### F01 x\n${SRC}`]), lines: L('全长三百五米。') },
   { name: 'red-cn-elided', expect: 1, why: '"三百五米"不能命中 305米（旧解析会放过）',
     facts: build(['| F01 | 长 305 米 | 305米 | 数字 | 支撑 | 已核 | 高 |'], [`### F01 x\n${SRC}`]), lines: L('全长三百五米。'),
     err: [/三百五米.*=350/] },
+  { name: 'inline-markup-ok', expect: 0, why: 'script.json 含 [停顿 0.6]、[停顿 600ms]、[#语速 0.8]、[@id1]…[@/id1] 时不误把标记内数字当成事实数字',
+    facts: build(['| F01 | 22 辆车 | 22辆 | 数字 | 承重 | 已核 | 高 |', '| F02 | 230 米 | 230米 | 数字 | 支撑 | 已核 | 高 |'],
+      [`### F01 x\n${SRC}`, `### F02 y\n${SRC}`]),
+    lines: L('[#用 0.8 倍慢速说]二十二辆车，[停顿 0.6]围成一圈，【pause 600ms】在[@span1]二百三十[@/span1]米的轨道上开。') },
+  { name: 'inline-markup-red', expect: 1, why: '剥离行内控制标记后，正文里真正的错数（二十三辆）仍必须抓到',
+    facts: build(['| F01 | 22 辆车 | 22辆 | 数字 | 承重 | 已核 | 高 |'], [`### F01 x\n${SRC}`]),
+    lines: L('二十三辆车，[停顿 0.6]围成一圈。'),
+    err: [/二十三辆.*=23/] },
 );
 
 for (const c of cases) {

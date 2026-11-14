@@ -921,3 +921,20 @@ style_guide 拒绝条目的样例（原在 SKILL.md 第 7 步，只说明格式"
 
 没测到：没有用这个配方做过一支完整的片子；"在像素上挑方向比在文字上挑更好"是判断，没有对照实验；
 `docs/neutrality-eval.md` 的盲测还没按新流程重跑。
+
+## 去教条化重构、KOL 传播方法论与跨 skill 对账修复（2026-11-14）
+
+改动项与实测结果：
+
+1. **`factcheck.mjs` 剥离 `film-narration` 行内控制标记**：
+   - 修复前：`script.json` 台词含 `[停顿 0.6]`、`[pause 600ms]`、`[#用 0.8 倍慢速说]`、`[@span1]…[@/span1]` 时，标记内数字（`0.6`、`600`、`0.8`）被抽成旁白事实数字报错，且夹在数字与单位之间的 `[@/span1]` 会打断单位匹配。
+   - 修复后：按 `_markup.py` 同构规则在抽数前剥离 `#`/`＃`、`@`/`＠`、`停顿|停|pause` 三类方括号/全角方括号控制标记（未识别方括号保留原样，不掩盖误写）。
+   - 回归：`dev/film-story/selftest.mjs` 新增 `inline-markup-ok`（exit 0）与 `inline-markup-red`（同句正文真错数 `二十三辆` 仍 exit 1），全套 24/24 通过；`align.py --selftest` 40/40 通过，与 `factcheck.mjs` 的 33 个数字归一交叉校验 0 分歧。
+2. **`check_shotlist.py` 与 `narration.js` 锚点边界对齐 + `span:<id>` + `overlap`**：
+   - `Timeline._word_span` 改为去标点、小写归一并校验 `narration.json` 的词边界（`word_start` / `word_end`），与 `narration.js` `locate()` 完全一致：`s1@https` 命中 `HTTPS` token（exit 0），跨词内子串（单 token `"长安"` 查 `s1@安`）报找不到（exit 1）。
+   - 新增语义区间锚点 `span:<id>` / `span:<id>.end` 及 `claims[].span` 字符串区间名支持，打通 `script.json` 的 `[@id]…[@/id]`。
+   - 新增转场交叠声明 `overlap`（顶层默认或单镜覆盖，支持非负秒数或 `pads` 名）：声明范围内交叠 exit 0，未声明或超限交叠 exit 1。
+   - 现有夹具 `tang-bug`（exit 1）、`tang-fix`（exit 0）、`tang-hand`（exit 2）、`blank`（exit 1）全部保持原判。
+3. **方法论去教条化与 KOL 传播参考（`references/creator-playbook.md`）**：
+   - `SKILL.md` 拆掉固定单轨八股，改为题型路由表（原理机制 / 冲突故事 / KOL 观点 / 痛点种草 / 视觉先行）+ 按需模块；`--recipe explainer` 默认 `checks` 移除强制填表的 `divergence`（保留 `gates.json` 与 `check_shotlist.py` 对显式声明 `divergence` 的完整支持，且讲法比选不再强求命名 `候选 0`）。
+   - 用 `new-film.mjs` 在临时目录验证 `--recipe explainer` 与 `--recipe visual` 模板生成无残留占位符，`selfcheck.mjs` 0 不合格。

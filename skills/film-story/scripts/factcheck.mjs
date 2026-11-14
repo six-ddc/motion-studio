@@ -271,7 +271,20 @@ try { script = JSON.parse(fs.readFileSync(scriptPath, 'utf8')); }
 catch (e) { die(`${scriptPath} 不是合法 JSON：${e.message}`); }
 if (!Array.isArray(script.lines)) die(`${scriptPath} 没有 lines[] 数组`);
 
-const texts = script.lines.map((l, i) => ({ where: `script.json ${l.id ?? '#' + (i + 1)}`, text: String(l.text ?? '') }));
+// Strip film-narration inline control markup ([#...], [停顿 0.6], [pause 600ms], [@id]...[@/id], and 【...】)
+// before extracting numbers/terms from script.json, matching film-narration/scripts/_markup.py.
+const INLINE_MARK = /\[([^\[\]]*)\]|【([^【】]*)】/g;
+const INLINE_SPAN = /^[@＠]\/?\s*[0-9A-Za-z_.\-\u4e00-\u9fff]+$/;
+const INLINE_PAUSE = /^(?:停顿|停|pause)\s*(?:[0-9]*\.?[0-9]+)\s*(?:ms|s|秒|毫秒)?$/i;
+function stripInlineMarkup(s) {
+  return String(s ?? '').replace(INLINE_MARK, (full, a, b) => {
+    const body = (a ?? b).trim();
+    if (body.startsWith('#') || body.startsWith('＃') || INLINE_SPAN.test(body) || INLINE_PAUSE.test(body)) return '';
+    return full;
+  });
+}
+
+const texts = script.lines.map((l, i) => ({ where: `script.json ${l.id ?? '#' + (i + 1)}`, text: stripInlineMarkup(l.text) }));
 for (const f of opt.also) {
   const p = path.resolve(filmDir, f);
   if (!fs.existsSync(p)) die(`--also 指定的文件不存在：${p}`);
@@ -337,7 +350,7 @@ const bare = facts.filter(f => f['类型'] === '数字' && ['已核', '单源', 
 if (bare.length)
   infos.push(`裸数字匹配词会命中任何单位的同值数（"22"也放过"22米"）：${bare.join('、')} —— 写上单位（"22辆"）能收紧`);
 if (!fs.existsSync(path.join(filmDir, 'docs', 'memory-snapshot.md')))
-  infos.push('没有 docs/memory-snapshot.md —— 搜索前的记忆快照是这道门之外唯一能抓"记错了"的环节，见 SKILL.md 第 0 步');
+  infos.push('没有 docs/memory-snapshot.md —— 搜索前的记忆快照是这道门之外唯一能抓"记错了"的环节，见 SKILL.md「调研与事实对账」');
 
 for (const r of report) if (r.level === 'error') errors.push(`${r.where}: ${r.msg}`); else if (r.level === 'warn') warns.push(`${r.where}: "${r.raw}" ${r.msg}`);
 
