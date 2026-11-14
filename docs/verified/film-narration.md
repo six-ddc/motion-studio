@@ -1183,3 +1183,39 @@ boom 直流 0.00884、land 0.00488；metal 缓冲固定 0.5 s（ring 4 时在 �
 **没测到**：本机没有 ffmpeg——配乐 duck 段只用一个本地极简替身（16 位/浮点 WAV → f32le）跑通，真 ffmpeg 读 32 位浮点 WAV 和 `mux.sh` 合流没在这台机器上跑；
 `cli.mjs` 在没有 ffmpeg 时会在配乐段红并写明原因。仓库根没有 `.venv`，`measure.py`（新加了直流 < 1e-3 断言）没跑，`dev/test.mjs` 遇到没有 .venv 时跳过并说明。
 20 Hz 高通让 boom（27 Hz 底）和 sub（30 Hz 底）最低频约弱 0.8–1.3 dB，没有人耳对比。
+
+## 2026-11-14 雨声床配方 `rain`、mux 浮点中间文件、.venv 下的旁白测试
+
+**来由**：雨夜样片（films/forge，不入库）想要雨声，`RECIPES` 里全是冲击/瞬态，没有连续环境床，只好不放。
+
+**`rain` 的做法**（`sfxdsp.mjs` `rainBed`）：两路独立白噪声按 `width` 混 → 300 Hz 高通 + 5.2 kHz·bright 低通 → 1.3 s 一节点的余弦插值阵风（±25 %，左右共用），
+电平 `0.05·wash·√(density/100)`（远处雨滴的叠加按 √N 长）；每滴：起点均匀、大小 u^2.5（小滴多）、带通噪声激励（fc 1.8–6.5 kHz × bright × 大小 × 硬度，Q = 0.6 + 5·hard²），
+hard > 0 时 fc 处加 0.35·hard² 的衰减正弦振铃（τ 1.5–11.5 ms，截在 5τ），`pool` 比例的滴后接 Minnaert 式上扬啁啾；按落点等功率声像；distance > 0 再整体低通（1 ≈ 1.9 kHz）。
+20 Hz 去直流后左右各自 `loopXfade`（0.5 s 交叉），两路**一起**峰值归一到 0.9（保住左右电平差）。`density`、`hard` 没有默认值（`rain` 不写它们直接报错并给参考量级）。
+
+**立体声怎么接进管线**：配方声明 `stereo: true` 时 `render` 返回 `[L, R]`，`renderRecipe` 多返回 `samplesR`，`expandRecipes` 透传；
+`renderStereo` 左右各读各的（插值、cue.lowpass、dur 循环都两路同做），pan 当平衡用同一对等功率增益——pan 0 时每路 ×0.707，与单声道 cue 在立体声路径、
+以及 mux 把单声道 sfx.wav 升成立体声时的 −3.01 dB 一致；尾音总线与 Freeverb 送 (L+R)/2。`renderCues`（单声道路径）取 (L+R)/√2（去相关时功率守恒）。
+`scripts/sfx.mjs` 遇到立体声配方自动走立体声路径。没有 `samplesR` 的 cue 走原代码，旧音色/声像/Freeverb 三个 PCM 基线和 50 个旧配方钉子逐位不变。
+
+**实测**（density 300、hard 0.5、dur 10，`rain-test.wav`）：峰值 0.900（−0.92 dBFS），RMS −18.4 dBFS（crest 17.5 dB），频谱质心 3600 Hz，<200 Hz 0.13 %，>2.5 kHz 61.7 %，
+左右相关 0.119，0.25 s 分窗 RMS 变异系数 0.093（没有空洞），直流 2.8e-8。分层：同参数 wash 0 时 crest 23.5 dB，即噪声底比雨滴层高约 4 dB。
+RMS 随参数（6 s）：hard 0/0.5/1 × density 30/300/2000 = −22.0/−15.6/−14.4、−23.6/−18.3/−14.6、−24.2/−18.7/−16.0 dBFS——峰值归一按最大一滴，响度随密度变，用 cue.gain 定。
+**耗时**（机器 load ≈ 13，同时在跑整套回归，数字偏大）：10 s/300 滴 0.84 s；60 s/300 滴 2.1 s；60 s/2000 滴 hard 1 6.6 s（振铃截 7τ 时 8.1 s）、hard 0 + pool 0.5 5.0 s；maxRSS 约 132 MB。
+逐样本 `r()` 换成每滴一个种子的内联 LCG、气泡与振铃改相量递推后，同一负载下 60 s/2000 滴从约 16 s 降到上面的数。
+
+**回归**：`unit.mjs` 42 项（新增 rain 必填/范围报错、width 1 相关 < 0.3、width 0 左右逐位相同、循环接缝跳变 ≤ 相邻差 99.9 分位、renderStereo dur 循环两路各读各的、单声道 (L+R)/√2；
+`recipe-pcm.json` 加 rain v0–v2，钉子哈希左右两路）；`cli.mjs` 5 组（新增：只写 params 的 rain cue 输出 2 声道且左右不同，缺 hard 退出 1）；
+`measure.py` 18 种（rain：|相关| < 0.3、分窗 CV < 0.35、<200 Hz < 5 %、质心 1.5–6 kHz）。
+
+**mux.sh 中间文件**：`mix.wav` / `mix_lim.wav` / `norm.wav` 从 pcm_s24le（norm 原为默认 s16）改为 pcm_f32le。合成输入（3 s 黑场 + 浮点 sfx.wav，无旁白）新旧对照：
+
+| 输入 | 旧 mix.wav | 旧结果 | 新 mix.wav | 新结果 |
+|---|---|---|---|---|
+| 0.25 正弦 + 峰值 2.0 的点击（+5.9 dBFS） | 峰 0.0 dB，flat factor 18.7（削成平顶） | 混音前 TP 0.24（已削）、成片 −1.00 dBTP | 峰 +5.94 dB，flat factor 0 | 混音前 TP +5.94、成片 −1.50 dBTP |
+| 满幅 ×2 正弦（整体 +5.95 LUFS） | 削成方波 | **loudnorm 第二遍失败，退出 1** | 原样 | 先浮点线性降 15.95 dB 再归一，成片 −12.73 dBTP |
+
+第二行暴露的另一处：loudnorm 的 `measured_I` 只收 ≤ 0，整体 > 0 LUFS 的混音（旧版削顶后也有约 +3 LUFS）第二遍直接报错；现在整体 > −1 LUFS 时先在浮点里降到 −10 LUFS 再测（输出打印一行说明）。
+其他情况滤镜图与参数不变。3 s 的输入 loudnorm 都退回动态模式（它对 < 3 s 的输入不做线性），所以没测到线性模式下的 > 0 dBFS 输入。
+
+**没测到**：雨声像不像、阵风起伏是否自然、气泡啁啾的比例，都没经过人耳；没在 films/forge 上实际合流（不改那支片）。rain 只有一个连续床，没有风声（`wind`）配方。

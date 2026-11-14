@@ -126,7 +126,7 @@ const cap = vo.captionAt(t, { maxChars: 14, hold: 0 });
 
 ## 六、音效
 
-分层冲击、金属/木/玻璃/水碰撞、蓄力与低频落点、种子变体、空间 IR、事件闷音与配乐压低，按需读 `references/sfx-recipes.md`。它们使用离线确定合成；`--stats` 量峰值、NaN 与分段 RMS，声音的真实感和悦耳程度仍需试听。
+分层冲击、金属/木/玻璃/水碰撞、蓄力与低频落点、立体声雨声床、种子变体、空间 IR、事件闷音与配乐压低，按需读 `references/sfx-recipes.md`。它们使用离线确定合成；`--stats` 量峰值、NaN 与分段 RMS，声音的真实感和悦耳程度仍需试听。
 
 在 `films/<slug>/cues.json` 里描述事件，再用 `node <film-narration>/scripts/sfx.mjs --film <slug>` 渲成 `out/sfx.wav`：
 

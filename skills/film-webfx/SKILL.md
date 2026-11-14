@@ -126,6 +126,7 @@ GLSL 片段有 `header`（WebGL1）、`header2`（WebGL2）、`hash`、`noise`�
 node <film-core>/scripts/seamcheck.mjs --film <slug> --parallel 4   # 内核门 + 门 4（离屏层合成）
 node <film-webfx>/scripts/texcache-check.mjs --film <slug>          # 用了 texture 的 static/key 时：缓存版 vs 每次上传版逐像素比
 node <film-webfx>/scripts/fxreplay-check.mjs --film <slug>          # 用了 fxchain 的 feedback 时：检查点/重放 vs 从第 0 步算
+node <film-webfx>/scripts/lightdebug.mjs --film <slug> --at <t>     # 诊断不是门：逐个关掉光源/反射/泛光，报某处亮度从哪来（world-surfaces.md §3）
 ```
 
 `gates.json` 登记了三道"用了才开"的门：片子加载了 `webfx.js` / `fxchain.js` / `stage3d.js` / `post3d.js` 时，`accept --deep` 会跑门 4（`seam4`，与 film-motion 共用，一支片子只跑一次）；加载了 `webfx.js` 或 `fxchain.js` 时还会跑 `texcache`；加载了 `fxchain.js` 时跑 `fxreplay`（`scripts/fxreplay-check.mjs`：帧间反馈的缓存版按顺序/倒序/乱序与"每次从第 0 步算"逐像素比，fxchain.md §7）。deliver 总是开启门 4，另外再跑 texcache 和 fxreplay。环境基准脚本在仓库 `dev/film-webfx/`（不随安装分发）：`bench.mjs [--quick] [--gpu]`（升级 Playwright 后要重跑；如果失败，说明环境已经不再逐次一致，先不要渲片）、`svgfilter-check.mjs`、`blur2d-check.mjs`、`bench3d.mjs`。

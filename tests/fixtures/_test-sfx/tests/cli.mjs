@@ -66,6 +66,17 @@ r = run([...film,'--cues','out/cues-drive.json','--out','out/sfx-drive.wav']);
 assert.equal(r.status,1); assert.match(r.stderr,/drive/);
 ok('阴性：Inf 增益 / drive 0 不加 --stats 也退出 1（旧代码写成静音、退出 0）');
 
+// ── 立体声配方（rain）只用 params 也走立体声路径（单声道路径会把去相关的两路折成一路）──
+writeFileSync(resolve(out,'cues-rain.json'), JSON.stringify([{ t: 0, type: 'rain', params: { density: 150, hard: .4, dur: 1.5 }, gain: .5 }]));
+r = run([...film,'--cues','out/cues-rain.json','--out','out/sfx-rain.wav']);
+assert.equal(r.status,0,r.stdout+r.stderr); assert.match(r.stdout,/立体声/);
+const rw = readFloatWav(resolve(out,'sfx-rain.wav')); assert.equal(rw.ch,2);
+let dLR=0; for (let i=0;i<rw.d.length;i+=2) dLR=Math.max(dLR,Math.abs(rw.d[i]-rw.d[i+1])); assert(dLR>.01,'rain 左右应去相关');
+writeFileSync(resolve(out,'cues-rain-bad.json'), JSON.stringify([{ t: 0, type: 'rain', params: { density: 150 } }]));
+r = run([...film,'--cues','out/cues-rain-bad.json','--out','out/sfx-rain-bad.wav']);
+assert.equal(r.status,1); assert.match(r.stderr,/hard/);
+ok('rain 配方自动走立体声路径、左右去相关；缺 hard 退出 1');
+
 const bad=run([...film,'--cues','out/cues-bad.json']);
 assert.notEqual(bad.status,0);   // 文件不存在也是明确输入错误，不要求一个特定退出码。
 

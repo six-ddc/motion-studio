@@ -24,7 +24,7 @@ const DEG = Math.PI / 180;
 // 工具
 // ---------------------------------------------------------------------------
 function color(v, name) {
-  if (v == null) throw new Error(`sky3d: ${name} 必填（颜色由本片 style_guide 定，没有默认值）`);
+  if (v == null) throw new Error(`sky3d: ${name} 必填：线性 [r,g,b]，每分量 ≥0（≈0–1 是常规亮度，>1 是 HDR）或 sRGB '#rrggbb'（颜色由本片 style_guide 定，没有默认值）`);
   if (v.isColor) return v.clone();
   if (typeof v === 'string') return new THREE.Color(v);   // '#rrggbb' 按 sRGB 解释，转成线性
   if (Array.isArray(v) && v.length === 3 && v.every((x) => Number.isFinite(x) && x >= 0)) return new THREE.Color(v[0], v[1], v[2]);   // 线性，可 > 1（HDR）
@@ -129,7 +129,7 @@ export function createLightRig(p) {
   const rig = {
     sunDir: dir,
     sunColor: color(s.color, 'sun.color'),
-    sunIntensity: num(s.intensity, 'sun.intensity', { min: 0 }),
+    sunIntensity: num(s.intensity, 'sun.intensity（≥0，即 DirectionalLight.intensity；也乘日盘、日晕、雾的向阳瓣）', { min: 0 }),
     zenith: color(k.zenith, 'sky.zenith'),
     horizonSun: color(k.horizonSun, 'sky.horizonSun'),
     horizonAway: color(k.horizonAway, 'sky.horizonAway'),
@@ -181,7 +181,7 @@ export function createLightRig(p) {
   };
 
   /** 半球环境光（天 = 雾色，地 = 地面色），强度由片子定。有 PMREM 环境时它会和环境反射叠加，按需取舍 */
-  rig.createAmbient = (intensity) => new THREE.HemisphereLight(rig.fogColor.clone(), rig.ground.clone(), num(intensity, 'createAmbient(intensity)', { min: 0 }));
+  rig.createAmbient = (intensity) => new THREE.HemisphereLight(rig.fogColor.clone(), rig.ground.clone(), num(intensity, 'createAmbient(intensity)（≥0，HemisphereLight 强度，天 = sky.fog 色、地 = sky.ground 色）', { min: 0 }));
   return rig;
 }
 
@@ -287,8 +287,8 @@ export function createSky(S, rig, o = {}) {
   const hp = [1, 1, 1, 1], hw = [0, 0, 0, 0];
   o.halo.forEach(([pw, w], i) => { hp[i] = num(pw, `halo[${i}][0] 幂次`, { min: 0.01 }); hw[i] = num(w, `halo[${i}][1] 权重`, { min: 0 }); });
   if (!o.disk) throw new Error('sky3d.createSky: disk 必填 { angle: 视直径（度，真实太阳≈0.53）, intensity: 亮度倍数（× 太阳色） }');
-  const da = num(o.disk.angle, 'disk.angle（度）', { min: 0.01, max: 20 }) * DEG / 2;
-  const disk = new THREE.Vector3(Math.cos(da), Math.cos(da * 0.7), num(o.disk.intensity, 'disk.intensity', { min: 0 }));
+  const da = num(o.disk.angle, 'disk.angle（视直径，度）', { min: 0.01, max: 20 }) * DEG / 2;
+  const disk = new THREE.Vector3(Math.cos(da), Math.cos(da * 0.7), num(o.disk.intensity, 'disk.intensity（× 太阳色 × sun.intensity；0 = 不画日盘）', { min: 0 }));
 
   const c = o.clouds || null;
   let cloud = null;
@@ -305,10 +305,10 @@ export function createSky(S, rig, o = {}) {
       seed: opt(c.seed, 1),
       proj: new THREE.Vector4(altitude / feature, req(c.horizonLift, 'clouds.horizonLift', '投影分母的抬升量：越大近地平线的云压得越不扁、越不密；参考量级 0.05–0.3', { min: 1e-3 }), aniso[0], aniso[1]),
       shape: new THREE.Vector4(THREE.MathUtils.lerp(0.82, 0.28, num(c.coverage, 'clouds.coverage（0–1）', { min: 0, max: 1 })),
-        num(c.softness, 'clouds.softness', { min: 1e-3 }), req(c.warp, 'clouds.warp', '域扭曲幅度（噪声单位），0 = 规整团块；参考量级 0–2', { min: 0 }),
+        num(c.softness, 'clouds.softness（覆盖阈值上的软边宽度，噪声密度单位 0–1；小 = 硬边）', { min: 1e-3 }), req(c.warp, 'clouds.warp', '域扭曲幅度（噪声单位），0 = 规整团块；参考量级 0–2', { min: 0 }),
         req(c.detail, 'clouds.detail', '脊状细节比例 0–1，0 = 软棉团、大 = 卷积云纹理；参考量级 0–0.3', { min: 0, max: 1 })),
       base: color(c.base, 'clouds.base（背光的云色）'), dark: color(c.dark, 'clouds.dark（厚云芯）'),
-      lit: new THREE.Vector4(num(c.light, 'clouds.light（侧光增益）', { min: 0 }), num(c.rim, 'clouds.rim（亮边增益）', { min: 0 }),
+      lit: new THREE.Vector4(num(c.light, 'clouds.light（侧光增益 ≥0，× 向阳地平线色；0 = 无侧光）', { min: 0 }), num(c.rim, 'clouds.rim（亮边增益 ≥0，× 太阳色；0 = 无亮边）', { min: 0 }),
         req(c.aerial, 'clouds.aerial', '近地平线的云向地平线色淡化的速度（越大淡化带越窄）；参考量级 4–20', { min: 0 }),
         req(c.relief, 'clouds.relief', '自阴影对比：向光密度差放大倍数，0 = 平涂；参考量级 2–6', { min: 0 })),
       cover: new THREE.Vector2(req(c.opacity, 'clouds.opacity', '云最厚处的不透明度 0–1；1 = 完全挡住天空', { min: 0, max: 1 }),
@@ -365,8 +365,8 @@ export function createSky(S, rig, o = {}) {
    *   apply    false = 只返回纹理，不写 S.scene（按镜头预拍多张时用）
    */
   function environment({ at = 0, clamp, intensity, size = 256, apply = true } = {}) {
-    num(clamp, 'environment({clamp}) 天空亮度上限', { min: 0 });
-    if (apply) num(intensity, 'environment({intensity}) 即 scene.environmentIntensity', { min: 0 });
+    num(clamp, 'environment({clamp}) 捕获时天空的线性亮度上限（≥0，防高光萤火虫）', { min: 0 });
+    if (apply) num(intensity, 'environment({intensity}) 即 scene.environmentIntensity（≥0，1 = 原样）', { min: 0 });
     const em = makeMaterial(true);
     em.uniforms.uEnvClamp.value = clamp;
     if (cloud) em.uniforms.uCloudOff.value.copy(offAt(at));
@@ -379,6 +379,7 @@ export function createSky(S, rig, o = {}) {
     return { texture: rt.texture, renderTarget: rt };
   }
 
+  globalThis.WEBFX_DEBUG?.register('sky', { S, mesh, material, rig });   // 见 scripts/lightdebug.mjs；未注入时空操作
   return { mesh, material, update, environment, offsetAt: offAt, noise };
 }
 
@@ -394,8 +395,9 @@ export function createSky(S, rig, o = {}) {
 export function createHeightFog(rig, p = {}) {
   const node = new THREE.Object3D();
   node.name = 'sky3d.fog';
+  const FOG_UNIT = { density: '1/米，基准高度处每米消光', baseHeight: '米', scaleHeight: '米，密度降到 1/e 的高差', maxOpacity: '0–1，雾量上限', sunStrength: '≥0，× 太阳色 × 强度', sunPower: '向阳瓣幂次，大 = 瓣窄' };
   for (const [k, lim] of [['density', { min: 0 }], ['baseHeight', {}], ['scaleHeight', { min: 1e-3 }], ['maxOpacity', { min: 0, max: 1 }], ['sunStrength', { min: 0 }], ['sunPower', { min: 0.01 }]])
-    node[k] = num(p[k], `createHeightFog.${k}`, lim);
+    node[k] = num(p[k], `createHeightFog.${k}（${FOG_UNIT[k]}）`, lim);
   const medium = new THREE.Vector4(), sun = new THREE.Vector2();
   const live = {
     uFogMedium: { get value() { return medium.set(node.density, node.baseHeight, node.scaleHeight, node.maxOpacity); } },
@@ -420,6 +422,7 @@ export function createHeightFog(rig, p = {}) {
     put('uFogMedium', live.uFogMedium.value); put('uFogSun', live.uFogSun.value);
     return u;
   }
+  globalThis.WEBFX_DEBUG?.register('fog', { node });   // 只有 scripts/lightdebug.mjs 注入了它才登记；平时是空操作
   return { node, apply, fill };
 }
 

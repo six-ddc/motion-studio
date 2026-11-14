@@ -28,7 +28,9 @@ cue 的 `type` 可以是原有 `SOUNDS`，也可以是以下 `RECIPES`。参数�
 | `sub` | 70→30Hz下滑+低通起音，软削波补谐波 | dur/from/to/drive；1.2s，手机主要听到谐波 |
 | `shimmer` | 2–9kHz非谐模态，60ms淡入+稀疏高频碎响 | dur/partials/sparkle；1.5s，高频层叠容易刺耳 |
 | `hum` | f0的整数谐波+窄带噪声，等功率首尾交叉 | f0/harmonics/dur/noise；2s可循环，持续嗡声会积累低频 |
+| `rain` | 立体声床：u^2.5 大小分布的雨滴（带通噪声激励，hard 大时加振铃，pool 比例落水气泡上扬啁啾）+ 300Hz–5.2kHz 噪声底 + 1.3s 阵风起伏；按落点等功率声像、噪声底两路独立，首尾交叉可循环 | **density（滴/秒，参考 30/300/2000+）与 hard（0 泥土树叶–1 铁皮石板）必填**；dur 6 / size / bright / distance（1 ≈ 1.9kHz 低通）/ pool / wash / width。宽带连续床正好盖在辅音频段，对白下要压 gain 或 lowpass；峰值归一按最大一滴算，响度随 density 变，用 gain 定；是抽象，没有屋檐滴水、排水、远近层次；dur 短于约 6s 能听出循环 |
 
+立体声配方（rain）多出 `samplesR`：`sfx.mjs` 自动走立体声路径，`pan` 当平衡，尾音/共享房间送 (L+R)/2；`renderCues` 单声道路径取 (L+R)/√2。
 `variant` 固定变体序号。省略时：cue 有 `id`（事件表 toCues 透传的）按 hash(配方名, id) 取，插入别的事件不改它，代价是相邻两发可能同变体；
 没有 id 按同名配方的时间顺序轮换，插入一个同名 cue 会让后面的全部换变体。`seed` 固定噪声，`pitch` 乘音高。`drive` 等正参数写 0 直接报错。
 `jitter: .035` 抖动音高±3.5%，或 `{pitch:.035,gain:.08}` 同时减小最多8%增益；种子与变体同规则（id 或出现序号），每发各不相同；只对新配方生效。
@@ -68,7 +70,7 @@ Freeverb是共享房间送量，IR是单个事件的空间响应，两者叠加�
 ## 4. 程序接口
 
 从 `runtime/sfx.mjs` 读 `SR/RECIPES/renderRecipe/expandRecipes/stats/makeIR/planTails/spaceKey/muffleCurve/duckCurve/applyMuffle`。
-`renderRecipe(name,{params,variant,seed,pitch,jitter,jitterSeed})` 返回 `{samples,variant,seed,pitch,gain}`；输出有 NaN/Inf 直接抛错。
+`renderRecipe(name,{params,variant,seed,pitch,jitter,jitterSeed})` 返回 `{samples,samplesR?,variant,seed,pitch,gain}`；输出有 NaN/Inf 直接抛错。
 `renderCues(cues,opts)` 自动展开配方，`renderStereo(cues,{spaceRule,master,...})` 还处理空间和总线。
 DSP低层在 `runtime/sfxdsp.mjs`：`noiseHit/glide/modal/chirp/grains/filter/sweep/softclip/dcBlock/loopXfade/convolve/convolveStereo/compress`。
 DSP数组是48kHz mono Float32Array；filter/shape/softclip等原地修改，跨声部共享前先复制。

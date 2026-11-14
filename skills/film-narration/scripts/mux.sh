@@ -171,8 +171,11 @@ else
   else graph+="${mixin}amix=inputs=${count}:duration=first:normalize=0[mix]"; fi
 fi
 TMP="out/_mux"; mkdir -p "$TMP"
+# 中间文件一律 32 位浮点：amix normalize=0 的和、sfx.mjs 的浮点 sfx.wav 都可能 > 0 dBFS，写成整数 PCM 会在归一之前就削顶
+# （旧版 pcm_s24le：+6 dBFS 的正弦被削成方波，loudnorm 再怎么降增益也救不回来）。电平只在第 2 步 loudnorm 定，
+# loudnorm 的真峰限制（线性模式按 TP 前提、动态模式内置限幅）负责最后一道；成片真峰门在最后再量一次 mp4。
 ffmpeg -hide_banner -loglevel error -y "${inputs[@]}" -filter_complex "$graph" -map "[mix]" \
-  -t "$VDUR" -c:a pcm_s24le "$TMP/mix.wav" || die "混音失败（filter: $graph）"
+  -t "$VDUR" -c:a pcm_f32le "$TMP/mix.wav" || die "混音失败（filter: $graph）"
 
 # 第 2 步：两遍 loudnorm。第一遍测，第二遍请求线性归一（linear=true，整段一个增益，不会「抽」）。
 # 但 linear 只在「需要的增益 + 实测 true peak ≤ TP 上限」时成立；不成立时 ffmpeg 会**自动退回动态模式**
@@ -182,6 +185,15 @@ measure() { ffmpeg -hide_banner -nostats -i "$1" -af "loudnorm=I=$LUFS:TP=-1.5:L
 M="$(measure "$TMP/mix.wav")"
 val() { echo "$M" | sed -n "s/.*\"$1\" : \"\(.*\)\".*/\1/p"; }
 [ -n "$(val input_i)" ] || die "loudnorm 第一遍没测出数值"
+# loudnorm 的 measured_I 只收 ≤ 0 LUFS：浮点混音整体 > -1 LUFS（多路满幅叠加）时，先在浮点里线性降到 -10 LUFS 再测（无损，第二遍照常）
+PREGAIN_NOTE=""
+if awk -v i="$(val input_i)" 'BEGIN{exit !(i > -1)}'; then
+  PG="$(awk -v i="$(val input_i)" 'BEGIN{printf "%.2f", -10 - i}')"
+  ffmpeg -hide_banner -loglevel error -y -i "$TMP/mix.wav" -af "volume=${PG}dB" -c:a pcm_f32le "$TMP/mix_pg.wav" || die "预降增益失败"
+  mv "$TMP/mix_pg.wav" "$TMP/mix.wav"
+  PREGAIN_NOTE="混音整体 $(val input_i) LUFS（true peak $(val input_tp) dBTP）超过 loudnorm 能收的 0 LUFS，先线性降 ${PG} dB（浮点，不削顶）"
+  M="$(measure "$TMP/mix.wav")"
+fi
 PRE_I="$(val input_i)" PRE_TP="$(val input_tp)" LIMIT_NOTE=""
 if [ -n "$LIMIT" ]; then
   if [ "$LIMIT" = "auto" ]; then
@@ -194,7 +206,7 @@ if [ -n "$LIMIT" ]; then
   else
     LIN="$(awk -v c="$CEIL" 'BEGIN{x = exp(c / 20 * log(10)); if (x < 0.0625) x = 0.0625; printf "%.5f", x}')"
     ffmpeg -hide_banner -loglevel error -y -i "$TMP/mix.wav" \
-      -af "alimiter=limit=$LIN:level=false:attack=5:release=50" -c:a pcm_s24le "$TMP/mix_lim.wav" || die "限幅失败"
+      -af "alimiter=limit=$LIN:level=false:attack=5:release=50" -c:a pcm_f32le "$TMP/mix_lim.wav" || die "限幅失败"
     mv "$TMP/mix_lim.wav" "$TMP/mix.wav"
     M="$(measure "$TMP/mix.wav")"
     LIMIT_NOTE="限幅：天花板 ${CEIL} dBFS（alimiter limit=${LIN}），峰值 ${PRE_TP} -> $(val input_tp) dBTP，响度 ${PRE_I} -> $(val input_i) LUFS"
@@ -202,7 +214,7 @@ if [ -n "$LIMIT" ]; then
 fi
 M2="$(ffmpeg -hide_banner -nostats -y -i "$TMP/mix.wav" -af \
   "loudnorm=I=$LUFS:TP=-1.5:LRA=$LRA:measured_I=$(val input_i):measured_TP=$(val input_tp):measured_LRA=$(val input_lra):measured_thresh=$(val input_thresh):offset=$(val target_offset):linear=true:print_format=json" \
-  -ar 48000 "$TMP/norm.wav" 2>&1 | sed -n '/^{/,/^}/p')" || die "loudnorm 第二遍失败"
+  -ar 48000 -c:a pcm_f32le "$TMP/norm.wav" 2>&1 | sed -n '/^{/,/^}/p')" || die "loudnorm 第二遍失败"
 NORM_TYPE="$(echo "$M2" | sed -n 's/.*"normalization_type" : "\(.*\)".*/\1/p')"
 
 # 第 3 步：合流。以视频时长为准（-t），音频短了自动补静音
@@ -229,6 +241,7 @@ else
 echo "✓ $OUT   视频 ${VDUR}s   无旁白   ${SFX:+$SFX}${SFX:+${MUSIC:+ + }}${MUSIC:+$MUSIC(${MUSIC_GAIN}dB)}"
 fi
 echo "  混音前响度 ${PRE_I} LUFS（true peak ${PRE_TP} dBTP）-> 目标 $LUFS   归一模式 ${NORM_TYPE:-未知}"
+[ -n "$PREGAIN_NOTE" ] && echo "  $PREGAIN_NOTE"
 [ -n "$LIMIT_NOTE" ] && echo "  $LIMIT_NOTE"
 if [ "$NORM_TYPE" = "dynamic" ]; then
   echo "  ⚠ loudnorm 退回了动态模式：整段不是单一增益，动态被压了。原因（按 loudnorm 第二遍用的实测值）：" >&2

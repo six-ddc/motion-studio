@@ -51,7 +51,11 @@
 node <film-story>/scripts/motionprint.mjs <参考片.mp4> --out <目录>     # 参考片或自己的成片 out/*.mp4
 node <film-story>/scripts/motionprint.mjs --film <slug> [--from s --to s] # 自己的场景：用 window.anchors(t) 的轨迹，逐锚点
 node <film-story>/scripts/motionprint.mjs --curves                        # 运行时每条缓动 / 弹簧预设的 t80，对着它挑
+node <film-story>/scripts/motionprint.mjs --film <slug> --probe [--from s --to s] [--keys a,b] [--table]
 ```
+
+`--probe` 逐帧读场景的 `window.probe(t)`（`{名: 数}`，film-critique 分镜断言用的同一个可选钩子；镜头偏移、震动、亮度……），倒序再取一遍查纯度，
+标出"前后都顺、唯独这一帧速度突变"的帧（位置跳、震动带偏移起拍；`--jump x` 改成绝对阈值）。只是读数，不是门；怀疑"那一刻镜头跳了"时用它代替手写重算脚本。
 
 | 数 | 含义 | 怎么读 |
 |---|---|---|

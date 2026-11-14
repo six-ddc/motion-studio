@@ -46,10 +46,26 @@ wet.set({t, waterLevel:0, wetness:1}); reflection.render(); // 相机、物体�
 ```
 
 遮罩 RGBA = 高度/潮湿/油污/磨损，米制 `bounds=[x0,z0,width,depth]`，坑坐标相对原点；`layers.*.meters` 是噪声格尺寸，`oil/wear` 可为 null。高度按 `heightRange` 编 8 位，提分辨率不提高度位深。区域外按"最高、干、无油"处理并在边缘 5% 渐变。
-`roughness` 四档 = 干/潮/浸湿/积水，**乘**到材质已有的粗糙度上（叠了 surface3d 时按补丁调用顺序依次作用）；`grain` 的三项是颗粒对反照率 ±比例、粗糙度 ±量、水深 ±米；`seam:null` 不要板缝；`transition` 是三段斜坡宽度（米高差），窄 = 水边硬。
+
+| `applyGround` / `createPlanarReflection` 参数 | 单位 / 有效域 | 控制什么 |
+|---|---|---|
+| `dryColor`、`wetColor` | 线性 RGB ≥0，乘在材质 color 上 | 干处 / 浸湿处反照率（积水再叠反射） |
+| `roughness` | 4 个 0–1：干/潮/浸湿/积水 | **乘**到材质已有粗糙度上（叠 surface3d 时按补丁顺序）；积水档小 = 镜面 |
+| `tileMeters` | `[粗, 细]` 米 | 两层颗粒噪声的格尺寸，取不整比防重复 |
+| `grain` | `albedo` ±比例、`roughness` ±量、`height` ±米 | 颗粒对反照率、粗糙度、水深的扰动 |
+| `seam` | `null` 或 `spacing/width` 米、`depth` 米、`darken` 0–1 | 方格板缝 |
+| `oil`、`wear` | `darken` 0–1、`roughness` 0–1 | 遮罩 B/A 通道处的压暗与粗糙度调制（A 0.5 为中性） |
+| `transition` | `damp/soak/puddle` 米高差 >0 | 三段湿润斜坡宽度；窄 = 水边硬 |
+| `set({t, waterLevel, wetness})` | 秒、米（世界 y）、0–1 | 每帧：涟漪时间、水位、总湿度 |
+| 反射 `planeY`、`size`、`clipBias`、`hide` | 米、`[宽,高]` 像素、斜近平面偏移（≈0.001）、接收面数组 | 镜面高度、反射分辨率（大 = 倒影更锐，代价按像素数）、防平面上几何漏裁 |
+
+最小可跑：`pits:[]`、`layers.oil/wear:null`、`seam:null`、`ripple:null`，颜色填同一中性灰、其余取上表区间中段——是**占位**不是观感；全参数例子见本仓库夹具 `tests/fixtures/_test-worldfx/scene.js`。
 `ripple` 是闭式雨滴：每层按 `cell` 米分格，每格每个周期 `floor(t·rate·抖动)` 换一滴（位置、大小、强度），寿命 = 小数部分；环剖面是高斯导数，宽度从 `width[0]` 长到 `width[1]`（米），振幅 (1−寿命)² 衰减，`density` 是每格每周期出滴的概率，`radius` 是环最大半径占格的比例（≤ 0.45，环整个落在格内所以没有格缝）。层的 `angle` 旋转网格（打破对齐），`weight` 加权。每格速率抖动 ±50%、单滴强度 0.3–1 是模型常数。
 `fade:[近,远]` 米外淡出：远处的环小于一像素，不淡出的代价是闪烁。`amplitude` 是法线斜率。`ripple:null` 关掉；它不是水动力模拟。
-平面反射：镜像相机 + 斜近平面，`size` 是 [宽,高] 像素，只支持透视相机、单平面、不递归；采集线性 HDR、按粗糙度取 mip，替换环境镜面输入（保留 three 的菲涅耳）。多一次场景绘制；接收面放进 `hide`。反射不是 SSR，能看见画外物体。
+平面反射：镜像相机 + 斜近平面，只支持透视相机、单平面、不递归；采集线性 HDR、按粗糙度取 mip，替换环境镜面输入（保留 three 的菲涅耳）。多一次场景绘制。反射不是 SSR，能看见画外物体。
+**低机位倒影的几何**：镜面里看到的是"镜像相机"看见的东西——近地平线的天（低仰角的日/月盘会被镜成地上一个亮斑）、物体的底面与背面；贴地物体（砧上的钢坯）的倒影常被它自己的底座挡掉。
+写镜头时先用 `reflectionOf(camera, planeY, [x,y,z] | {dir}, [宽,高])` 查：返回倒影的屏幕位置 `px`、`onScreen` 和它"看上去"所在的地面点 `ground`（拿去对积水遮罩）。
+画面里出现说不清来源的亮斑时，跑 `scripts/lightdebug.mjs --film <slug> --at <t> --rect x,y,w,h`：逐个关掉每盏灯、环境/IBL、日盘、日晕、天空、雾、平面反射、涟漪、自发光、加色粒子、泛光，报区域/最亮像素的线性亮度差，并打印日盘倒影的落点。每个源多渲一帧（1080p SwiftShader 约 6 s/帧），`--only` 缩小范围。未注入钩子时运行时只做一次空的可选链调用，输出不变。
 **反射必须在 paint 里、相机与物体按 t 设好之后渲染**：画完这一帧再更新、下一帧再用（游戏的常见做法）会读到上一帧的 RT。默认 `reset:true` 时舞台把反射矩阵还原到 freeze 值，过期反射整个落到画外（看起来是"反射消失"）；`reset:false` 时就是门 1a/2 红（本仓库阴性对照 `_test-worldfx/scene-bad-reflect-prevframe.html`）。
 
 ## 4. 火花烟火：spritefx3d.js
@@ -73,5 +89,4 @@ S.scene.add(smoke.mesh);  // 加载期；paint 里相机更新之后 smoke.updat
 
 ## 5. 代价与验证
 
-本仓库 `_test-worldfx`：128² 破损贴图/唯一遮罩、256² 平面反射、三层涟漪、50 火花 + 12 烟 + 1 火焰。`tests/unit.mjs` 查周期、米制法线、ORM、解析弹道对 RK4、侵蚀、雨盒；`tests/browser.mjs` 查各开关真的改变画面、涟漪淡出/乱序、反射随当帧变化、ground+surface+雾叠补丁（含实例/批次网格）编译渲染、烘焙状态恢复。
-`dev/film-webfx/worldfx-bench.mjs` 测预热后 `seek + readPixels`；数字见仓库 `docs/verified/film-webfx.md`。全部是可选能力，不引入交付门；局部验证不等于整片观感已验收。
+本仓库 `_test-worldfx` 覆盖贴图、遮罩、反射、涟漪、火花烟火（`tests/` 下单测与浏览器断言），`dev/film-webfx/worldfx-bench.mjs` 测耗时，数字见仓库 `docs/verified/film-webfx.md`。全部是可选能力，不引入交付门；局部验证不等于整片观感已验收。

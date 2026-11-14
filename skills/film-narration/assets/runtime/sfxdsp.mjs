@@ -237,6 +237,78 @@ const boomLen = (size) => Math.max(3 * Math.sqrt(size), 1.9 * size + 0.2, 1.6 * 
 // clatter 的缓冲：最晚一次撞击的上界（首间隔 ≤ 0.15，之后每次 ≤ 0.1125）+ 0.22 s 余振；默认 2–3 次时就是 0.55
 const clatterLen = (hits) => Math.max(0.55, 0.15 * Math.min(1, hits - 1) + 0.1125 * Math.max(0, hits - 2) + 0.22 + 0.01);
 
+// 雨声床（立体声、可循环）：噪声底 + 逐滴合成 + 可选落水气泡，最后距离低通、去直流、首尾交叉。
+// 每滴是一段带包络的噪声激励过带通（亮度、Q 随 hard），hard 大时再加一条衰减正弦振铃；左右按落点等功率声像。
+// 逐滴的包络/振铃用递推（每样本几次乘加），60 s × 2000 滴/s 也在秒级（实测见仓库 docs/verified/film-narration.md）。
+const RAIN_FADE = 0.5;
+function rainBed(r, p, k) {
+  if (!(Number.isFinite(p.density) && p.density > 0)) throw new Error(`rain 要写 params.density（每秒雨滴数，> 0），收到 ${JSON.stringify(p.density)}：参考 30 稀疏、300 中雨、2000 以上暴雨；雨多大是这场戏的选择，套件不替你选`);
+  if (!(typeof p.hard === 'number' && p.hard >= 0 && p.hard <= 1)) throw new Error(`rain 要写 params.hard ∈ [0,1]（雨落在什么上：0 泥土/树叶，闷而短；1 铁皮/玻璃/石板，亮而带振铃），收到 ${JSON.stringify(p.hard)}`);
+  for (const key of ['distance', 'pool', 'width']) if (!(p[key] >= 0 && p[key] <= 1)) throw new Error(`rain.params.${key} 要在 [0,1]，收到 ${p[key]}`);
+  if (!(p.bright > 0) || !(p.wash >= 0)) throw new Error('rain.params.bright 要 > 0，wash 要 ≥ 0');
+  const len = p.dur + RAIN_FADE, L = buf(len), R = buf(len), N = L.length, h2 = p.hard * p.hard;
+  // 噪声底：两路独立白噪声按 width 混（width 0 = 左右相同），300 Hz 高通 + 低通；阵风 = 每 1.3 s 一个随机节点的余弦插值（±25 %，左右共用）
+  const wl = white(len, r), wr = white(len, r);
+  for (let n = 0; n < N; n++) wr[n] = p.width * wr[n] + (1 - p.width) * wl[n];
+  const knots = Array.from({ length: Math.ceil(len / 1.3) + 2 }, () => 0.75 + 0.5 * r());
+  const level = 0.05 * p.wash * Math.sqrt(p.density / 100);
+  for (const [w, out] of [[wl, L], [wr, R]]) {
+    filter(w, 'hp', 300); filter(w, 'lp', 5200 * p.bright * k, 0.6);
+    let e = 0; for (let n = 0; n < N; n++) e += w[n] * w[n];
+    const g = e > 0 ? level / Math.sqrt(e / N) : 0;
+    for (let n = 0; n < N; n++) {
+      const u = n / SR / 1.3, i = Math.floor(u), f = (1 - Math.cos(Math.PI * (u - i))) / 2;
+      out[n] += w[n] * g * (knots[i] + (knots[i + 1] - knots[i]) * f);
+    }
+  }
+  // 雨滴：大小 s 按 u^2.5 分布（小滴多、大滴少）；越大越响、越低、越长
+  const count = Math.round(p.density * len), near = 1 - 0.6 * p.distance, q = 0.6 + 5 * h2;
+  for (let i = 0; i < count; i++) {
+    const o = Math.floor(r() * len * SR), s = Math.min(1.5, Math.pow(r(), 2.5) * p.size), sc = Math.min(1, s);
+    const amp = near * (0.12 + 0.88 * sc) * between(r, 0.6, 1) * Math.sqrt(q);
+    const fc = between(r, 1800, 6500) * p.bright * k * (1.3 - 0.45 * sc) * (0.55 + 0.6 * p.hard);
+    const tau = 0.0005 + 0.002 * s + 0.0015 * (1 - p.hard), att = 0.00005 + 0.0003 * (1 - p.hard), tr = 0.0015 + 0.01 * h2;
+    const pa = (1 + (r() * 2 - 1) * p.width) * Math.PI / 4, gl = Math.cos(pa), gr = Math.sin(pa);
+    const [b0, b1, b2, a1, a2] = biquad('bp', fc, q), kd = Math.exp(-1 / (tau * SR)), ka = Math.exp(-1 / (att * SR));
+    // 激励段：噪声 × 包络过带通，长到包络衰减 7τ 再加带通自身的振铃（≈ Q/(π·fc)）
+    const M1 = Math.min(N - o, Math.ceil((7 * tau + 4 * q / (Math.PI * fc)) * SR));
+    let z1 = 0, z2 = 0, ed = 1, ea = 1, st = (r() * 4294967296) | 0;   // 激励噪声：每滴一个种子，样本级用内联 LCG（比逐样本调 r() 快约 2 倍）
+    for (let m = 0; m < M1; m++) {
+      st = (Math.imul(st, 1664525) + 1013904223) | 0;
+      const x = (st / 2147483648) * (1 - ea) * ed, y = b0 * x + z1;
+      z1 = b1 * x - a1 * y + z2; z2 = b2 * x - a2 * y;
+      L[o + m] += y * amp * gl; R[o + m] += y * amp * gr;
+      ed *= kd; ea *= ka;
+    }
+    // 振铃（硬表面）：fc 处的衰减正弦，相量递推，不调 sin/exp
+    const ring = 0.35 * h2 * amp, ph = r() * TAU;
+    if (ring > 0) {
+      const w = TAU * fc / SR, cw = Math.cos(w), sw = Math.sin(w), kr = Math.exp(-1 / (tr * SR)), M2 = Math.min(N - o, Math.ceil(5 * tr * SR));   // 5τ：振铃起点已是 0.35·hard² 倍，截在 −43 dB 处约为整滴的 −52 dB
+      let c = Math.cos(ph), sn = Math.sin(ph), er = ring, ea2 = 1;
+      for (let m = 0; m < M2; m++) {
+        const v = sn * er * (1 - ea2);
+        L[o + m] += v * gl; R[o + m] += v * gr;
+        er *= kr; ea2 *= ka;
+        const c2 = c * cw - sn * sw; sn = sn * cw + c * sw; c = c2;
+      }
+    }
+    // 落水气泡（Minnaert 共振）：上扬啁啾，概率 pool
+    if (p.pool > 0 && r() < p.pool) {
+      const f0 = between(r, 1200, 3200) * k / (0.6 + 0.6 * sc), rise = between(r, 0.25, 0.6), tb = between(r, 0.004, 0.012), ob = o + Math.round(0.001 * SR);
+      const Mb = Math.min(N - ob, Math.ceil(6 * tb * SR)), kb = Math.exp(-1 / (tb * SR)), ab = 0.6 * amp / Math.sqrt(q);
+      let c = 1, sn = 0, eb = ab, cw = 1, sw = 0;   // 相量递推，频率每 16 个样本更新一次
+      for (let m = 0; m < Mb; m++) {
+        if ((m & 15) === 0) { const w = TAU * f0 * (1 + rise * (m + 8) / Mb) / SR; cw = Math.cos(w); sw = Math.sin(w); }
+        const v = sn * eb * Math.min(1, m / 24); L[ob + m] += v * gl; R[ob + m] += v * gr; eb *= kb;
+        const c2 = c * cw - sn * sw; sn = sn * cw + c * sw; c = c2;
+      }
+    }
+  }
+  if (p.distance > 0) for (const x of [L, R]) filter(x, 'lp', 16000 * Math.pow(0.12, p.distance), 0.6);   // 距离 1 ≈ 1.9 kHz
+  const loop = Math.round(p.dur * SR);
+  return [loopXfade(dcBlock(L), loop), loopXfade(dcBlock(R), loop)];
+}
+
 export const RECIPES = {
   // ── 冲击 ──
   crack: {
@@ -457,6 +529,14 @@ export const RECIPES = {
       return loopXfade(x, Math.round(p.dur * SR));
     },
   },
+  // ── 环境床（连续、立体声）──
+  rain: {
+    use: '环境', about: '雨声床（立体声、可循环）：密集随机雨滴（大小/亮度/落点各异，hard 大时带振铃，pool 比例的落水气泡）+ 滤波噪声底 + 慢阵风；density、hard 必填',
+    variants: [1, 1.06, 0.94], defaults: { density: null, hard: null, dur: 6, size: 1, bright: 1, distance: 0, pool: 0, wash: 1, width: 1 },
+    dur: (p) => p.dur,
+    loop: true, stereo: true,
+    render(r, p, k) { return rainBed(r, p, k); },
+  },
 };
 
 /** 规范化 JSON：对象键排序，同一个值不管键序如何都得到同一个字符串（分组、缓存的键） */
@@ -466,11 +546,11 @@ export function canon(v) {
   if (v && typeof v === 'object') return `{${Object.keys(v).sort().filter((k) => v[k] !== undefined).map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`;
   return JSON.stringify(v ?? null);
 }
-const POSITIVE = ['dur', 'size', 'ring', 'f0', 'from', 'to', 'rate', 'q', 'drive'];
+const POSITIVE = ['dur', 'density', 'size', 'ring', 'f0', 'from', 'to', 'rate', 'q', 'drive'];
 const POS_INT = ['partials', 'harmonics', 'hits'];
 
 /**
- * 渲一个配方：返回 { samples, variant, seed, pitch, gain }。jitter = 数字（音高 ±比例）或 { pitch, gain }。
+ * 渲一个配方：返回 { samples, variant, seed, pitch, gain }（立体声配方另有 samplesR，samples 是左声道）。jitter = 数字（音高 ±比例）或 { pitch, gain }。
  * jitterSeed：抖动的种子（expandRecipes 按 cue.id / 出现序号给）；不给时取噪声种子派生（同变体同抖动，旧行为）。
  * 非循环配方输出过 20 Hz 去直流高通（DC_HP），再 edges + 归一。任何参数让输出出现 NaN/Inf 都直接报错，不写静音。
  */
@@ -495,11 +575,13 @@ export function renderRecipe(name, { params = {}, variant = 0, seed = null, pitc
   const jr = seeded(jitterSeed != null ? (jitterSeed >>> 0) : (s ^ 0x5bd1e995));
   const kj = 1 + jp * (jr() * 2 - 1), gj = 1 - jg * jr();
   const k = pick(R.variants, variant) * pitch * kj;
-  const x = R.render(r, p, k, variant);
+  const out = R.render(r, p, k, variant);
+  const [x, xR] = R.stereo ? out : [out, null];   // 立体声配方返回 [L, R]，两路一起归一（保住左右电平差）
   if (!R.loop) { dcBlock(x); edges(x, 0.0003, 0.012); }
-  normalize(x, PEAK * gj);
-  for (let n = 0; n < x.length; n++) if (!Number.isFinite(x[n])) throw new Error(`renderRecipe: ${name} 输出第 ${n} 个样本是 ${x[n]}（参数 ${canon(p)}）：某个参数让配方算出了非有限数`);
-  return { samples: x, variant, seed: s, pitch: +k.toFixed(5), gain: +gj.toFixed(4) };
+  if (!xR) normalize(x, PEAK * gj);
+  else { const pk = Math.max(peakOf(x), peakOf(xR)); if (pk > 0) for (const c of [x, xR]) for (let n = 0; n < c.length; n++) c[n] *= PEAK * gj / pk; }
+  for (const c of xR ? [x, xR] : [x]) for (let n = 0; n < c.length; n++) if (!Number.isFinite(c[n])) throw new Error(`renderRecipe: ${name} 输出第 ${n} 个样本是 ${c[n]}（参数 ${canon(p)}）：某个参数让配方算出了非有限数`);
+  return { samples: x, ...(xR ? { samplesR: xR } : {}), variant, seed: s, pitch: +k.toFixed(5), gain: +gj.toFixed(4) };
 }
 
 /**
@@ -527,7 +609,7 @@ export function expandRecipes(cues, { recipes = RECIPES, sounds = {} } = {}) {
     const key = canon([c.type, c.params ?? {}, variant, c.seed ?? null, c.pitch ?? 1, still ? 0 : jitter, jitterSeed]);
     let out = cache.get(key);
     if (!out) { out = renderRecipe(c.type, { params: c.params, variant, seed: c.seed ?? null, pitch: c.pitch ?? 1, jitter, jitterSeed }, recipes); cache.set(key, out); }
-    return { ...c, samples: out.samples, _recipe: { variant: out.variant, seed: out.seed, pitch: out.pitch, gain: out.gain } };
+    return { ...c, samples: out.samples, ...(out.samplesR ? { samplesR: out.samplesR } : {}), _recipe: { variant: out.variant, seed: out.seed, pitch: out.pitch, gain: out.gain } };
   });
 }
 

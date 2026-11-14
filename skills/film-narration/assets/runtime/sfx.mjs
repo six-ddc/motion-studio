@@ -42,6 +42,11 @@ export function renderCues(cues, { tail = 0.5, length = 0 } = {}) {
   cues.forEach((cue, idx) => {
     const gain = cue.gain ?? 1;
     const first = Math.round(cue.t * RATE);
+    if (cue.samplesR) {   // 立体声配方进单声道路径：(L+R)/√2，左右去相关时功率与单声道相当
+      const a = cue.samples, b = cue.samplesR;
+      for (let n = 0; n < a.length && first + n < mix.length; n++) mix[first + n] += gain * (a[n] + b[n]) * Math.SQRT1_2;
+      return;
+    }
     if (cue.samples) {
       for (let n = 0; n < cue.samples.length && first + n < mix.length; n++) mix[first + n] += gain * cue.samples[n];
       return;
@@ -145,6 +150,7 @@ function freeverb(inL, inR, { size, damp, width = 1 }) {
  *   rate     播放速率 = 音高倍数（变速变调，素材和合成音色都适用），默认 1
  *   lowpass  一阶低通截止频率 Hz，不写就不滤
  *   dur      连续层：在这段时长里循环音色/素材（不写就按音色长度放一次）
+ * 立体声配方（rain）展开后带 samplesR：左右各读各的，pan 当平衡用（同一对等功率增益）；尾音与共享房间送 (L+R)/2
  */
 export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, room = null, spaceRule = undefined, master = null } = {}) {
   cues = expandRecipes(cues, { sounds });
@@ -176,6 +182,7 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
     const constRate = !isCurve(cue.rate) ? (cue.rate ?? 1) : null;
     const loop = cue.dur != null;
     let src, srcLen;
+    const src2 = cue.samplesR ?? null;
     if (cue.samples) { src = cue.samples; srcLen = src.length / RATE; }
     else {
       const voice = sounds[cue.type];
@@ -184,7 +191,7 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
     }
     const rnd = noise(cue.seed ?? (idx + 1) * 2654435761);
     const first = Math.round(cue.t * RATE), count = Math.ceil(spans[idx] * RATE);
-    let tau = 0, y = 0;
+    let tau = 0, y = 0, y2 = 0, s2 = 0;
     const OL = cue.bus === 'dry' ? DL : L, OR = cue.bus === 'dry' ? DR : R;
     const tb = tailOf.get(idx), ts = tb?.g.buf, tg = tb?.gain;
     if (tb) { tb.g.lo = Math.min(tb.g.lo, Math.max(0, first)); tb.g.hi = Math.max(tb.g.hi, Math.min(N, first + count)); }
@@ -199,12 +206,20 @@ export function renderStereo(cues, { sounds = SOUNDS, tail = 0.5, length = 0, ro
       if (cue.samples) {
         const x = tt * RATE, i = Math.floor(x), f = x - i;
         s = i + 1 < src.length ? src[i] + (src[i + 1] - src[i]) * f : (src[i] ?? 0);
+        if (src2) s2 = i + 1 < src2.length ? src2[i] + (src2[i + 1] - src2[i]) * f : (src2[i] ?? 0);
       } else s = src(tt, rnd);
       if (constRate == null) tau += Math.max(0, rt(tA)) / RATE;
-      if (lp) { const a = 1 - Math.exp(-TAU * Math.max(1, lp(tA)) / RATE); y += a * (s - y); s = y; }
+      if (lp) { const a = 1 - Math.exp(-TAU * Math.max(1, lp(tA)) / RATE); y += a * (s - y); s = y; if (src2) { y2 += a * (s2 - y2); s2 = y2; } }
       if (at < 0) continue;
       const v = g(tA) * s;
       const [gl, gr] = constPan ? [cl, cr] : panGains(pn(tA));
+      if (src2) {
+        const v2 = g(tA) * s2;
+        OL[at] += v * gl; OR[at] += v2 * gr;
+        if (ts) ts[at] += (v + v2) * 0.5 * tg;
+        if (wet) { const k = sd(tA); if (k) { WL[at] += v * k * gl; WR[at] += v2 * k * gr; } }
+        continue;
+      }
       OL[at] += v * gl; OR[at] += v * gr;
       if (ts) ts[at] += v * tg;
       if (wet) { const k = sd(tA); if (k) { WL[at] += v * k * gl; WR[at] += v * k * gr; } }

@@ -321,7 +321,7 @@ countRing 谓词缓存：5000 事件、谓词 on，每次调用 359.5 µs → 1.
 
 ### 没测到 / 局限
 
-- 这台机器没有 ffmpeg：**deliver 整条流程没跑**（render 第一步就退出「找不到 ffmpeg」）。6a 步（Node 侧记录冻结、同名版本冲突判红、脚本漂移 ⚠）只按上面的手动步骤验证了 planFreeze/receiptInputs 那一段。
+- 当时那台机器没有 ffmpeg，deliver 整条流程没跑。2026-11-14 在 Linux（ffmpeg 6.1、4 核、Chromium 156 headless shell）上补跑：`new-film smoke-tmp`（`_smoke` 被 slug 校验拒绝，下划线留给夹具）、DURATION 改 2 → `deliver` 45 s 全过（render/seam 含门 4、门 5 对账/fontsrc，冻结 layout/motion/rand）→ `accept` ✓收据、`--deep` ✓；改 scene.html 后 `accept` 点名「改了 scene.html」exit 1。没发现 bug；没覆盖有旁白/多画幅/checks 的片子。6a 步（Node 侧记录冻结、同名版本冲突判红、脚本漂移 ⚠）只按上面的手动步骤验证了 planFreeze/receiptInputs 那一段。
 - 生成脚本（scripts/sfx.mjs）只记 sha、打 ⚠，不进输入摘要：它和 render.mjs 一样是工具，套件升级不该让所有已交付片子变红；代价是"脚本改了、sfx.wav 没重生成"只在 deliver 时提示一次。
 - cues.json 在 sfx.wav 生成之后改过：输入摘要会变（accept 红、要重新 deliver），但 deliver 不会替作者重跑 sfx.mjs，也不判 sfx.wav 过期——那是 film-narration 的 sfx.json 记录的事。
 - Node 侧记录是"合并写"：很久以前跑过、现在不用的脚本留下的条目也会被冻结；源头改过时 deliver 红，提示重跑或删记录。

@@ -104,7 +104,7 @@ node <film-critique>/scripts/check.mjs --film <slug> --mp4 films/<slug>/out/fina
 1. **声明关键事件**（check.mjs 的输出里叫「承重事件」）：`window.MARKS = [{label, start, end, load:true, word:'安史'}]`。脚本只能查声明过的事件，哪些事件算关键由人判断。MARKS 和画面要从同一份数据算出来，不要手抄。
 2. **旁白不从 0 秒开始时**，在 film.json 写 `narrationOffset`（全套只以这一个字段为准，由 film-narration 定义）。
 3. **关键变量不是由 shotlist 钉点插值出来时，暴露 `window.probe = (t) => ({ 灯数: 3 })`**：键名就是 shotlist 里 `source: "scene"` 的曲线名，值是数字或 null。
-   什么时候要写，见 film-story 的「改钉点测试」。probe 和 seek 共用同一个取状态函数，它不画任何东西，并且是 t 的纯函数（按顺序和倒序各取一遍比对，即 `probe.pure`）。它不和 MARKS 合并（MARKS 说明哪一段关键，probe 给出任一时刻的状态），也和 film-physics 的 `PHYS.claims`（仿真不变量自检）不是一回事。
+   什么时候要写，见 film-story 的「改钉点测试」。probe 和 seek 共用同一个取状态函数，它不画任何东西，并且是 t 的纯函数（按顺序和倒序各取一遍比对，即 `probe.pure`）。它不和 MARKS 合并（MARKS 说明哪一段关键，probe 给出任一时刻的状态），也和 film-physics 的 `PHYS.claims`（仿真不变量自检）不是一回事。逐帧读出它、标跳变：film-story `motionprint.mjs --film <slug> --probe`。
    "共用同一份状态"只靠约定保证，所以 `source: pixels` 是**唯一不经过场景自身代码的旁证**，最关键的一两条断言两种来源都写。
 4. **本片法律或断言需要知道"某物画在哪"时，登记空间锚点**：用 film-core 的 `runtime/anchors.js`，`A.ctxRect('黄车', ctx, …)`，再用 `window.seek = A.install(draw)` 装上 `window.anchors(t)`（契约见 `<film-core>/references/runtime.md` §6）。
 

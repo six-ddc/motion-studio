@@ -956,5 +956,6 @@ void main(){ vec3 s=vec3(0.); for(int k=0;k<4;k++){ vec2 o=vec2(k==0||k==2?-1.:1
     dispose() { for (const r of zRTs.values()) r.dispose(); for (const x of [zMat,blurM,litM,display,finish,meterDn,meterLog]) x?.dispose(); for(const r of [rtLit,rtDisplay,meter?.log,...(meter?.lv??[])]) r?.dispose(); dirtTex?.dispose(); black.dispose(); quadGeo.dispose(); for (const x of [bloom, dof, rays, ao, vol]) if (x) { x.rts.forEach((r) => r.dispose()); x.mats.forEach((m) => m.dispose()); } comp.dispose(); rtScene.dispose(); },
   };
   S._attachPost(post);
+  globalThis.WEBFX_DEBUG?.register('post', { S, post });   // 见 scripts/lightdebug.mjs；未注入时空操作
   return post;
 }

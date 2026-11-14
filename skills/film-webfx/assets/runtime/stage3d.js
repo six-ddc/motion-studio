@@ -90,10 +90,21 @@ function restoreUniforms(u, rec) {
  */
 export function createStage3D(o) {
   for (const k of ['width', 'height']) if (!(o[k] > 0)) throw new Error(`stage3d: ${k} 必填且 > 0`);
-  const scale = o.scale ?? 1;
+  // 迭代小样（render --scale k）时内核注入 FILM.scale = k < 1：三维层跟着少画像素（SwiftShader 成本 ≈ 像素数）。
+  // 定稿、seamcheck 门 1–4、deliver 永远是 1，这里与改动前逐字相同。锚点、legible 仍按不乘 k 的尺寸量（baseW/H）。
+  const draftK = typeof FILM === 'object' && FILM && FILM.scale > 0 && FILM.scale < 1 ? FILM.scale : 1;
+  const scale = (o.scale ?? 1) * draftK;
+  const baseW = Math.max(1, Math.round(o.width * (o.scale ?? 1))), baseH = Math.max(1, Math.round(o.height * (o.scale ?? 1)));
   const w = Math.max(1, Math.round(o.width * scale)), h = Math.max(1, Math.round(o.height * scale));
   const canvas = o.canvas ?? document.createElement('canvas');
+  canvas.width = baseW; canvas.height = baseH;
+  // 画布在页面里且没写 CSS 尺寸时，布局尺寸 = 像素尺寸：缩像素前先钉住布局，否则截图框跟着缩一半
+  const box = draftK < 1 && canvas.isConnected ? canvas.getBoundingClientRect() : null;
   canvas.width = w; canvas.height = h;
+  if (box) {
+    const b = canvas.getBoundingClientRect();
+    if (Math.abs(b.width - box.width) > 0.5 || Math.abs(b.height - box.height) > 0.5) { canvas.style.width = `${box.width}px`; canvas.style.height = `${box.height}px`; }
+  }
   let renderer;
   try {
     renderer = new THREE.WebGLRenderer({
@@ -209,7 +220,7 @@ export function createStage3D(o) {
 
   // ---- 投影（和 renderer 用同一组矩阵：camera.projectionMatrix × matrixWorldInverse）----
   const _v = new THREE.Vector3(), _box = new THREE.Box3();
-  const defRect = () => ({ x: 0, y: 0, w: canvas.width, h: canvas.height });
+  const defRect = () => ({ x: 0, y: 0, w: baseW, h: baseH });   // 小样缩了像素也按原尺寸量：锚点坐标不随 --scale 变
 
   /** 世界点 → 屏幕（rect 坐标系的像素）。返回 { x, y, depth, behind }；depth = 到相机平面的距离 */
   function project(p, rect = defRect()) {

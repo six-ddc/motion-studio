@@ -22,9 +22,25 @@ function finite(v, name) {
   if (!Number.isFinite(v)) throw new Error(`ground3d: ${name} 必须是有限数（收到 ${v}）`);
   return v;
 }
+// 缺参数时报单位与取值范围（按"段.键"查，查不到再按键名查）。范围是物理/编码上的有效域，不是推荐值
+const UNIT = {
+  'layers.height': '{ meters, range }', 'layers.damp': '{ meters, lowBias }', 'layers.oil': '{ meters, detailMeters, bias, gain } 或 null', 'layers.wear': '{ meters } 或 null',
+  'ripple.layers': '1–4 层 [{ cell, rate, angle, weight }]', meters: '米，噪声格尺寸 >0', range: '[lo,hi]，占 heightRange 的哪一段，0 ≤ lo < hi ≤ 1', lowBias: '0–1，低处更潮的权重',
+  detailMeters: '米 >0', 'layers.oil.bias': '0–1，噪声乘积的阈值', gain: '倍数 >0，越大油斑边越硬',
+  'grain.albedo': '±比例 ≥0，颗粒对反照率的调制', 'grain.roughness': '±粗糙度量 ≥0', 'grain.height': '±米，颗粒对水深的扰动',
+  'oil.darken': '0–1，油污处反照率压暗比例', 'oil.roughness': '粗糙度减量 0–1', 'wear.roughness': '粗糙度调制量 0–1（遮罩 A 0.5 为中性）',
+  damp: '米高差 >0，潮湿斜坡宽', soak: '米高差 >0，浸湿斜坡宽', puddle: '米高差 >0，积水斜坡宽',
+  spacing: '米 >0', 'seam.width': '米 >0', 'seam.depth': '米，缝里多出的水深', 'seam.darken': '0–1',
+  cell: '米 >0，雨滴格', rate: '次/秒 ≥0', angle: '弧度', weight: '权重 ≥0', density: '0–1，每格每周期出滴概率',
+  radius: '[lo,hi] 占格比例，hi ≤ 0.45', 'ripple.width': '[出生,消失] 米', amplitude: '法线斜率（0 = 平）', fade: '[近,远] 米',
+};
 function need(obj, name, keys) {
-  if (!obj || typeof obj !== 'object') throw new Error(`ground3d: ${name} 必填，要是 { ${keys.join(', ')} }`);
-  for (const k of keys) if (!(k in obj)) throw new Error(`ground3d: 缺参数 ${name}.${k}（没有观感默认值，含义见 world-surfaces.md）`);
+  const unit = (k) => UNIT[`${name}.${k}`] ?? UNIT[k];
+  if (!obj || typeof obj !== 'object') throw new Error(`ground3d: ${name} 必填，要是 { ${keys.map((k) => (unit(k) ? `${k}（${unit(k)}）` : k)).join(', ')} }`);
+  for (const k of keys) if (!(k in obj)) {
+    const u = unit(k);
+    throw new Error(`ground3d: 缺参数 ${name}.${k}${u ? `（${u}）` : ''}（没有观感默认值，含义见 world-surfaces.md）`);
+  }
   return obj;
 }
 function range2(v, name, { lo = -Infinity, increasing = true } = {}) {
@@ -132,7 +148,38 @@ export function createPlanarReflection(S, { planeY, size, clipBias, hide } = {})
       r.setRenderTarget(old, face, mip); r.setViewport(viewport); r.setScissor(scissor); r.setScissorTest(test);
     }
   }
-  return { target, texture: target.texture, matrix, camera, render, dispose() { target.dispose(); } };
+  const out = { target, texture: target.texture, matrix, camera, render, dispose() { target.dispose(); } };
+  globalThis.WEBFX_DEBUG?.register('reflection', { S, matrix, planeY });   // 见 scripts/lightdebug.mjs；未注入时空操作
+  return out;
+}
+
+/**
+ * 倒影预检（不改任何状态，写镜头时用）：世界点 [x,y,z] 或无穷远方向 { dir:[x,y,z] }（日盘、月盘）在 y = planeY 镜面里的倒影
+ * 落在屏幕哪里。camera 是已按 t 设好姿态、投影矩阵已更新的透视相机。
+ * 返回 { mirror, ground, ndc, px, onScreen }：mirror 镜像点（方向时 w=0）；ground 视线与平面的交点（倒影"看上去"在地面哪里，
+ * 拿它对积水遮罩/bounds 判断这里是不是镜面）；ndc 屏幕 [-1,1]；px 需传 size=[宽,高]；onScreen = 在相机前且在画面内。
+ * 相机在平面下或原点在平面下（看不到倒影）时 ground = null。
+ */
+export function reflectionOf(camera, planeY, point, size = null) {
+  finite(planeY, 'planeY');
+  if (!camera?.isPerspectiveCamera) throw new Error('ground3d.reflectionOf: 要透视相机');
+  const dirMode = !Array.isArray(point) && Array.isArray(point?.dir);
+  const p = dirMode ? point.dir : point;
+  if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite)) throw new Error('ground3d.reflectionOf: point 要是 [x,y,z]（米）或 { dir:[x,y,z] }（无穷远方向）');
+  camera.updateMatrixWorld();
+  const eye = camera.getWorldPosition(new THREE.Vector3());
+  const m = dirMode ? new THREE.Vector4(p[0], -p[1], p[2], 0).normalize() : new THREE.Vector4(p[0], 2 * planeY - p[1], p[2], 1);
+  const ray = dirMode ? new THREE.Vector3(m.x, m.y, m.z) : new THREE.Vector3(m.x - eye.x, m.y - eye.y, m.z - eye.z);
+  let ground = null;
+  if (eye.y > planeY && ray.y < 0) {
+    const s = (planeY - eye.y) / ray.y;
+    if (dirMode || s <= 1 + 1e-9) ground = [eye.x + ray.x * s, planeY, eye.z + ray.z * s];
+  }
+  const clip = m.clone().applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+  const ndc = clip.w > 0 ? [clip.x / clip.w, clip.y / clip.w] : null;
+  const onScreen = !!ndc && !!ground && Math.abs(ndc[0]) <= 1 && Math.abs(ndc[1]) <= 1;
+  const px = ndc && size ? [(ndc[0] + 1) / 2 * size[0], (1 - ndc[1]) / 2 * size[1]] : null;
+  return { mirror: [m.x, m.y, m.z, m.w], ground, ndc, px, onScreen };
 }
 
 // ---- 片元着色器：值噪声（共享 pcg 哈希）与雨滴涟漪 ----
@@ -247,7 +294,7 @@ export function applyGround(material, o = {}) {
   if (!material?.isMeshStandardMaterial || !mask?.texture) throw new Error('ground3d: 要标准 PBR 材质与 bakeGroundMask 结果');
   for (const k of ['reflection', 'seam', 'ripple']) if (!(k in o)) throw new Error(`ground3d: ${k} 必填（不要就显式传 null）`);
   for (const [name, c] of Object.entries({ dryColor, wetColor }))
-    if (!Array.isArray(c) || c.length !== 3 || c.some((x) => !Number.isFinite(x) || x < 0)) throw new Error(`ground3d: ${name} 要线性 RGB`);
+    if (!Array.isArray(c) || c.length !== 3 || c.some((x) => !Number.isFinite(x) || x < 0)) throw new Error(`ground3d: ${name} 要线性 RGB [r,g,b]，每分量 ≥0（乘在材质 color 上的反照率乘数，常规 0–1）`);
   if (!Array.isArray(roughness) || roughness.length !== 4 || roughness.some((x) => !Number.isFinite(x) || x < 0 || x > 1))
     throw new Error('ground3d: roughness=[干,潮,浸湿,积水] [0,1]');
   if (!Array.isArray(tileMeters) || tileMeters.length !== 2 || tileMeters.some((x) => !(x > 0))) throw new Error('ground3d: tileMeters=[粗,细] 米');
@@ -311,6 +358,7 @@ export function applyGround(material, o = {}) {
     shader.vertexShader = vs; shader.fragmentShader = fs;
   });
   material.uniforms = Object.assign(material.uniforms ?? {}, u);
+  globalThis.WEBFX_DEBUG?.register('ground', { uniforms: u });   // 见 scripts/lightdebug.mjs；未注入时空操作
   return {
     uniforms: u,
     /** paint 里每帧调：t 驱动涟漪，水位（米）与总湿度 0–1 */

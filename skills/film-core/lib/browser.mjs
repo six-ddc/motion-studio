@@ -188,16 +188,19 @@ async function chromiumBuild(browser) {
  * 内核在页面脚本执行前注入的只读全局 window.FILM（kernel.md §1）：这次打开实际用的帧率与画幅。
  * fps 缺省 film.json fps；render / seamcheck 的 --fps 覆盖、门 5 按清单重渲时传的是那次实际的 fps。
  * width/height 是画幅的布局尺寸（--scale 只缩截图，不改布局，所以不变）。
+ * scale：这次截图的缩放（render --scale 的迭代小样 < 1；定稿、门 1–4、deliver、preview 恒为 1）。场景**可以**在 < 1 时少画像素（stage3d 就这么做），
+ * 布局不许变。它只出现在小样里：凡是与定稿对账的东西都在 scale 1 下跑。
  */
-export function filmGlobals(film, format, fps = film?.config?.fps) {
+export function filmGlobals(film, format, fps = film?.config?.fps, scale = 1) {
   const fmt = FORMATS[format];
   if (!fmt) throw new Error(`未知画幅 ${format}`);
   if (!(Number.isInteger(fps) && fps > 0)) throw new Error(`window.FILM.fps 必须是正整数（收到 ${fps}）`);
-  return Object.freeze({ fps, width: fmt.width, height: fmt.height, format });
+  if (!(scale > 0 && scale <= 1)) throw new Error(`window.FILM.scale 必须在 (0, 1]（收到 ${scale}）`);
+  return Object.freeze({ fps, width: fmt.width, height: fmt.height, format, scale });
 }
 /** filmGlobals 的注入脚本（addInitScript 的 content，或 preview 写进页面的 <script>）：不可写、不可重定义 */
 export const filmGlobalsScript = (g) =>
-  `Object.defineProperty(globalThis,'FILM',{value:Object.freeze(${JSON.stringify({ fps: g.fps, width: g.width, height: g.height, format: g.format })}),writable:false,configurable:false,enumerable:true});`;
+  `Object.defineProperty(globalThis,'FILM',{value:Object.freeze(${JSON.stringify({ fps: g.fps, width: g.width, height: g.height, format: g.format, scale: g.scale ?? 1 })}),writable:false,configurable:false,enumerable:true});`;
 
 // 注入到每个页面的探针：记录"禁用 API"在 seek 期间被调用的次数。
 // 它不改变行为，只计数 —— 是诊断线索，像素比对才是判据。
@@ -236,7 +239,7 @@ const PROBE = () => {
 export async function openScene(film, format, { browser, probe = false, port, initScripts = [], capture = 'cdp', scale = 1, png = 'fast', record = true, query = {}, fps } = {}) {
   const fmt = FORMATS[format];
   if (!fmt) throw new Error(`未知画幅 ${format}`);
-  const FILM = filmGlobals(film, format, fps ?? film.config.fps);
+  const FILM = filmGlobals(film, format, fps ?? film.config.fps, scale);
   if (!PNG_MODES.includes(png)) throw new Error(`png 只能是 ${PNG_MODES.join(' / ')}，收到 ${png}`);
   if (png === 'fast' && capture !== 'cdp') png = 'default';   // locator 截图没有这个开关
   const out = scaledSize(fmt, scale);
@@ -320,9 +323,10 @@ export async function openScene(film, format, { browser, probe = false, port, in
     const r = document.querySelector(sel).getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height, scale: 1 };
   }, film.config.stage);
-  // 缩放只发生在截图这一步：页面照常按全分辨率布局和光栅化，CDP 把截好的图缩小后再编码 PNG。
-  // 所以缩小版是定稿帧的降采样，不是"另一种渲染"（不改 deviceScaleFactor —— 那会换一条光栅路径，
-  // 字形 hinting、细线取整都可能不同，迭代时看到的就不是定稿会出来的东西）。
+  // 缩放在截图这一步：页面照常按全分辨率布局和光栅化，CDP 把截好的图缩小后再编码 PNG。
+  // 所以 2D 部分是定稿帧的降采样，不是"另一种渲染"（不改 deviceScaleFactor —— 那会换一条光栅路径，
+  // 字形 hinting、细线取整都可能不同）。例外是读了 window.FILM.scale 主动少画像素的层（stage3d 的三维层）：
+  // 它们在小样里是低分辨率渲染再放大，省的是 SwiftShader 的光栅时间；定稿不受影响。
   clip.scale = scale;
 
   // 截一帧。

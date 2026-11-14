@@ -938,3 +938,8 @@ style_guide 拒绝条目的样例（原在 SKILL.md 第 7 步，只说明格式"
 3. **方法论去教条化与 KOL 传播参考（`references/creator-playbook.md`）**：
    - `SKILL.md` 拆掉固定单轨八股，改为题型路由表（原理机制 / 冲突故事 / KOL 观点 / 痛点种草 / 视觉先行）+ 按需模块；`--recipe explainer` 默认 `checks` 移除强制填表的 `divergence`（保留 `gates.json` 与 `check_shotlist.py` 对显式声明 `divergence` 的完整支持，且讲法比选不再强求命名 `候选 0`）。
    - 用 `new-film.mjs` 在临时目录验证 `--recipe explainer` 与 `--recipe visual` 模板生成无残留占位符，`selfcheck.mjs` 0 不合格。
+
+## motionprint `--probe`：读场景信号、标逐帧跳变（2026-11-14）
+夹具 `tests/fixtures/_test-probe`：匀速摇镜 + 1.6 s 起 2.5 Hz 衰减震动。`scene.html` 从波峰起拍（1.6 s 位置跳 40 px）→ 标 cam_x、cam_y @1.600s(f48)，glow 不标；
+`scene-ease.html` 同样的震动带 0.15 s 包络 → 0 处；`scene-noprobe.html` → exit 2。早先按"|Δ| > 3× 前后帧步长"判，7 Hz 震动在 30 fps 下每帧步长都大，起拍那帧漏标——改为比加速度 |Δ−Δ前| 与邻近 ±6 帧中位。
+没测到：forge 没有 window.probe（不改它），1.6 s 那次怀疑没在 forge 上复核；硬切、离散计数信号会被标，未做豁免。

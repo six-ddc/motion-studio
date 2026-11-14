@@ -18,7 +18,17 @@ S.scene.add(sun, sun.target, rig.createAmbient(0.25));
 rig.fitShadow(sun, bounds, {margin:1}); // bounds：含投影物/接收面的世界 Box3；margin 米
 ```
 
-太阳方向也可写 `elevation`、`azimuth`（度，0 指 −Z，90 指 +X）。`azimuthPower` 越大向阳地平线色越集中在太阳方位（小 = 整圈地平线都偏暖）；`zenithHeight/groundHeight` 是地平线色带向天顶/地面过渡的高度（sin 仰角），小 = 色带窄、天顶色占得多。
+| 参数 | 单位 / 有效域 | 控制什么 |
+|---|---|---|
+| `sun.dir` 或 `elevation`+`azimuth` | 向量 / 度（方位 0 指 −Z，90 指 +X） | 平行光、日盘、日晕、雾向阳瓣的方向。仰角低 + 低机位 = 日盘会被积水镜进画面（world-surfaces.md §3） |
+| `sun.color`、`sun.intensity` | 线性 RGB；≥0（即 DirectionalLight.intensity） | 平行光；也乘日盘、日晕、雾向阳瓣 |
+| `sky.zenith/horizonSun/horizonAway/ground/fog` | 线性 RGB ≥0（>1 为 HDR）或 sRGB `'#rrggbb'` | 天顶、向阳/背阳地平线、地平线以下；`fog` 也是雾色和 `createAmbient` 的天色 |
+| `azimuthPower` | >0，常见 1–8 | 大 = 向阳地平线色集中在太阳方位；小 = 整圈地平线都是向阳色 |
+| `zenithHeight`、`groundHeight` | sin(仰/俯角)，常见 0.1–0.5 | 地平线色带向天顶/地面过渡的高度；小 = 色带窄 |
+| `halo` | 1–4 组 `[幂次 >0, 权重 ≥0]` | 日晕，幂次大 = 窄，权重 × 太阳色 × 强度 |
+| `disk` | `angle` 视直径度（真实太阳 ≈0.53）、`intensity` ≥0 | 日/月盘，× 太阳色 × 强度；0 = 不画 |
+
+最小可跑：颜色全填同一个中性灰 `[0.5,0.5,0.5]`、数字取上表区间中段、`clouds:false`——这是让几何和镜头先跑通的**占位**，观感为零，之后按 style_guide 逐项替换；缺什么报错会写单位和有效域。全部参数一起跑的例子：本仓库夹具 `tests/fixtures/_test-sky`。
 `createAmbient(intensity)` 天色取雾色、地色取 ground；和 PMREM 叠加会抬高整体照明。
 `SKY_GLSL` 导出 `skyToSun/horizonColor/skyGradient(vec3 worldDir)`（线性域）；uniform 名固定为 `uSkySunDir/uSkySunColor/uSkySunIntensity/uSkyZenith/uSkyHorizonSun/uSkyHorizonAway/uSkyGround/uSkyFog/uSkyShape`。
 `rig.uniforms()` 返回新表，`rig.fill(table)` 更新已有槽。共享给后期：`horizonGLSL: SKY_GLSL, horizonUniforms: rig.uniforms()`。
@@ -64,7 +74,7 @@ const fog = createHeightFog(rig, {density:0.012,baseHeight:0,scaleHeight:4,maxOp
 S.scene.add(fog.node); fog.apply(material); // 标准材质；色调映射之前融色
 ```
 
-密度 `density·exp(−(y−baseHeight)/scaleHeight)`（每米），视线闭式积分，颜色取该方向地平线色；没有光柱遮挡（要有阴影的介质用后期体积雾）。
+密度 `density·exp(−(y−baseHeight)/scaleHeight)`（1/米；高度米，`maxOpacity` 0–1 是雾量上限，`sunStrength` ≥0 × 太阳色、`sunPower` 越大向阳瓣越窄），视线闭式积分，颜色取该方向地平线色；没有光柱遮挡（要有阴影的介质用后期体积雾）。
 `HEIGHT_FOG_GLSL` 导出 `heightFogDepth/heightFogColor/applyHeightFog`，`fog.fill(table)` 同步给自写 pass。`fog.node` 上的数值由舞台复位，随 t 变的每帧写回。
 
 ## 软阴影

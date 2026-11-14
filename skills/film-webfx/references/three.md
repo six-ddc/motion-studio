@@ -46,7 +46,7 @@ window.seek = A.install((t) => S.frame(t, (t) => {   // A = film-core anchors.js
 
 | API | 做什么 |
 |---|---|
-| `createStage3D({canvas?, width, height, scale=1, antialias, clear, toneMapping, colorSpace, shadows, shadowType, reset=true})` | 创建 WebGL2 renderer（`preserveDrawingBuffer:true`、`alpha`、预乘）、`scene` 和 `camera`（已加入场景） |
+| `createStage3D({canvas?, width, height, scale=1, antialias, clear, toneMapping, colorSpace, shadows, shadowType, reset=true})` | 创建 WebGL2 renderer（`preserveDrawingBuffer:true`、`alpha`、预乘）、`scene` 和 `camera`（已加入场景）。`render --scale` 小样里像素再乘 `window.FILM.scale`（`S.width/height/scale` 是实际像素；post3d、粒子跟着它；锚点仍按原尺寸量），定稿不受影响 |
 | `S.freeze()` | 记下整棵场景树的静止姿态。此后在 seek 里 add/remove 会抛错 |
 | `S.frame(t, paint, postParams?)` | **seek 的标准写法**：依次执行复位、`paint(t)`、结构检查、渲染（有后期时走后期）、处理本帧的锚点。paint 的返回值作为后期参数 |
 | `S.reset()` / `S.render(t, postParams)` | 分别是 frame 的前后两半，需要自己编排流程时使用 |

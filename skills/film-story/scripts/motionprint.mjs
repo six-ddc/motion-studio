@@ -3,6 +3,7 @@
 //
 //   node <film-story>/scripts/motionprint.mjs <video.mp4> [--out <dir>] [--fps 30] [--width 320] [--json]
 //   node <film-story>/scripts/motionprint.mjs --film <slug> [--format 9x16] [--fps <film.json fps>] [--from s] [--to s] [--out <dir>] [--json]
+//   node <film-story>/scripts/motionprint.mjs --film <slug> --probe [--keys a,b] [--jump x | --ratio 3] [--table]   # 读 window.probe(t) 信号，标逐帧跳变
 //   node <film-story>/scripts/motionprint.mjs --curves [--json]      # 缓动表 EASE（film-motion 的 choreo.js）/ 弹簧预设（film-core 的 motion.js）的 t80，运行时实算
 //
 // 只测量，不判定：没有阈值、没有 FAIL，退出码只表示"量没量成"。数字拿去和参考片对照，取舍由 style_guide 定。
@@ -40,6 +41,8 @@ cli({
     fps: ['<N>', '采样帧率（视频默认 30；场景默认 film.json fps）'], width: ['<px>', '视频模式缩放宽度（默认 320）'],
     from: ['<s>', '场景模式起点'], to: ['<s>', '场景模式终点'], vmin: ['<v>', '运动段的速度下限（px/帧）'],
     out: ['<dir>', '另把 motionprint.json / energy.txt 写到这个目录'], json: '输出 JSON',
+    probe: '场景模式改读 window.probe(t) 的信号并标出逐帧跳变', keys: ['<a,b>', '--probe 只看这几个信号'],
+    jump: ['<x>', '--probe 绝对阈值：|Δ| > x 就标'], ratio: ['<k>', '--probe 相对阈值（默认 3 倍前后帧步长）'], table: '--probe 打印逐帧表',
   },
 }, argv);
 const flag = (n, d = null) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] != null && !argv[i + 1].startsWith('--') ? argv[i + 1] : d; };
@@ -276,6 +279,7 @@ async function filmMode(slug) {
   const format = flag('format', film.formats[0]);
   const S = await openScene(film, format);
   try {
+    if (argv.includes('--probe')) return await probeMode(S, slug, format);   // 不用 has()：下一行的 const has 遮住了它
     const has = await S.page.evaluate(() => typeof window.anchors === 'function');
     if (!has) die(`${slug} 的场景没有 window.anchors(t)（film-core runtime/anchors.js 的 install()）；改用视频模式：motionprint.mjs ${film.out}/<成片>.mp4`, 2);
     const fps = num('fps', film.config.fps), from = num('from', 0), to = num('to', S.info.duration);
@@ -317,6 +321,72 @@ async function filmMode(slug) {
       }),
     ].join('\n'));
   } finally { await S.close(); }
+}
+
+// ───────────────────────── 场景：window.probe(t) 信号读数（--probe） ─────────────────────────
+// 场景自己算的量（镜头位置、震动、亮度、计数……，film-critique 分镜断言用的同一个钩子）逐帧读出来，
+// 标出"这一帧的步长突然比前后帧大得多"的地方——怀疑"那一刻镜头跳了"时，不用再手写脚本重算。
+// 判据（只是标疑点，退出码不受影响）：Δi = v(i) − v(i−1)，ai = Δi − Δi−1（按上一帧的速度外推差了多少）。
+//   --jump x  给了：|Δi| > x 就标（单位 = 信号本身的单位/帧）
+//   没给      ：|ai| > ratio × 邻近 ±6 帧（不含 i−1..i+1）|a| 的中位数，且 |ai| > 本段取值范围的 1%（ratio 默认 4）
+// 后者抓"在这之前/之后都顺，唯独这一帧速度突变"：位置跳、震动以非零偏移起拍。持续的震动自己的 |a| 都大，不会每帧都标；
+// 连续几帧都标只报第一帧。故意的硬切、事件起拍也会被标，是不是本意由人判。
+async function probeMode(S, slug, format) {
+  if (!(await S.page.evaluate(() => typeof window.probe === 'function'))) die(`${slug} 的场景没有 window.probe(t)（返回 {名: 数} 的纯函数，与 seek 共用取状态函数）；没有它只能用视频模式读像素`, 2);
+  const fps = num('fps', S.film.fps), from = num('from', 0), to = num('to', S.info.duration);
+  const ratio = num('ratio', 4), jump = flag('jump') == null ? null : num('jump');
+  const want = flag('keys')?.split(',').map((s) => s.trim()).filter(Boolean) ?? null;
+  const ts = [];
+  for (let i = Math.ceil(from * fps - 1e-9); i / fps <= to + 1e-9; i++) ts.push(i / fps);
+  const t0 = Date.now();
+  const read = (xs) => S.page.evaluate(async (xs) => { const o = []; for (const t of xs) o.push(await window.probe(t)); return o; }, xs);
+  const fwd = await read(ts);
+  const rev = (await read([...ts].reverse())).reverse();
+  const impure = ts.findIndex((t, i) => JSON.stringify(fwd[i]) !== JSON.stringify(rev[i]));
+  const names = want ?? [...new Set(fwd.flatMap((o) => Object.keys(o ?? {})))].sort();
+  const fin = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const signals = {}, flags = [];
+  for (const n of names) {
+    const v = fwd.map((o) => fin(o?.[n]));
+    const d = v.map((x, i) => (i && x != null && v[i - 1] != null ? x - v[i - 1] : null));
+    const vals = v.filter((x) => x != null);
+    if (!vals.length) { signals[n] = { present_ratio: 0 }; continue; }
+    const lo = Math.min(...vals), hi = Math.max(...vals), floor = 0.01 * (hi - lo);
+    const acc = d.map((x, i) => (x != null && d[i - 1] != null ? x - d[i - 1] : null));
+    let maxD = 0, maxAt = null, prevHit = false;
+    d.forEach((x, i) => {
+      if (x == null) { prevHit = false; return; }
+      const a = Math.abs(x);
+      if (a > maxD) { maxD = a; maxAt = ts[i]; }
+      let hit, ref = null;
+      if (jump != null) hit = a > jump;
+      else {
+        const near = [];
+        for (let j = i - 6; j <= i + 6; j++) if (Math.abs(j - i) > 1 && acc[j] != null) near.push(Math.abs(acc[j]));
+        near.sort((p, q) => p - q);
+        ref = near.length ? near[near.length >> 1] : 0;
+        hit = acc[i] != null && Math.abs(acc[i]) > floor && Math.abs(acc[i]) > ratio * ref;
+      }
+      if (hit && !prevHit) flags.push({ signal: n, t: r3(ts[i]), frame: Math.round(ts[i] * fps), from: v[i - 1], to: v[i], delta: x, prev_delta: d[i - 1], accel: acc[i], ref });
+      prevHit = hit;
+    });
+    signals[n] = { present_ratio: r3(vals.length / v.length), min: lo, max: hi, max_step: maxD, max_step_t: maxAt == null ? null : r3(maxAt) };
+  }
+  flags.sort((a, b) => a.t - b.t);
+  const summary = { film: slug, format, fps, from, to: r2(to), frames: ts.length, ms: Date.now() - t0, pure: impure < 0,
+    rule: jump != null ? `|Δ| > ${jump}` : `|Δ−Δ前| > ${ratio}× 邻近中位 且 > 取值范围 1%`, signals, jumps: flags,
+    series: { t: ts.map((t) => r3(t)), ...Object.fromEntries(names.map((n) => [n, fwd.map((o) => fin(o?.[n]))])) } };
+  const g = (x) => (x == null ? '—' : Math.abs(x) >= 100 ? x.toFixed(1) : x.toPrecision(4));
+  const rows = has('table') ? ts.map((t, i) => `${t.toFixed(3).padStart(8)} ${names.map((n) => g(fin(fwd[i]?.[n])).padStart(10)).join(' ')}${flags.some((f) => f.t === r3(t)) ? '  ◀' : ''}`) : [];
+  emit(summary, null, () => [
+    `${slug} [${format}] window.probe 读数 ${r2(from)}–${r2(to)}s，${ts.length} 帧 @${fps}fps，${names.length} 个信号（${summary.ms} ms）`,
+    impure >= 0 ? `⚠ probe 不纯：t=${ts[impure].toFixed(3)} 顺序取 ${JSON.stringify(fwd[impure])}，倒序取 ${JSON.stringify(rev[impure])}——下面的读数不可信` : null,
+    ...names.map((n) => { const s = signals[n]; return s.present_ratio ? `  ${n}: ${g(s.min)} … ${g(s.max)}，最大步长 ${g(s.max_step)} @${s.max_step_t}s${s.present_ratio < 1 ? `，有值 ${pct0(s.present_ratio)}` : ''}` : `  ${n}: 全程无数值`; }),
+    `跳变 ${flags.length} 处（${summary.rule}）${flags.length ? '：' : ''}`,
+    ...flags.slice(0, 20).map((f) => `  ◀ ${f.signal} @${f.t.toFixed(3)}s(f${f.frame})  ${g(f.from)} → ${g(f.to)}  Δ ${g(f.delta)}（上一帧 Δ ${g(f.prev_delta)}${f.ref != null ? `，邻近 |Δ−Δ前| 中位 ${g(f.ref)}` : ''}）`),
+    flags.length > 20 ? `  …其余 ${flags.length - 20} 处见 --json` : null,
+    rows.length ? `\n${'t'.padStart(8)} ${names.map((n) => n.slice(0, 10).padStart(10)).join(' ')}\n${rows.join('\n')}` : null,
+  ].filter((x) => x != null).join('\n'));
 }
 
 // ───────────────────────── 缓动 / 弹簧的 t80（运行时实算） ─────────────────────────
@@ -366,7 +436,7 @@ function emit(obj, map, text) {
   else process.stdout.write(text() + (out ? `\n\n→ ${join(out, 'motionprint.json')}${map ? ' + energy.txt' : ''}` : '') + '\n');
 }
 
-const pos = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--json', '--curves'].includes(argv[i - 1])));
+const pos = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--json', '--curves', '--probe', '--table'].includes(argv[i - 1])));
 try {
   if (has('curves')) await curvesMode();
   else if (flag('film')) await filmMode(flag('film'));

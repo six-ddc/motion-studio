@@ -12,6 +12,9 @@ const rt = await importRuntime('sfx.mjs'), dsp = await importRuntime('sfxdsp.mjs
 const { renderCues, renderStereo, SOUNDS, RATE, toWav } = rt;
 const hash = (x) => createHash('sha256').update(Buffer.from(x.buffer, x.byteOffset, x.byteLength)).digest('hex');
 const HERE = dirname(fileURLToPath(import.meta.url));
+// 立体声配方（rain）：samplesR 存在时哈希两路；必填参数（density/hard）在这里给，单声道配方仍是 {}
+const pcm = (o) => o.samplesR ? createHash('sha256').update(Buffer.from(o.samples.buffer)).update(Buffer.from(o.samplesR.buffer)).digest('hex') : hash(o.samples);
+const REQ = { rain: { density: 300, hard: 0.5 } };
 
 // 综合混音：配方（有 id / 无 id、jitter）、空间尾音（两种 IR、显式 tail）、闷音、duck、master
 function composite() {
@@ -49,15 +52,15 @@ const samples = {};
 for (const name of Object.keys(dsp.RECIPES)) {
  const mats = name === 'impact' ? ['metal', 'concrete', 'wood', 'glass', 'water'] : [null];
  for (const material of mats) {
-  const key = name + (material ? '-' + material : ''), opts = { params: material ? { material } : {}, variant: 0, seed: 73 };
-  const a = dsp.renderRecipe(name, opts).samples, b = dsp.renderRecipe(name, opts).samples;
+  const key = name + (material ? '-' + material : ''), opts = { params: material ? { material } : (REQ[name] ?? {}), variant: 0, seed: 73 };
+  const A = dsp.renderRecipe(name, opts), a = A.samples, b = dsp.renderRecipe(name, opts);
   test(`${key} 同种子逐样本确定、变体改变输出、无过载/NaN、去直流`, () => {
-   assert.equal(hash(a), hash(b));
-   assert.notEqual(hash(a), hash(dsp.renderRecipe(name, { ...opts, variant: 1 }).samples));
-   const st = dsp.stats([a]); assert.equal(st.nan, 0); assert.equal(st.over, 0); assert(st.peak > .89 && st.peak <= .901);
+   assert.equal(pcm(A), pcm(b));
+   assert.notEqual(pcm(A), pcm(dsp.renderRecipe(name, { ...opts, variant: 1 })));
+   const st = dsp.stats(A.samplesR ? [a, A.samplesR] : [a]); assert.equal(st.nan, 0); assert.equal(st.over, 0); assert(st.peak > .89 && st.peak <= .901);
    assert(Math.abs(st.dc) < 1e-3, `${key} 直流 ${st.dc}`);   // 旧 boom 约 0.009；20 Hz 高通后 < 1e-4
   });
-  writeFileSync(resolve(out, key + '.wav'), toWav(a)); samples[key] = a;
+  writeFileSync(resolve(out, key + '.wav'), A.samplesR ? rt.toWavStereo(a, A.samplesR) : toWav(a)); samples[key] = a; if (A.samplesR) samples[key + ':R'] = A.samplesR;
  }
 }
 
@@ -65,7 +68,7 @@ for (const name of Object.keys(dsp.RECIPES)) {
 const PINS = resolve(HERE, 'recipe-pcm.json');
 const pinsNow = {};
 for (const [name, R] of Object.entries(dsp.RECIPES)) for (const material of name === 'impact' ? ['metal', 'concrete', 'wood', 'glass', 'water'] : [null])
- for (let v = 0; v < R.variants.length; v++) pinsNow[`${name}${material ? '-' + material : ''}/v${v}`] = hash(dsp.renderRecipe(name, { params: material ? { material } : {}, variant: v }).samples);
+ for (let v = 0; v < R.variants.length; v++) pinsNow[`${name}${material ? '-' + material : ''}/v${v}`] = pcm(dsp.renderRecipe(name, { params: material ? { material } : (REQ[name] ?? {}), variant: v }));
 if (process.argv.includes('--update-pins')) { writeFileSync(PINS, JSON.stringify(pinsNow, null, 1) + '\n'); console.log(`已重写 ${PINS}（${Object.keys(pinsNow).length} 条）`); }
 test(`配方 PCM 钉死（${Object.keys(pinsNow).length} 个 配方×材质×变体，recipe-pcm.json）`, () => {
  assert(existsSync(PINS), '没有 recipe-pcm.json：确认配方是有意改的之后跑 --update-pins');
@@ -185,5 +188,28 @@ test('阴性：缓冲随参数变长（旧代码 metal 0.5 s、boom 3√size、c
  assert(dsp.renderRecipe('boom',{params:{size:4}}).samples.length>=(1.9*4+.2)*RATE-1);
  assert.equal(dsp.renderRecipe('boom').samples.length, 3*RATE);   // 默认长度不变
  assert.equal(dsp.renderRecipe('clatter').samples.length, Math.round(.55*RATE));
+});
+test('rain：density/hard 必填且报出参考量级；范围外参数报错', () => {
+ assert.throws(()=>dsp.renderRecipe('rain'),/density/);
+ assert.throws(()=>dsp.renderRecipe('rain',{params:{density:300}}),/hard/);
+ assert.throws(()=>dsp.renderRecipe('rain',{params:{density:300,hard:'1'}}),/hard/);
+ assert.throws(()=>dsp.renderRecipe('rain',{params:{density:0,hard:.5}}),/density/);
+ for (const k of ['distance','pool','width']) assert.throws(()=>dsp.renderRecipe('rain',{params:{density:300,hard:.5,[k]:1.5}}),new RegExp(k));
+});
+test('rain：立体声去相关（width 1 相关系数 < 0.3，width 0 左右逐位相同），长度 = dur，首尾无跳变', () => {
+ const corr=(x,y)=>{let a=0,b=0,c=0;for(let n=0;n<x.length;n++){a+=x[n]*y[n];b+=x[n]*x[n];c+=y[n]*y[n];}return a/Math.sqrt(b*c);};
+ const L=samples.rain, R=samples['rain:R'];
+ assert.equal(L.length, 6*RATE); assert(Math.abs(corr(L,R))<.3, `相关 ${corr(L,R)}`);
+ const m=dsp.renderRecipe('rain',{params:{density:300,hard:.5,width:0}}); assert(m.samples.every((v,i)=>v===m.samplesR[i]));
+ // 循环接缝：末样本 → 首样本的跳变不超过缓冲内相邻样本差的 99.9 分位
+ for (const x of [L,R]) { const d=[]; for(let n=1;n<x.length;n++) d.push(Math.abs(x[n]-x[n-1])); d.sort((a,b)=>a-b);
+  assert(Math.abs(x[0]-x[x.length-1]) <= d[Math.floor(d.length*.999)], `接缝跳变 ${Math.abs(x[0]-x[x.length-1])}`); }
+});
+test('rain：renderStereo 用 cue.dur 循环成长床，左右各读各的；单声道路径取 (L+R)/√2', () => {
+ const c={t:0,type:'rain',params:{density:200,hard:.3,dur:2},dur:5,gain:.5};
+ const {L,R}=renderStereo([c]); assert(L.length>=5*RATE); assert.notEqual(hash(L),hash(R));
+ const e=dsp.expandRecipes([c])[0], n=Math.round(2.5*RATE), src=n%e.samples.length;   // 2.5 s 处读的是第二圈的 0.5 s
+ assert(Math.abs(L[n]-.5*Math.SQRT1_2*e.samples[src])<1e-6 && Math.abs(R[n]-.5*Math.SQRT1_2*e.samplesR[src])<1e-6);
+ const mono=renderCues([{t:0,type:'rain',params:{density:200,hard:.3,dur:2}}]); assert(Math.abs(mono[100]-(e.samples[100]+e.samplesR[100])*Math.SQRT1_2)<1e-6);
 });
 console.log(`\nsfx 单测全部通过：${passed} 项；配方 WAV 在 ${out}`);

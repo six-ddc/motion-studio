@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "motionprint --probe 信号读数夹具",
+  "format": "16x9",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 3,
+  "loop": false,
+  "checks": []
+}

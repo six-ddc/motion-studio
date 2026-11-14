@@ -41,7 +41,7 @@
 // --dump-events 只打印场景事件；--emit <path> 把场景事件生成的 cue 写成普通 cue 数组（定稿留痕/手改用）。
 //
 // ── 分层配方与总线（film-narration references/sfx-recipes.md）──────────
-// type 也可以是运行时 RECIPES 里的配方名（crack boom impact zing passby clatter step land rub riser sub shimmer hum）：
+// type 也可以是运行时 RECIPES 里的配方名（crack boom impact zing passby clatter step land rub riser sub shimmer hum rain；rain 是立体声床，自动走立体声路径）：
 //   params 配方参数；variant 变体（不写 = 有 id 按 hash(配方, id)，否则同名配方按时间顺序轮换）；pitch 音高系数；jitter 音高/增益抖动。只用这些仍走单声道路径
 // 下列字段任一出现就走立体声路径：
 //   space      { preset: outdoor|indoor, gain, scale?, bright?, seed? } 程序化冲激响应尾音；cue 上写 tail: true/false 显式决定挂哪几个，
@@ -191,7 +191,8 @@ const timed = raw.map((c, i) => {
   return { ...c, t };
 }).concat(eventCues);
 
-const stereo = !!cfg.stereo || !!cfg.master || !!cfg.music || eventCues.length > 0 || timed.some((c) => c.tail === true || NEW_KEYS.some((k) => c[k] != null) || PARAMS.some((k) => isSpec(c[k])));
+// 立体声配方（RECIPES[x].stereo，如 rain）本身就是两路，也走立体声路径
+const stereo = !!cfg.stereo || !!cfg.master || !!cfg.music || eventCues.length > 0 || timed.some((c) => c.tail === true || NEW_KEYS.some((k) => c[k] != null) || PARAMS.some((k) => isSpec(c[k])) || (!c.file && RECIPES[c.type]?.stereo));
 
 // ---------- 去重（可选） ----------
 const dropped = [];
@@ -357,7 +358,7 @@ for (const [i, c] of cues.entries()) {
 const emitPath = arg('emit');
 if (emitPath) {
   const plain = cues.filter((c) => c._event).map((c) => {
-    const o = { t: +c.t.toFixed(4) }; for (const [k, v] of Object.entries(c)) if (!['t', '_event', 'samples', '_recipe', 'anchor', 'follow', 'panWidth'].includes(k)) o[k] = v;
+    const o = { t: +c.t.toFixed(4) }; for (const [k, v] of Object.entries(c)) if (!['t', '_event', 'samples', 'samplesR', '_recipe', 'anchor', 'follow', 'panWidth'].includes(k)) o[k] = v;
     for (const k of PARAMS) if (o[k]?.v instanceof Float32Array) o[k] = { probe: '（已采样，见 out/sfx.json）' };
     if (typeof o.pan === 'number') o.pan = +o.pan.toFixed(3);
     o._from = `场景事件 ${c._event.kind}`; return o;

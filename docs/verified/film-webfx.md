@@ -534,3 +534,16 @@ Kuwahara 第一版（−r..r 双重循环 + 四个 if 分象限）在负载 20�
 - 阴性对照：`_test-worldfx/scene-bad-reflect-prevframe.html`（reset:false + 画完这一帧才更新反射）seamcheck 门 1a 8/8 时刻红、门 2 8/8 红、1b 绿；`_test-surface/scene-bad-noreset.html`（reset:false + 湿度只在 t>2 s set）只有门 2 红（4/4 时刻，约 33 万像素）。发现：默认 reset:true 时舞台把 `uGMatrix` 还原到 freeze 值，过期反射整个落到画外，门看不出来（画面上是"反射消失"），已写进 world-surfaces.md。
 
 **没做 / 没测**：涟漪对照原游戏只到公式级，没有逐像素对照；`foreground` 只验证了景深（AO/体积雾对压缩深度的物体本来就几乎不起作用，开关差异测不出）；测光改为全像素降采样后没有和旧 32×18 点采样做数值对比；sky3d 云的明暗曲线常数（0.55+0.9r²、0.05+2.2r³）只写进文档没参数化。
+
+## 小样少画像素：`window.FILM.scale` × stage3d（2026-11-14）
+`render --scale k` 时内核注入 `FILM.scale = k`，stage3d 把绘制缓冲乘 k（画布在页面里且没写 CSS 尺寸时先钉住布局尺寸，锚点仍按原尺寸量）；scale 1 路径逐字不变。
+forge 7–8 s、0.5x、veryfast、1 worker、4 核 SwiftShader：截图 82.0 s → 41.3 s（2.73 → 1.38 s/帧），总耗时 90 s → 50 s。不到 4 倍：阴影贴图、forge 自己按 L.width/3 写死的平面反射 RT、环境贴图不随 k 缩。
+post3d / particles3d / spritefx3d 都按 `S.width/S.height` 取尺寸，跟着缩；fxchain 按自己的 `o.width × o.scale`，不读 FILM.scale（只用 fxchain 的片子小样不会变快）。
+
+## 上手成本、"光从哪来"诊断、低机位倒影（2026-11-14）
+起因：本仓库样例 forge（sky3d + ground3d + post3d 的第一个真实消费者）首次搭景要从夹具抄十几个无默认值的参数；湿地面上一个白斑查了 3 轮才定位到是月盘被积水平面反射镜进画面。
+**改了什么**：sky.md / world-surfaces.md 各加一张"参数 · 单位/有效域 · 控制什么"表和一句明确标为**占位**的最小可跑写法（中性灰 + 区间中段），指向夹具；sky3d / ground3d 缺参数的报错带单位与有效域（`ground3d: 缺参数 layers.damp.lowBias（0–1，低处更潮的权重）`）。
+`ground3d.reflectionOf(camera, planeY, 点|{dir}, size)`：镜像点、倒影在地面上的位置、屏幕坐标；`_test-worldfx/tests/unit.mjs` 对独立推导（视线与平面交点、针孔投影 `ndc.y = −tan(俯角)/tan(fov/2)`）断言到 1e-9，含相机/点在平面下、高仰角盘出画框。
+`scripts/lightdebug.mjs`：加载前注入 `globalThis.WEBFX_DEBUG`；sky3d/ground3d/post3d 只在它存在时 `register()`（未注入 = 一次空可选链，着色器、uniform、绘制顺序都不变，所以门与成片不受影响）。注入实现包住 `S.renderer.render`，只在画 `S.scene` 时临时改值、画完还原（平面反射那次绘制也经过它，关日盘同时关倒影）。
+实测：`_test-worldfx` t=0.6（540²，约 17 s）6 个源关掉都改像素（平行光 194771、反射 129556、涟漪 3631——涟漪区域平均 Δ=0.00000 而 |Δ| 0.00002，所以输出同时给 Δ 和 |Δ|），全开重拍 0 像素差；`_test-sky` t=1（1080p，约 65 s）日盘 199 像素、日晕/雾/环境都改像素；forge t=2.0 地面带 [0,760,1920,320]（14 个源，约 100 s）：最亮像素 (1196,766) 99% 来自加色网格（雨丝），区域 Δ 最大是自发光 36%、环境 12%、雾 10%，关反射区域反而亮 12%（积水退回更亮的环境镜面），月盘仰角 11.5°、倒影不在画面内（现行 forge 的光向已改过）。
+**没做 / 没测**：没有"只开一个源"（solo）模式；不拆单个材质/单个网格；只用 stage3d 而不用 sky3d/ground3d/post3d 的片子拿不到舞台，脚本直接报错；色调映射后的线性亮度差不可加（输出里写明）；reflectionOf 不做遮挡（"贴地物体倒影被自己底座挡住"只写进文档，要射线检测时自己做）。

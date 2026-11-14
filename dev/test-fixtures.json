@@ -13,7 +13,9 @@
     "fontsrc": ["node", "film-core/scripts/font_source.mjs"],
     "subset": ["python", "film-assets/scripts/subset_font.py"],
     "kitcheck": ["node", "film-core/scripts/kitcheck.mjs"],
-    "fxreplay": ["node", "film-webfx/scripts/fxreplay-check.mjs"]
+    "fxreplay": ["node", "film-webfx/scripts/fxreplay-check.mjs"],
+    "lightdebug": ["node", "film-webfx/scripts/lightdebug.mjs"],
+    "motionprint": ["node", "film-story/scripts/motionprint.mjs"]
   },
   "cases": [
     { "film": "_test-motion", "entry": "scene.html", "gate": "seamcheck", "expect": "green", "match": ["全部通过"], "source": "docs/verified/film-motion.md §1" },
@@ -51,6 +53,9 @@
     { "dir": "_test-preflight", "film": "bad-content", "gate": "preflight", "expect": "red", "match": ["✗ claims", "没有 source", "找不到这个 id", "待核.*不能上片", "maxChars 14", "assets\\.hero"], "why": "content.json：槽位超长、素材缺、宣传数据无出处/出处不在 facts.md/状态待核", "source": "film-core/references/preflight.md 阴性对照表" },
     { "dir": "_test-preflight", "film": "bad-variant", "gate": "preflight", "expect": "red", "match": ["✗ residue", "源片 slug「pf-src」", "源片标题「源片标题测试」", "未替换的占位"], "absent": ["brief.md:5"], "why": "变体复制后残留源片 slug/标题与 {{占位}}；preflight:allow 那行不报", "source": "film-core/references/preflight.md 阴性对照表" },
     { "dir": "_test-preflight", "film": "good", "entry": "scene.html", "gate": "preflight", "args": ["--variant", "nope-x"], "expect": "red", "match": ["✗ assets", "变体 nope-x", "没有维度 nope"], "why": "--variant 指了不存在的维度：按内容层 resolveContent 判红（render 钩子透传的就是它）", "source": "film-core/references/preflight.md 阴性对照表" },
+    { "film": "_test-probe", "entry": "scene.html", "gate": "motionprint", "args": ["--probe"], "expect": "green", "match": ["跳变 2 处", "◀ cam_x @1\\.600s\\(f48\\)", "◀ cam_y @1\\.600s"], "absent": ["◀ glow", "probe 不纯"], "why": "震动从波峰起拍：1.6s 那一帧镜头位置跳 40px，读数要点名这一帧；平滑的 glow 不许误标", "source": "film-story scripts/motionprint.mjs probeMode" },
+    { "film": "_test-probe", "entry": "scene-ease.html", "gate": "motionprint", "args": ["--probe"], "expect": "green", "match": ["跳变 0 处"], "why": "同样的震动带 0.15s 包络从 0 长出来：不该标", "source": "film-story scripts/motionprint.mjs probeMode" },
+    { "film": "_test-probe", "entry": "scene-noprobe.html", "gate": "motionprint", "args": ["--probe"], "expect": "red", "code": 2, "match": ["没有 window\\.probe\\(t\\)"], "why": "场景没暴露钩子：说清楚并 exit 2，不假装读到了 0", "source": "film-story scripts/motionprint.mjs probeMode" },
     { "film": "_test-cuts", "entry": "scene.html", "gate": "transitions", "expect": "green", "match": ["剪辑点来源：window\\.CUT_WINDOWS \\+ window\\.CUTS", "中 1\\.300s\\(f39\\)", "入 2\\.967s\\(f89\\)  中 3\\.000s\\(f90\\)"], "why": "场景声明的转场窗口取窗口中点、硬切取切前/切后帧，且对齐帧格（品红缺陷框只在 1.25–1.35s）", "source": "film-critique scripts/_cuts.mjs 头注释" },
     { "film": "_test-cuts", "entry": "scene-marks.html", "gate": "transitions", "expect": "green", "match": ["window\\.MARKS 边界（推测", "硬切 1\\.300s"], "why": "MARKS 首尾相接当硬切，必须标推测", "source": "film-critique scripts/_cuts.mjs 头注释" },
     { "film": "_test-cuts", "entry": "scene-nocuts.html", "gate": "transitions", "expect": "green", "match": ["没有剪辑点", "退回现行行为——均匀 5 点", "转场中段没被专门采样"], "absent": ["剪辑点来源"], "why": "没声明剪辑点时明说退回，不假装对准了转场", "source": "film-critique scripts/transitions.mjs" },
@@ -114,6 +119,9 @@
     {"film": "_test-post", "entry": "scene.html", "gate": "seamcheck", "args": ["--parallel", "2"], "expect": "green", "match": ["全部通过", "0 帧不同"], "slow": false, "why": "AO/阴影体积雾/镜头/显示与finish链按当帧数据求值", "source": "docs/verified/film-webfx.md 2026-11-12 接续验证"},
     {"film": "_test-worldfx", "entry": "scene.html", "gate": "seamcheck", "args": ["--parallel", "2"], "expect": "green", "match": ["全部通过", "0 帧不同"], "slow": false, "why": "程序化贴图、当帧平面反射和烟火花闭式渲染", "source": "docs/verified/film-webfx.md 2026-11-12 接续验证"},
     {"film": "_test-worldfx", "entry": "scene-bad-reflect-prevframe.html", "gate": "seamcheck", "expect": "red", "match": ["seek 不可重复", "结果依赖求值顺序"], "absent": ["两次加载结果不同"], "why": "reset:false 下画完这一帧才更新平面反射：下一次 seek 读上一帧的 RT 与矩阵，1a、2 红", "source": "docs/verified/film-webfx.md 2026-11-13 webfx 修复线"},
+    {"film": "_test-worldfx", "entry": "scene.html", "gate": "lightdebug", "args": ["--at", "0.6"], "expect": "green", "match": ["light1:DirectionalLight .* [1-9]\\d*/291600", "reflection .* [1-9]\\d*/291600", "ripple .* [1-9]\\d*/291600", "emissive .* [1-9]\\d*/291600", "additive .* [1-9]\\d*/291600", "✓ 全开重拍与第一次一致"], "why": "调试钩子：每个登记的源（灯、反射矩阵置零、涟漪幅度、自发光、加色网格）关掉都真改了像素，且全开重拍逐像素复原", "source": "docs/verified/film-webfx.md 2026-11-14 lightdebug"},
+    {"film": "_test-worldfx", "entry": "scene.html", "gate": "lightdebug", "args": ["--at", "0.6", "--only", "nope"], "expect": "red", "code": 2, "match": ["不存在的源：nope", "reflection"], "why": "拼错源名要报用法错并列出现有的源，不能静默测空集", "source": "film-webfx scripts/lightdebug.mjs"},
+    {"film": "_test-sky", "entry": "scene.html", "gate": "lightdebug", "args": ["--at", "1"], "expect": "green", "match": ["sky\\.disk .* [1-9]\\d*/2073600", "sky\\.halo .* [1-9]\\d*/2073600", "fog .* [1-9]\\d*/2073600", "environment .* [1-9]\\d*/2073600", "✓ 全开重拍与第一次一致"], "slow": true, "why": "天空侧的钩子：日盘、日晕、雾、环境强度关掉都改像素", "source": "docs/verified/film-webfx.md 2026-11-14 lightdebug"},
     {"film": "_test-surface", "entry": "scene-bad-noreset.html", "gate": "seamcheck", "expect": "red", "match": ["结果依赖求值顺序"], "absent": ["seek 不可重复", "两次加载结果不同"], "slow": true, "why": "reset:false + 湿度只在后半段 surf.set（部分 set）：前半段沿用上一次 seek 的 uniform，只有门 2 红", "source": "docs/verified/film-webfx.md 2026-11-13 webfx 修复线"},
     {"film": "_test-events", "entry": "scene.html", "gate": "seamcheck", "args": ["--parallel", "4"], "expect": "green", "match": ["全部通过", "0 帧不同"], "slow": false, "why": "事件表多通道响应、屏震和物体冲量闭式渲染", "source": "docs/verified/film-physics.md 2026-11-12 接续验证"},
     {"film": "_test-events", "entry": "scene.html", "gate": "seamcheck", "args": ["--fps", "24"], "expect": "green", "match": ["全部通过", "@ 24fps"], "slow": false, "why": "--fps 覆盖经 window.FILM 传给场景：按 24 fps 对齐的事件表 1a/1b/2/3 仍确定", "source": "docs/verified/film-core.md 2026-11-13 window.FILM"},

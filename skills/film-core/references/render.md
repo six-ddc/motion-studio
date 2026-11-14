@@ -122,6 +122,7 @@ await S.close();
 ### `--scale`：迭代用缩小版
 
 页面照常按全分辨率布局和光栅化，只在截图时由 CDP 缩小，所以缩小版就是定稿帧的降采样，不是另一套渲染结果。
+例外：页面能读到 `window.FILM.scale`（< 1），主动少画像素的层（film-webfx 的 stage3d 三维层）在小样里是低分辨率渲染再放大——三维片的瓶颈在 SwiftShader 光栅，本仓库样例 forge 0.5x 每帧 2.73 → 1.38 s。
 这里不改 deviceScaleFactor，因为改它会换一条光栅路径，迭代时看到的就不是定稿会出来的画面。
 速度约快 2.3 倍（瓶颈在全尺寸 PNG 编码，不在光栅化）。
 产物放在 `out/draft/draft-<format>-<scale>x.mp4`，不以 `silent-*` 命名：mux.sh、contact.sh、align.py 按名字挑选成片，不会选中它；
