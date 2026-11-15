@@ -1,59 +1,94 @@
-# 冲击手感与镜头：`feel.js` + `closed.js` 的游戏化反馈
+# 冲击手感与镜头：多通道编排与游戏化反馈
 
-目录：1 游戏里的配方数值与代价 · 2 影片时间与世界时间 · 3 手感与相机 · 4 局部验证
+目录：1 方法：一个事件，多条通道 · 2 影片时间与世界时间（顿帧） · 3 屏震 · 4 闪白 · 5 压扁 · 6 拖尾 · 7 后坐与着陆下沉 · 8 验证
 
-事件表本身（`eventTrack` `channel` 响应核、`throttle` `burstEnds` `snapToFrames`、`toCues`）在 film-core `runtime/events.js`，
-文档是 film-core `references/events.md`。片子里照旧 `import './runtime/events.js'`（挂载表扁平解析，`feel.js` 也这样 import 它）。
+事件表本身（`eventTrack`、`channel`、响应核、`throttle` `snapToFrames` `holdFrames`、`trauma/traumaOf`、`piecewise`、`toCues`）在 film-core `runtime/events.js`，文档 film-core `references/events.md`。
+本页讲建在它上面的手感通道：原理、在 seek 下难在哪、代价。都是策略 ① 的纯函数，自己按本片写。文中"游戏里常见"的数来自游戏拆解，不是本片的默认手感。
+一串冲击结束后的空间尾音要看完整事件表才能判（相邻间隔判串），画面和声音用同一个 gap（film-core `toCues`）。
 
-## 1. 游戏里的配方数值与代价
+## 1. 方法：一个事件，多条通道
 
-下面是游戏拆解里的数，**不是本片的默认手感**；运行时都要求显式给（`traumaShake` 的 power、`hitstopOf` 的 dur、`shakeTermsFromSeed` 的 avoid）。
+游戏里一次命中会同时改十几样东西：顿帧、闪白、屏震、后坐、粒子爆发、动态光、音效、手柄震动。游戏用每帧累加的状态实现，seek 下不能照搬。改写的方法：
 
-| 事件 → 通道 | 常见数值 | 代价 / 什么时候改 |
-|---|---|---|
-| 冲击 → 动态光、闪白 | 50 ms 线性或平方根熄灭 | 短于 2 帧会落在帧之间：配 `snapToFrames` + `holdFrames(k,{minFrames:2})`，手感因此变长变软；要"脆"就宁可接受偶尔只亮 1 帧 |
-| 冲击 → 后坐 | 35% 永久、65% 可恢复（`recoil` keep=0.35） | 永久部分会累积改变构图，连射 20 发就偏出画；叙事镜头要回正就把 keep 设 0 |
-| 冲击 → 屏震 | 创伤值平方（power=2）× 多正弦 | 小事件被压到几乎看不见、大事件才显著；要每次都看得见用 power=1，代价是满值时不再"爆" |
-| 冲击 → 顿帧 | 30–100 ms（`hitstop` 缺省 0.06） | 越长打击越重、越拖节奏；连击时冻结段合并（见 §2），总冻结时长 ≠ 次数 × dur |
-| 冲击 → 闪白 | `closed.flash` 缺省 0.12 s | 越长越糊，连击时闪成一片 |
-| 一串冲击结束 → 空间尾音 | 相邻间隔判串 | 完整事件表已知才能离线判；画面和声音要用同一个 gap（`toCues({tails})`） |
-| 落地 → 弹簧下沉 | 欠阻尼回弹 | 输出限幅 ≠ 真撞到限位后的非线性运动（那要定步重放） |
-| 屏震频率 | 两正弦避开 1:1、1:2 | 比值≈1 拍频成慢摆、≈小整数周期性同步；这是口味，`avoid` 参数里写，不给就不避 |
+1. **事件表是真相源**。加载期确定所有事件 `{t, type, id, power…}`：来自闭式物理（触地时刻）、② 仿真记录的碰撞（由 `S.inv` 换回影片时间）、旁白锚点 `vo.at()`、节拍栅格。
+2. **每条通道是"年龄的函数"之和或最大值**：`ch(t) = combine_{e: τ=t−e.t≥0} response(τ, e)`。线性叠加（屏震位移）、取最大（闪白）、只看最近一个（状态切换）分别对应不同手感。
+3. **有记忆的量**（创伤值封顶、后坐保持时间被下一发重置、冷却计时）不能逐帧累加，用"事件处跳变 + 事件之间闭式流"（film-core `piecewise`）在加载期或二分查询时算出。
+4. **声音与画面共用同一张表**，声音 cue 从同一组事件导出（film-core `toCues`），这样一个事件挪动，光、震、声一起挪。
 
-`closed.js` 里 `hitShake`（amp 20、decay 12、freq 30）、`squash`（k 600、c 18）的缺省是旧接口保留的起点，代价同上：按本片改。
+代价：不能直接移植游戏里"每帧 `trauma -= decay*dt`"的代码；节流、连射收尾这类需要看完整个事件序列的规则，要在加载期对整张表做一次。
 
-## 2. 影片时间与世界时间
+## 2. 影片时间与世界时间（顿帧）
 
-顿帧把"世界"（物理、粒子运动、动画曲线）停住，反馈本身不停：
+顿帧把"世界"（物理、粒子运动、角色动画）停住，反馈本身不停：
 
-| 读影片时间 t | 读世界时间 `tw = hitstopOf(hits,{dur})(t)` |
+| 读影片时间 t | 读世界时间 tw = hitstop(t) |
 |---|---|
-| 闪白、屏震（`traumaShake`、`hitShake`）、后坐、声音 cue、字幕 | 弹道、粒子位置、`springDip` 之类"物体在动"的量、角色动画 |
+| 闪白、屏震、后坐、声音 cue、字幕 | 弹道、粒子位置、弹簧下沉、角色动画 |
 
-`hitstop(t, hits, dur)` / `hitstopOf(hits, {dur})`：冻结区间 `[h, h+dur]` **取并集**，`tw` 单调不减。
-以前逐个相减，重叠时世界时间倒退（命中 1.00/1.03、dur .06：t 1.03→1.05 映到 1.000→0.980）；现在平在 1.000。互不重叠时与旧版逐位相同。
-`hitstopOf` 加载期预计算（O(log n)），dur 可以是 `(e)=>秒`；`tw.inv(w)` 反查第一个影片时刻；`tw.intervals` 是并集。
-命中时刻本身是影片时间；若命中由物理推出（世界时间），先在世界时间里算出命中，再用 `tw.inv` 换成影片时间。
+**原理**：冻结区间 `[h, h+dur]` 先**取并集**，再 `tw = t − |(−∞, t] ∩ ⋃区间|`。加载期把区间排序合并、记前缀和，查询二分 O(log n)。tw 单调不减；反函数 `tw⁻¹(w)` 取第一个映射到 w 的影片时刻。dur 可以随事件变（重击冻得久）。
 
-## 3. 手感与相机：`runtime/feel.js`
+**难在哪**：
+- 逐个相减而不取并集，重叠时世界时间会**倒退**（命中 1.00/1.03、dur 0.06：t 1.03→1.05 映到 1.000→0.980），物体往回跳。
+- **循环依赖**：如果命中由物理本身推出，冻结会改变之后的命中时刻。做法是先在未冻结的时间里算出命中（作为常量），再把整条物理放进冻结后的时间里；命中若是世界时间里算出的，用 `tw⁻¹` 换成影片时间。
+- 与时间映射 S 叠用时顺序是 `stateAt(S(tw(t)))` 还是 `stateAt(tw(S(t)))` 取决于命中时刻是哪个时间里的量，写错了也完全确定，只有 physcheck E4 / 人眼抓得到。
 
-| API | 输出与代价 |
-|---|---|
-| `shakeTermsFromSeed(seed,{band,second,avoid?})` | 各轴两个 `[Hz,权重,相位]`。`avoid:{ratios:[1,2],tol:.1}`：max/min 比值落在 ratios±tol 就按 hash 确定性重抽（最多 tries=32，抽不到报错）；不给就不避 |
-| `traumaShake(t,trauma,{amp,terms,power})` | pitch/yaw/roll；power 必填；不同于每次冲击独立包络、越叠越大的 `hitShake` |
-| `recoil(track,{on,amount,keep,rise,hold,fall,min?,max?})(t)` | `{permanent,visual,target,total}`，每发重置保持时间（piecewise 精确） |
-| `springDip(track,{on,impulse,k,c 或 stiffness,damping,min?,max?,eps?})(t)` | 单位速度冲量 × impulse 求和（film-core `springKick`），再对输出限幅 |
-| `arcTable / arcFromSamples / stepPhase / stepBob` | 弧长表 → 步相位（停顿吸附整步）→ 步态晃动 |
-| `lagOffset(t,pos,{k,c,span,steps})` | 父物体加速度与弹簧核卷积；Simpson O(steps)/轴，离散冲量改用 channel 更省 |
-| `drift / driftTerms` | 多正弦漂移及其加载期参数表 |
-| `cruise(u,soft,ease?)` | 匀速与缓动混合；ease 缺省 smoothstep（两端速度 0、中段 1.5 倍），代价是起停对称 |
-| `approach(track,{on,init,target,rate})` | 状态事件改目标，指数逼近 |
-| `perturbShot(shot,{pitch,yaw,roll,offset})` | camrig 的新 shot 数据，注视距离不变 |
+**代价**：游戏里常见 30–100 ms，越长打击越重、越拖节奏。顿帧占用时间轴：对齐旁白的片子要把冻结总时长算进镜头；连击时冻结段合并，总冻结时长 ≠ 次数 × dur。
 
-三维：`applyShot(S.camera,perturbShot(baseShot,shake),…)`（film-webfx）。二维：yaw/pitch 当像素位移加到 film-core `camera()`，roll 加到旋转。
+## 3. 屏震
 
-## 4. 局部验证
+两种模型，可以同时用（一个管物体，一个管相机）：
 
-`_test-events` 同时驱动闪白、屏震、粒子、弹簧、贴花，帧率读 `window.FILM.fps`。
-`node tests/fixtures/_test-events/tests/unit.mjs` 72 项数值断言（参照都是独立实现：RK4、定步、整数节拍冷却计时器、暴力约束枚举）；
-`tests/browser.mjs` 在 24/30/60 fps 下各开一次；`bad-accum.html` 跨帧累加创伤值，乱序门报"结果依赖求值顺序"。
+**逐命中包络**：每次命中各自一条衰减包络乘以从命中起算的噪声，线性叠加。
+```
+offset(t) = Σ_h amp·e^{−decay·(t−h)}·noise((t−h)·freq, seed_h)，只算 0 ≤ t−h < 6/decay 的命中
+```
+命中越密越抖，没有上限；每次命中噪声相位重启，听起来像"一下一下"。
+
+**创伤值（trauma）**：一个全局量，每次事件 +add、每秒线性减 decay、封顶 1（film-core `traumaOf`，piecewise 精确）。
+```
+shake_axis(t) = amp_axis · trauma(t)^power · Σ_j w_j·sin(2π·f_j·t + φ_j)     （正弦按绝对时间 t）
+```
+连续命中只把振幅撑满，不会无限叠大，相位也不重启。power=2（"创伤值平方"）让小事件几乎看不见、大事件才猛；power=1 每个事件都看得见，代价是满值时不再"爆"出来。
+频率和相位在加载期由 `hash01(seed, 轴, …)` 在一个频带里抽。两个正弦频率比 ≈1 会拍频成慢摆、≈小整数会周期性同步，有人觉得机械——避不避是本片的判断；要避就按 hash 确定性重抽，重抽次数要有上限并在抽不到时报错。
+
+**难在哪**：都只是 t 和事件表的函数，难点在别处——不能写 `trauma -= decay*dt` 跨帧累加（乱序门会报"结果依赖求值顺序"）；震的是**相机**，不改物理。二维把 yaw/pitch 当像素位移加到 film-core `camera()`，roll 加到旋转；三维把扰动加到相机的 pitch/yaw/roll 上，注视距离不变（三维运镜见 film-webfx）。持续的手持噪声（与事件无关的慢漂移）和命中屏震是两回事，可以叠加。
+
+**代价**：震得太多观众会疲劳，字幕也读不清。
+
+## 4. 闪白
+
+`flash(t) = max_h flashDecay(dur)(t − h)`（film-core `flashDecay`：1 − τ/dur；`sqrtFade` 熄灭得更慢）。
+
+**难在哪**：短于 2 帧的闪会落在帧之间，某些帧率下完全看不见。用 film-core `snapToFrames` 把事件对齐到帧、`holdFrames(k, {minFrames: 2})` 保证至少亮 2 帧——手感因此变长变软；要"脆"就接受偶尔只亮 1 帧。
+
+**代价**：游戏里动态光常见 50 ms 线性或平方根熄灭、闪白约 0.1 s。最便宜的命中信号；有光敏风险，频率要克制。越长越糊，连击时闪成一片。
+
+## 5. 压扁
+
+命中后给缩放一个阻尼弹簧：`d(τ) = oscillate(τ, −strength, 0, 0, k, c).x`（film-core），`sy = 1 + d`，`sx = 1 − d/2`（近似保面积；要严格保面积用 `sx = 1/sy`）。strength 通常正比于触地速度（§2 弹跳给出）。
+
+**难在哪**：只看最近一次命中（新命中覆盖旧弹簧）还是叠加，是两种手感；覆盖会在连跳时出现不连续，可以用新弹簧的初值接上旧弹簧当前值。
+
+**代价**：卡通弹性；在写实片里会显得轻。
+
+## 6. 拖尾
+
+闭式物体：`trail(t) = [pos(t − k·Δ) for k in 0..n−1]`，直接回采，精确且不存历史。
+
+**难在哪**：② 的物体回采要对每个历史点调 `stateAt`，乱序时每帧都要回退重放，很贵；而且同一帧多次 `stateAt` 会让 physcheck E4 误报（它看的是最后一次调用）。做法是把最近 n 帧位置存进 state 的环形缓冲（随检查点回退），或者给拖尾单独开一个 replay。③ 的物体直接查前几帧的表，最便宜。
+
+## 7. 后坐与着陆下沉
+
+**后坐**：每发把冲量拆成"永久"部分（keep 比例，改变构图/准星，不回来）和"可恢复"部分（快起 rise、保持 hold、慢收 fall）；**保持时间被下一发重置**——连射中不回落，最后一发 hold 之后才回正。这是有记忆的量，用 piecewise 写：事件处 `permanent += keep·a`、`target = clamp(target + (1−keep)·a)`；事件之间是 film-core `holdFallFlow` 的闭式流。
+
+**着陆下沉 / 受力**：每个事件给弹簧一个初速度冲量，响应是线性叠加 `Σ impulse_e · springKick(τ_e)`（film-core channel + springKick）。
+
+**难在哪**：对输出限幅 ≠ 游戏里"撞到限位后速度也被截"的非线性；连续两次大冲量时两者不同。要严格复现后者，就把这个量放进定步重放。
+
+**代价**：游戏里常见 35% 永久、65% 可恢复。永久部分会累积改变构图，连射 20 发就偏出画；叙事镜头要回正就把 keep 设 0。
+
+## 8. 验证
+
+- 全部通道读的是 t 和事件表，seamcheck 门 2（乱序）能抓到任何跨帧累加。
+- 有记忆的量（创伤值、后坐）写完后，拿一个独立的定步实现（每帧累加的游戏写法，dt 取很小）对照几个时刻的值，确认 piecewise 闭式与它一致。
+- 静帧检查：在命中前后各取几帧（film-critique 的连续帧特写条），看顿帧期间世界确实停、反馈确实在动。

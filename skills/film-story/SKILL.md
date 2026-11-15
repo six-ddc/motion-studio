@@ -74,7 +74,7 @@ films/<slug>/docs/
 
 当片子需要一个贯穿全片的视觉主轴，或感觉初稿画面像通用卡片网格时，可用两套诊断透镜（详见 `references/mechanism.md`、`references/divergence.md`）：
 - **机制三刀诊断**：把核心变量映射到物质、空间、时间、文字、视角或力维度的视觉变量，检验：① **换题测试**（去掉专名套进菜谱/融资/一天还成立，说明只是通用容器而非专属机制）；② **自演化**（后续画面能否由规则自然推出）；③ **音画咬合**（画面是否在直接证明或有力对位台词，而非摆图标配图）。容器、图标与一次性变形都能用做局部辅助，只是撑不起整片主梁。
-- **"候选 0"与多方案比选（可选留痕）**：如果担心第一反应落回最偷懒的默认画法或百科流水账，先把那个第一反应显式写成"候选 0"，再跨类别想 1–2 个替代方案比对代价。若在 `film.json` 的 `checks` 显式加入 `"divergence"`，`check_shotlist.py` 会校验讲法、视觉方向与近作对照是否留下了比选或跳过理由。
+- **"候选 0"与多方案比选**：如果担心第一反应落回最偷懒的默认画法或百科流水账，先把那个第一反应显式写成"候选 0"，再跨类别想 1–2 个替代方案比对代价。
 
 ### D. 镜头设计与可执行分镜（`shotlist.md`）
 
@@ -94,11 +94,11 @@ films/<slug>/docs/
 
 ## 声明的检查（`gates.json`）
 
-`film.json` 的 `checks` 按需声明：`shotlist` 运行 `check_shotlist.py` 第 0–4 项（留白、锚点、覆盖与 `overlap`、重要区间时长、旁白状态断言）；`divergence`（可选）加查讲法、视觉方向与近作对照留痕；`facts.script` 运行 `factcheck.mjs` 核对台词事实与数字。`--recipe explainer` 默认开启 `shotlist` 与 `facts.script`（需强制比选留痕时再加 `divergence`）。
+`film.json` 的 `checks` 按需声明：`shotlist` 运行 `check_shotlist.py` 第 0–4 项（留白、锚点、覆盖与 `overlap`、重要区间时长、旁白状态断言）；`facts.script` 运行 `factcheck.mjs` 核对台词事实与数字。`--recipe explainer` 默认开启 `shotlist` 与 `facts.script`。
 
 ## 下层文件
 
 - 传播与脚本：`references/creator-playbook.md`（前 3 秒钩子、静音首帧、中段留存、KOL 听觉口播与人设、传播驱动力与营销转化弧线、平台画幅语境）
 - 调研与拆解：`references/facts-format.md`（分级、状态、格式、匹配规则、产品 UI）· `references/fact-check.md`（核查步骤、来源分级、争议与建构）· `references/tools.md`（搜索与 PDF 工具坑）· `references/deconstruct.md`（参考片拆解、`motionprint`）
-- 机制、镜头与分镜：`references/mechanism.md`（机制判据、适用边界、正反案例、代价）· `references/divergence.md`（讲法/视觉方向/近作比选与可选 `divergence` 门）· `references/cinematography.md`（运镜词汇与代价、实现指路、CSS 3D 坑）· `references/vocabulary.md`（转场/节奏/构图/形似菜单）· `references/templates.md`（各文档字段与 shotlist json 规范）· `references/claims.md`（`curves.source` 选型）
+- 机制、镜头与分镜：`references/mechanism.md`（机制判据、适用边界、正反案例、代价）· `references/divergence.md`（讲法/视觉方向/近作比选）· `references/cinematography.md`（运镜词汇与代价、实现指路、CSS 3D 坑）· `references/vocabulary.md`（转场/节奏/构图/形似菜单）· `references/templates.md`（各文档字段与 shotlist json 规范）· `references/claims.md`（`curves.source` 选型）
 - 先看后写与配方：`references/lookdev.md`（参考锚、风格帧比稿、粗剪预演、`visual` 配方）· `references/explainer.md`（解说片协作流）· 配方 `assets/recipes/explainer/`、`assets/recipes/visual/` · 模板 `assets/` · 脚本 `scripts/factcheck.mjs`、`scripts/check_shotlist.py`、`scripts/siblings.mjs`、`scripts/motionprint.mjs`

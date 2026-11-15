@@ -8,7 +8,7 @@
 //   入口 html、film.json、narration.json、script.json、docs/**、runtime/**——无论加载与否都比；
 //   其余文件（assets/、tools/、片子根下的 .js …）只比**本次真的被页面加载过的**（资源计时里出现过的）；
 //   narration.json 指向的 wav（ffprobe 实测过）；--mp4 那个文件。
-// 不比：out/（本脚本自己写的产物都在这里）；docs/review_log.md（review_log.mjs 从 checks.json 生成的，是这条流水线的下一步产物，不是输入）；
+// 不比：out/（本脚本自己写的产物都在这里）；docs/review_log.md（评审记录，是这条流水线的下一步产物，不是输入）；
 //   film.json 的 renderer 字段（render.mjs 渲完会改写它，本脚本不读它）——所以 film.json 按"去掉 renderer 后的内容"比，不看 mtime。
 // 怎么比：内容 md5 + 大小 + mtime。内容一样而 mtime 变了也算：说明运行中被写过，中途可能读到过另一个版本
 // （编辑器保存再撤销、touch）。不看 ctime：xattr 之类的元数据变动也会改它，会误报。

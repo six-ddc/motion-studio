@@ -20,7 +20,7 @@ films/<slug>/
 ```
 
 **产出一律写进 `out/`，中间产物也写进 `out/`**，不放系统临时目录，方便人事后翻出来看。
-其他 skill 的文件（script.json、narration.json、look.json、docs/ 下的各份文档）由各自的 skill 定义，内核不管。
+其他 skill 的文件（script.json、narration.json、docs/ 下的各份文档）由各自的 skill 定义，内核不管。
 
 ## 2. 运行时：在线挂载、交付冻结
 

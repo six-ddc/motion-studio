@@ -152,11 +152,11 @@ Python 侧：`film.capability('film-x') → Path`（没装时 die 1）。运行�
   "schema": 1,
   "gates": [
     { "id": "physcheck", "about": "重放缓存：顺序/乱序/倒序逐帧比",
-      "when": { "uses": ["replay.js", "baked.js", "chain.js"] },
+      "when": { "uses": ["replay.js", "baked.js"] },
       "run": ["node", "{skill}/scripts/physcheck.mjs", "--film", "{slug}", "--films-dir", "{films}"], "cost": 2 },
 
-    { "id": "seam4", "about": "离屏层合成：门 4 并行逐帧比（deliver 已永远开门 4，所以不重复）",
-      "when": { "uses": ["transitions.js"] },
+    { "id": "seam4", "about": "着色器层 / 三维舞台：门 4 并行逐帧比（deliver 已永远开门 4，所以不重复）",
+      "when": { "uses": ["webfx.js", "fxchain.js", "stage3d.js"] },
       "run": ["node", "{core}/scripts/seamcheck.mjs", "--film", "{slug}", "--films-dir", "{films}", "--parallel", "4"],
       "deliver": false, "timeoutPerFrame": 1000 },
 
@@ -194,7 +194,7 @@ Python 侧：`film.capability('film-x') → Path`（没装时 die 1）。运行�
 ## 5. film.json `checks`：声明才开
 
 ```json
-"checks": ["shotlist", "divergence", "facts.script", "facts.screen", "readability", { "contrast": { "min": 4.5, "large": 3 } }, "marks"]
+"checks": ["shotlist", "facts.script", "facts.screen", "readability", { "contrast": { "min": 4.5, "large": 3 } }, "marks"]
 ```
 
 - **扁平数组**。每一项是 id 字符串；需要参数时写成**单键对象** `{ "id": { 参数… } }`（参数必须是对象）。为空时写 `[]`（只跑内核门）。
@@ -217,7 +217,7 @@ Python 侧：`film.capability('film-x') → Path`（没装时 die 1）。运行�
               "manifest": "out/.render/9x16.frames.json", "outputs": { "out/silent-9x16.mp4": "<sha256>" } },
   "gates": [ { "id": "render", "kind": "render", "result": "pass", "ms": 2600, "cmd": "node …/render.mjs --film demo-tls …" },
              { "id": "seam", "kind": "kernel", "result": "pass", "ms": 41000, "cmd": "… --parallel 4 --relaunch 2" },
-             { "id": "physcheck", "kind": "uses", "result": "na", "why": "没加载 replay.js / baked.js / chain.js" } ],
+             { "id": "physcheck", "kind": "uses", "result": "na", "why": "没加载 replay.js / baked.js" } ],
   "checks": ["shotlist", { "contrast": { "min": 4.5 } }],
   "env": { "chromium": "156.0.8078.4", "playwright": "1.64.1", "args": ["--font-render-hinting=none"], "x264Threads": 4,
            "ffmpeg": "ffmpeg version 8.0 …", "node": "v22.17.0", "platform": "darwin-arm64" }

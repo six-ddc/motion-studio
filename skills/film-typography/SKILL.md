@@ -5,33 +5,31 @@ description: 代码渲染影片里"文字作为视觉元素"的能力：字体�
 
 # film-typography
 
-文字在这套片子里是**画面元素**，不是排好版的段落。canvas 2D 没有自动换行、标点挤压和字体回退警告，这些都要自己做；seek(t) 契约又要求一切都能按任意 t 精确求值。本 skill 提供一份运行时、一组带代价说明的手法和一组实测的可读性下限。**用什么字体、什么手法、什么节奏由本片 `docs/style_guide.md` 决定**，这里不给默认组合。
+文字在这套片子里是**画面元素**，不是排好版的段落。canvas 2D 没有自动换行、标点挤压和字体回退警告，这些都要自己做；seek(t) 契约又要求一切都能按任意 t 精确求值。本 skill 提供一份只管"字对不对、放在哪"的基础运行时，一组手法的原理、代价与坑（代码由你按本片写），和一组实测的可读性下限。**用什么字体、什么手法、什么节奏由本片 `docs/style_guide.md` 决定**，这里不给默认组合。
 
-## 运行时
+## 运行时（基础设施，不是手法）
 
-在 scene.html 里直接 import（由套件挂载，交付时冻结进片子，见 `../film-core/references/runtime.md` §2）：
+`assets/runtime/text.js` 只管"字对不对、放在哪"：字体保障、拆分测量、断行、字幕绘制。**文字怎么动的代码由你按本片写**，原理和坑在 `references/methods.md`。
+在 scene.html 里直接 import（套件挂载，交付时冻结进片子，见 `../film-core/references/runtime.md` §2）：
 
 ```js
-import { loadFonts, splitText, drawRiseIn, setAxes, wrapCJK, layoutCJK, drawCaption } from './runtime/text.js';
-import { layoutText, drawUnits, unitProgress, IN } from './runtime/textfx.js';   // 文字动画手法，建在 text.js 之上
-import { makeLayout } from './runtime/layout.js';                               // film-core：size()/place()
+import { loadFonts, splitText, prefixMeasure, wrapCJK, layoutCJK, drawCaption } from './runtime/text.js';
 ```
-
-`text.js` 是基础层，只依赖 film-core 的 `motion.js`。全部 API 如下：
 
 | 能力 | API | 说明 |
 |---|---|---|
-| 字体保障 | `loadFonts(specs)` / `missingGlyphs(font, text)` | 缺字族、缺字形或加载失败时**一律抛错** |
-| 拆分 | `segments(text, {granularity})` | 基于 Intl.Segmenter，按 grapheme / word / sentence 拆分 |
-| 前缀测量 | `prefixMeasure(ctx, pieces, {gaps})` → `[{s,x,w}]` | 所有"拆开逐段画"的布局都用它计算位置，以保留 kerning |
-| 拆字布局 | `splitText(ctx, text)` → `[{ch,x,w}]` | 按字素调用 `prefixMeasure` |
-| 墨量 | `inkCount(ctx, rect)` | 测粗细只能靠数墨水像素 |
-| 遮罩升起 | `drawRiseIn(ctx, glyphs, t, {progress, rise, …})` | 行遮罩加逐段位移；进度（缓动、交错）由调用方给出，常配合 `unitProgress` |
-| 可变轴 | `setAxes(ctx, axes, font)` / `clearAxes` | 【非标准】可设任意轴；只调字重不需要它 |
+| 字体保障 | `loadFonts(specs)` / `missingGlyphs(font, text)` / `CHARSETS` / `expandChars` | 缺字族、缺字形、加载失败、字符类名写错时**一律抛错** |
+| 拆分 | `segments(text, {granularity})` | Intl.Segmenter，按 grapheme / word / sentence |
+| 前缀测量 | `prefixMeasure(ctx, pieces, {gaps})` → `[{s,x,w}]` | 一切"拆开逐段画"的布局都用它定位，保留 kerning |
+| 拆字布局 | `splitText(ctx, text)` → `[{ch,x,w}]` + `totalWidth` | 按字素调用 `prefixMeasure` |
+| 墨量 | `inkCount(ctx, rect)` | 测粗细只能数墨水像素 |
+| 遮罩升起基元 | `drawRiseIn(ctx, glyphs, t, {progress, rise, …})` | 行遮罩 + 逐段位移；缓动与交错由调用方的 `progress(i)` 给 |
+| 可变轴 | `setAxes(ctx, axes, font)` / `clearAxes` / `axesString` | 【非标准】任意轴；只调字重不需要它 |
 | 合成粗体 | `disableFontSynthesis(ctx)` | 【非标准】关掉伪粗体 |
-| 中文断行 | `wrapCJK(ctx, text, maxW)` | 处理避头尾，拉丁词不拆开 |
-| 中文布局 | `layoutCJK(ctx, text, size, {punct})` | 标点挤压分三档：`none`/`adjacent`/`half` |
-| 字幕绘制 | `drawCaption(ctx, cap, opts)` / `layoutCaption` | cap 来自 film-narration 的 `vo.captionAt(t)`，见下文「字幕绘制」 |
+| 标点分类 | `punctClass` / `NO_LINE_START` / `NO_LINE_END` | 断行禁则、拆分时标点挂靠方向 |
+| 中文断行 | `wrapCJK(ctx, text, maxW)` | 避头尾，拉丁 / 数字串不拆 |
+| 中文布局 | `layoutCJK(ctx, text, size, {punct})` / `punctAdjust` | 标点挤压三档：`none` / `adjacent` / `half` |
+| 字幕绘制 | `drawCaption(ctx, cap, opts)` / `layoutCaption` | cap 来自 film-narration 的 `vo.captionAt(t)`，见「字幕绘制」 |
 
 ## 硬约束（技术不变量，违反就是 bug）
 
@@ -58,33 +56,36 @@ import { makeLayout } from './runtime/layout.js';                               
 
 非标准行为的实测结果、假阴性清单（测轴必须用**真正的可变字体**）以及升级 Chromium 后的复测命令，见 `references/chromium.md`。
 
-## 手法表（入场 / 出场 / 强调）
+## 手法（入场 / 出场 / 强调）
 
-代价分三个维度：**实现**（代码量和坑）、**可读损失**（动画期间能不能读出来）、**记忆点**。没有绝对的"好手法"，只有和本片 style_guide 匹配与否。每条的代码和参数见 `references/methods.md`；出场同样从这张表里选（反向使用），出场时长、主次手法怎么组合的取舍见 methods.md 的「出场」「组合」两节。
+代价分三个维度：**实现**（代码量和坑）、**可读损失**（动画期间能不能读）、**记忆点**。没有绝对的"好手法"，只有和本片 style_guide 匹配与否。
+下表只列代价；每条的原理、伪代码、确定性陷阱和可用的库见 `references/methods.md`（含出场、组合、实测耗时）。距离、角度、缓动、交错间隔都没有默认值。
 
-| # | 手法 | 实现 | 可读损失 | 记忆点 | 适合 | 代价要点 |
-|---|---|---|---|---|---|---|
-| 1 | 直接出现（硬切） | 极低 | 无 | 低 | 信息密集、跟着节拍切换 | 没有过程，全靠排版本身和出现时机 |
-| 2 | 淡入/淡出（alpha） | 极低 | 低 | 低 | 衬托主体、次要信息、出场 | 没有方向感，用多了画面会显得"软"；半透明的叠字会糊 |
-| 3 | 遮罩升起（mask rise） | 低 | 中（升起过程中字被裁掉一半） | 中 | 标题、关键句 | 需要行遮罩；中文逐字升起超过 15 字会显得拖沓 |
-| 4 | 裁切滑入（clip slide） | 低 | 中 | 中 | 标签、横向信息流 | 方向要和画面运动一致，否则会互相冲突 |
-| 5 | 逐字交错（stagger，位移/缩放/旋转） | 低 | 中到高 | 中到高 | kinetic typography、口号 | 交错总时长 = n×stagger，长句读到一半字还没出完 |
-| 6 | 打字机 | 极低 | 低（已经出现的字可读） | 中 | 代码、对话、"正在输入" | 节奏被字数绑定；中文没有空格，节奏感弱；适合配 tick 音 |
-| 7 | 乱码解码（scramble） | 中 | 高 | 高 | 科技、揭秘、数字 | 替换字必须用 seeded() 选取；替换字宽度不同会抖动，要用等宽字体或固定 advance |
-| 8 | 字重渐变（wght） | 低 | 低 | 中 | 强调一个词、"变重"的隐喻 | 字重变化时 advance 也变，整行会被推开：要么重新做前缀测量并居中，要么只动孤立的词 |
-| 9 | 轴动画（wdth/opsz/slnt） | 中（非标准） | 低到中 | 高 | 品牌字、伸缩隐喻 | 依赖 Chromium 的实现；字体要有该轴；wdth 变化同样会推开整行 |
-| 10 | 笔画顺序（书写） | 高 | 高（写完之前读不出来） | 高 | 书法、教学、单字特写 | 需要笔画数据（hanzi-writer-data，许可参见 film-assets）；只适合少量大字 |
-| 11 | 描边生长后填充 | 中到高 | 高 | 高 | logo、标题定格 | 字体轮廓是闭合外形，描出来是空心字，而不是沿笔画中线书写 |
-| 12 | 缩放冲击（scale punch + 弹簧） | 低 | 中 | 高 | 数字、结论、节拍重音 | 过冲用在正文上显得廉价，用 film-core `motion.js` 的 SPRING 参数控制 |
-| 13 | 字作遮罩 / 字里透出画面 | 中 | 低 | 高 | 片头、转场 | 字号小时透出的画面会让字更难读；需要粗字重 |
-| 14 | 逐词高亮（字幕式） | 低 | 无 | 中 | 旁白同步、卡拉 OK | 时间轴必须来自 narration.json（film-narration），不能手填 |
-| 15 | 模糊对焦（blur → sharp） | 中（filter 慢） | 高 | 中 | 梦境、回忆 | `ctx.filter='blur()'` 很慢；软件渲染下大面积模糊会明显拖慢帧率 |
+| 手法 | 实现 | 可读损失 | 记忆点 | 什么时候值得 | 代价要点 |
+|---|---|---|---|---|---|
+| 硬切 | 极低 | 无 | 低 | 信息密集、跟节拍切 | 没有过程，全靠排版和时机 |
+| 淡入淡出 | 极低 | 低 | 低 | 衬托、次要信息、出场 | 没有方向感，多了画面"软"；半透明叠字会糊 |
+| 遮罩升起 / 按行升起 | 低 | 中 | 中 | 标题、关键句、段落 | 升起中字被裁半；中文逐字超 15 字拖沓 |
+| 裁切滑入 / 切分揭示 | 低 | 中 | 中 | 标签、横向信息流、大字标题 | 方向要和画面运动一致；条数多加交替就是 MG 预设 |
+| 逐字交错（位移/缩放/旋转/字距） | 低 | 中到高 | 中到高 | 短句、口号 | 总时长 = dur + (n-1)·stagger，长句读到一半字还没出完 |
+| 打字机 | 极低 | 低 | 中 | 代码、对话、"正在想" | 匀速像机器；节奏要跟旁白而不是跟字数 |
+| 乱码解码 | 中 | 高 | 高 | 数据、密码、揭晓，只用一次 | 乱码必须是 (种子, 单元, 时间步) 的哈希；宽度跳变要按原字中心放或用等宽 |
+| 字重渐变（wght） | 低 | 低 | 中 | 强调一个词、"变重" | advance 跟着变，整行被推开 |
+| 轴动画（wdth/opsz/slnt） | 中（非标准） | 低到中 | 高 | 品牌字、伸缩隐喻 | 依赖 Chromium；字体要真有该轴 |
+| 笔画顺序（书写） | 高 | 高 | 高 | 书法、教学、单字特写 | 要笔画数据，字形和片子字体不一致 |
+| 描边生长 → 填充 | 中到高 | 高 | 高 | logo、标题定格 | 描的是闭合外框，不是沿中线书写 |
+| 缩放冲击（弹簧） | 低 | 中 | 高 | 数字、结论、节拍重音 | 过冲用在正文上廉价 |
+| 字作遮罩 | 中 | 低 | 高 | 片头、转场 | 小字号时纹理让字更难读，要粗字重 |
+| 沿路径排字 | 中 | 中 | 中到高 | 文字描述一条路径或流向 | 必须按弧长放字；弯道内侧中文会重叠 |
+| 数字滚动（里程表/老虎机） | 中 | 中 | 高 | 数字本身是主角 | 列宽要等宽否则抖；滚太久数值读不清 |
+| 逐字 3D 翻转 | 中到高 | 中 | 高 | 翻牌、卡片 | canvas 2D 无透视：仿射像压扁，条带近似有台阶 |
+| 文字 Magic Move | 中 | 低 | 高 | 词序变化本身是要点 | 两句没共享字时退化为交叉淡化 |
+| 逐词高亮（字幕式） | 低 | 无 | 中 | 旁白同步、卡拉 OK | 时间轴必须来自 narration.json |
+| 波浪 / 脉冲 / 抖动强调 | 低 | 中 | 中 | 强调**一个**词 | 整句一直动就是字在抖 |
+| 模糊对焦 | 中 | 高 | 中 | 梦境、回忆 | `ctx.filter` 在软件渲染下很慢 |
 
-### 文字动画运行时（`runtime/textfx.js`）
-
-上表手法的可调用实现包括：拆分布局 `units` / `layoutText`（中文标点挂在相邻字上，不单独飞入）、逐单元绘制 `drawUnits` 配合 `IN.*` / `OUT()` / `EMPHASIS.*` 与 `unitProgress`、乱码解码 `scramble`（乱码字符池也要加进 loadFonts）、
-打字机与光标 `typeSchedule` / `typedAt` / `cursorOn`、沿路径排字 `pathSampler` / `drawOnPath`、遮罩切分与按行揭示 `drawSliceReveal` / `drawLineReveal`、数字滚动（里程表 / 老虎机）`odometer` / `drawDigits` / `digitAdvance`、逐字 3D 翻转（透视条带 / 仿射）`glyphSprites` / `drawFlip`、文字 Magic Move `matchUnits` / `drawMorphText`。**没有默认手法、默认缓动和默认位移量**，每个预设的距离、角度、幅度都必须填写。
-每条手法绘制整个镜头耗时 0.2–3.1 ms，远小于截图的耗时（约 32 ms/帧）。签名、逐条代价和耗时见 `references/textfx.md`（夹具 `tests/fixtures/_test-mg`）。
+所有手法共同的确定性要求：拆分、测量、路径弧长表、精灵图在加载时做一次；seek 里每个单元的状态只由 t 算出（`p_i = ease(sat((t - start - delay_i)/dur))`），
+随机一律来自种子哈希，不靠上一帧。运行时才出现的字（乱码池、拼出来的数字）要进 `loadFonts`。
 
 ## 可读性下限（实测，9:16 竖版，360 有效宽）
 
@@ -133,30 +134,15 @@ drawCaption(ctx, cap, { font, x: L.cx, y, style: (i, state, p) => ({ fill: state
 ```
 
 - 布局一律用前缀测量（中英混排时，拉丁词之间的空格取 `cap.spaces`）。缺少外观参数就抛错，因为套件不提供默认的字幕样式。
-- 只画一行。多行、竖排、逐字入场的字幕，拿 `cap.words` 自己用 `wrapCJK` / `layoutCJK` / `textfx` 排。
+- 只画一行。多行、竖排、逐字入场的字幕，拿 `cap.words` 自己用 `wrapCJK` / `layoutCJK` / `prefixMeasure` 排。
 - 字幕文案（`narration.json` 里的全部字）要加进 `loadFonts`。字号下限按上表、**按字幕实际使用的字重**取值。
 - **一次只显示一组**：任一时刻可见的字幕组 ≤ 1。`captionAt(t)` 是纯函数，天然不会有残留；自己排多组字幕时，不要让上一组的淡出叠在下一组上。
 - **第一组字幕不要从 0 s 开始**：0 s 就在的字会被读成"本来就印在画面上"，不像是在念；起点 ≥ 0.1 s（来源 HyperFrames captions，经验值）。如果要从 0 开始，写进 style_guide。
-
-## 可选：用 `look.json` 生成 CSS 变量
-
-想把本片的颜色和字体集中写成一处 token 时，写 `films/<slug>/look.json`，运行 `node <本skill>/scripts/look.mjs --film <slug>`，生成 `assets/look.css`（在 `:root` 上定义 `--color-<名字>` / `--font-<名字>`）。不写就什么都不用做，没有任何检查会读它；脚本**不带任何默认值**。
-
-```json
-{ "colors": { "<名字>": "<任意 CSS 颜色>" },
-  "fonts":  { "<名字>": { "family": "<字族>", "file": "<字体文件>" | "css": "<fontsource css>", "weight": "100 900", "fallback": "<通用族，可选>" } },
-  "subsetText": ["script.json", "assets/text/<画面上的字>.txt"] }
-```
-
-- 给了 `file` 或 `css` 的字体交给 `fontpack.mjs` 打包（生成 `assets/fonts/look-fonts.css`，由 `look.css` `@import`），给了 `subsetText` 才做子集化；只写 `family` 的只生成变量。
-- canvas 片在加载阶段读一次 `getComputedStyle(document.documentElement).getPropertyValue('--color-xxx')`，作为加载期常量；字体变量只是名字，照样要 `loadFonts`。
-- 代价是多一层间接引用。读不到的变量是空串，canvas 把空串当颜色时会静默沿用上一个 fillStyle。
 
 ## 脚本
 
 | 脚本 | 做什么 |
 |---|---|
-| `scripts/look.mjs --film <slug>` | 可选：把 `look.json` 的颜色和字体 token 生成为 `assets/look.css`，字体交给 fontpack 打包 |
 | `scripts/fontpack.mjs --film <slug> …` | 把字体拷进影片，按文案取分片或子集化，生成使用相对路径的 fonts.css |
 | `scripts/legibility.mjs --film <slug> …` | 测小字号笔画可分辨性和对比度下限，并按字重、相位、逐字、指定字号做诊断，结果写进 `out/<--out>.*` |
 
@@ -164,6 +150,6 @@ drawCaption(ctx, cap, { font, x: L.cx, y, style: (i, state, p) => ({ fill: state
 
 ## 下层文档
 
-`references/methods.md`（手法表每一条的代码、参数、出场与组合）· `references/textfx.md`（文字动画运行时的 API、代价与实测耗时）·
+`references/methods.md`（每条手法的原理、伪代码、代价、坑、可用的库，以及出场、组合、耗时）·
 `references/cjk.md`（断行规则、标点挤压的三种习惯、全角半角、竖排与注音）· `references/chromium.md`（非标准行为、度量陷阱、假阴性清单与复测命令）·
 `references/measurements.md`（可读性下限的字重曲线与读法、对比度推导、字体文件加载耗时）

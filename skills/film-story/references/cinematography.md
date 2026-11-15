@@ -53,10 +53,10 @@
 |---|---|
 | 2D canvas 的推、拉、移 | film-core `motion.js` 的 `camera(t, keys)` + `applyCamera(ctx, cam, w, h)`（keys 的格式是 `[t, zoom, x, y]`，zoom 在 log 空间插值） |
 | 任意镜头参数的关键帧 | film-core `follow(t, stops, spring)`：**每个参数一条曲线**，钉点取旁白锚点；弹簧时长用 `spring({duration})` 反推参数 |
-| 斜看一个平面 | film-motion `camera3d.js`（透视）与 `tiltcheck`（压扁扫描） |
-| 镜头之间的甩镜、匹配剪辑、穿越缩放 | film-motion `timeline` + `transitions.js` |
-| 真三维、环绕、景深 | film-webfx 的 three（`stage3d.js`）与 `camrig.js`（`orbit` `dolly` `shake` …）；景深在 `post3d.js` 里；多镜硬切镜头表用 `shots()` → `track()` |
-| 震动 | 三维场景用 `camrig.shake`；2D/DOM 用 film-core 的 `hash01(floor(t·频率), 轴)`，在整数格点之间插值。**不要用 `seeded()` 顺序流**，因为它的结果依赖调用历史，乱序 seek 时门 2 会报红 |
+| 斜看一个平面 | 真正的透视投影（原理见 film-motion），做完用 film-motion 的 `tiltcheck` 查压扁 |
+| 镜头之间的甩镜、匹配剪辑、穿越缩放 | film-motion 的转场原理（离屏合成、剪辑点对齐旁白） |
+| 真三维、环绕、景深 | three.js（film-webfx；`stage3d.js` 负责每帧复位）；运镜和景深的原理见 film-webfx |
+| 震动 | 用 film-core 的 `hash01(floor(t·频率), 轴)`，在整数格点之间插值。**不要用 `seeded()` 顺序流**，因为它的结果依赖调用历史，乱序 seek 时门 2 会报红 |
 
 ## 5. DOM + CSS 3D 世界与它的坑
 

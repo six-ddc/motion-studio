@@ -1,24 +1,20 @@
 #!/usr/bin/env node
 // film-* skill 套件自己的质量闸门。
 //
-// 为什么需要它：这套东西的核心主张是"skill 呈现能力，不规定风格"。
-// 主张容易写，容易腐烂 —— 加一条"推荐用深色背景"没人会拦，
-// 几次之后套件就退回它要修的那个病（审美被写成法律，模型退回安全牌）。
-// 所以这条主张必须是可执行的检查，不是文档里的一句话。
+// 只查机器能判的结构事实（文件在不在、依赖方向、gates.json、语法）；措辞和立场由人审。
 //
 // 用法:
 //   node dev/selfcheck.mjs              查
 //   node dev/selfcheck.mjs --verbose    连通过的项一起列
 //   node dev/selfcheck.mjs --no-syntax  跳过语法冒烟（node --check / py_compile / bash -n，约 2 秒）
-//   node dev/selfcheck.mjs --leak-test  量风格扫描的漏检率：往每份被扫文档的每一行注入违规句，数有几处没抓到
 //
-// 除了风格中立，还查套件的形状：film-core 是唯一的核，能力 skill 一共 9 个（SUITE）；
+// 查套件的形状：film-core 是唯一的核，能力 skill 一共 9 个（SUITE）；
 // 能力 skill 只许 import film-core（跨能力走 capability()）；起服务器/浏览器只在 film-core/lib；
 // 各 skill 的 gates.json 合法、命令指向的脚本存在、片子声明的 checks id 都有人认领；装机 md 总行数。
 //
 // 退出码 0 通过，1 有不合格项。
 //
-// 失败级别只放**硬规范**（官方上限、文件引用断了、运行时违约、无条件审美禁令）；
+// 失败级别只放**硬规范**（官方上限、文件引用断了、运行时违约）；
 // 自定的建议线（400 行、参考文件目录、description 篇幅、触发词重叠）只报警告——文档瘦身是持续的事，
 // 不能因为加了一条建议就让仓库永久红（红了没人修的闸门训练人无视红色）。
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
@@ -33,9 +29,9 @@ const VERIFIED = join(ROOT, 'docs', 'verified');   // 实测记录：开发台�
 const SUITE = ['film-core', 'film-motion', 'film-webfx', 'film-physics', 'film-typography', 'film-narration', 'film-assets', 'film-story', 'film-critique'];
 const MD_BUDGET = 6500;   // 装机 md（skills/film-*/ 下全部 .md）总行数的目标线，超了只警告
 const argv = process.argv.slice(2);
-const KNOWN = new Set(['--verbose', '--no-syntax', '--leak-test', '--help', '-h']);
+const KNOWN = new Set(['--verbose', '--no-syntax', '--help', '-h']);
 if (argv.includes('--help') || argv.includes('-h')) {
-  console.log(readFileSync(fileURLToPath(import.meta.url), 'utf-8').split('\n').slice(8, 18).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+  console.log(readFileSync(fileURLToPath(import.meta.url), 'utf-8').split('\n').slice(3, 14).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
   process.exit(0);
 }
 for (const a of argv) if (!KNOWN.has(a)) { console.error(`selfcheck: 未知参数 ${a}（--help 看用法）`); process.exit(2); }
@@ -93,7 +89,7 @@ for (const s of dirs) {
 // ── 2b. references/*.md 长了要有目录 ─────────────────────────
 // 模型按需读参考文件时常常只读开头一段（预览、head）；超过 100 行而开头没有目录，后面的章节等于不存在。
 // 目录 = 开头 40 行内出现「目录」/Contents 标题或行首「目录：」，或 ≥3 个页内锚点链接 `](#…)`。只警告。
-const refDocs = [];   // [显示名, 绝对路径]，风格扫描也用这张表
+const refDocs = [];   // [显示名, 绝对路径]
 for (const s of dirs) {
   const r = join(SKILLS, s, 'references');
   if (existsSync(r)) for (const f of readdirSync(r).sort()) if (f.endsWith('.md')) refDocs.push([`${s}/references/${f}`, join(r, f)]);
@@ -128,106 +124,10 @@ for (const [name, p] of refDocs) {
   for (const [k, xs] of [...byPair].sort()) warn('description', `${k} 共用触发词：${xs.join('、')}`);
 }
 
-// ── 3. 风格中立：这是整套的核心主张，必须可执行 ──────────────
-//
-// 判据不是"出现了某个词"，而是"出现了**无条件的**审美规定"。
-// 一条技法写成"X 的代价是 Y"是合法的；写成"不要 X"而不给代价，就是把口味当法律。
-// 扫 SKILL.md 正文和全部 references/*.md：规定写进参考文件一样会被模型照做。
-const BANS = [
-  // 无条件禁令：同一句里没有"因为/代价/除非……"
-  { re: /(?:^|[。；\n])\s*(?:禁止|不许|一律不要|绝不能用)([^。\n]{2,40})/g, why: '无条件禁令' },
-  // 默认审美：给具体的配色/字体组合当默认
-  { re: /默认(?:配色|色板|主色|字体组合|字体搭配|转场)/g, why: '给了默认审美' },
-  { re: /推荐(?:使用)?(?:深色|浅色|暗色)背景/g, why: '推荐了具体配色' },
-  // 旧家规的原话，它们正是这次重构要删的
-  { re: /每\s*\d+\s*[-–~]\s*\d+\s*秒必须/g, why: '旧家规的节奏法律' },
-  { re: /渐变背景上的居中标题/g, why: '旧家规原文' },
-];
-// 豁免。旧版看命中处 ±200 字里有没有"不会/没有/失败/契约……"之类的词，词表又宽又常见，
-// 实测往各 SKILL.md 每行注入一句"禁止使用深色背景"，47.9% 被放过（改造时在当时文档上复量 49.5%；references/ 那时根本不扫）。
-// 改成下面的逐行逐句判据后：独立成行注入 0% 漏检，接在已有行尾 1.6%（漏在本身就声明了硬约束的行上）。--leak-test 可复量。
-// 现在只看**命中所在的那一行、那一句**，而且每一类豁免都要求结构证据，不是附近出现某个词：
-//   a) 否定存在：命中前紧挨着"没有/不给/不带…"（"没有默认转场"是在讲这个病，不是在犯）
-//   b) 引用：命中落在本行未闭合的引号/反引号里（"旧规则写了'每 2–4 秒必须…'"）
-//   c) 给了理由或说的是技术对象：同一句里有"因为/代价/除非/否则…"，或禁的是代码/API/时钟/随机/授权条款这类非审美对象
-//   d) 反面引用：本行命中之前自称旧家规/反面教材/早期版本，或本行是表格行而表头这么自称
-//   e) 硬约束：本行命中之前点名了技术不变量/硬约束/契约/KERNEL（"硬约束：禁止…"）
-// 授权条款（"禁止用于 ML 训练"、"不得再分发"）归 c)：禁的是授权对象，看同一句，不看整行——
-// 否则 film-assets 里每一行提到"授权"的地方都能顺手塞一条审美禁令。
-// 否定可以带并列："没有默认配色、默认字体组合"里第二项也在否定之下（并列项之间只许顿号，不跨句、不跨逗号）。
-const NEG_BEFORE = /(?:没有|不给|不带|不设|不会有|不提供|找不到|别写|不许写|不写|并无|无)(?:[^。；，,\n、]{1,12}、)*\s*$/;
-const REASON = /因为|代价|除非|否则|导致|会让|会把|以免|不然|为了|是因为/;
-const TECH_OBJ = /`[^`]+`|[A-Za-z_$][\w$]*\s*[.(]|\b(?:API|CSS|WAAPI|rAF|seek|GPU|WebGL|GLSL|AI|ML|key|token)\b|时钟|随机|跨帧|状态|纯函数|帧契约|副作用|密钥|爬取|训练|许可|授权|再分发|版权|商用|署名/;
-const COUNTER = /旧家规|反面教材|早期版本|上一版|旧 skill|旧版|旧条文|旧规则|原条文/;
-const HARD_LINE = /技术不变量|硬约束|契约|KERNEL/;
-const QUOTES = [['“', '”'], ['「', '」'], ['『', '』'], ['"', '"'], ['`', '`']];
-function insideQuote(before) {
-  before = before.replace(/^\s*(```|~~~)\S*/, '');   // 代码围栏的 ``` 不是引号
-  for (const [o, c] of QUOTES) {
-    if (o === c) { if ((before.split(o).length - 1) % 2 === 1) return true; }
-    else if (before.split(o).length - 1 > before.split(c).length - 1) return true;
-  }
-  return false;
-}
-function styleHits(text) {
-  const lines = text.split('\n');
-  const starts = []; { let p = 0; for (const l of lines) { starts.push(p); p += l.length + 1; } }
-  const lineAt = (idx) => { let lo = 0, hi = lines.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= idx) lo = mid; else hi = mid - 1; } return lo; };
-  const tableHeader = (i) => { if (!/^\s*\|/.test(lines[i])) return null; while (i > 0 && /^\s*\|/.test(lines[i - 1])) i--; return lines[i]; };
-  const hits = [];
-  for (const { re, why } of BANS) {
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(text))) {
-      let at = m.index; while (/[。；\n\s]/.test(text[at]) && at < m.index + m[0].length) at++;   // 跳过前导分隔符，定位到命中本体
-      const li = lineAt(at), line = lines[li], col = at - starts[li];
-      const before = line.slice(0, col);
-      const sentence = line.slice(col).split(/[。；]/)[0];
-      const th = tableHeader(li);
-      const exempt = NEG_BEFORE.test(before.slice(-40)) || insideQuote(before)
-        || REASON.test(sentence) || TECH_OBJ.test(sentence)
-        || COUNTER.test(before) || (th && COUNTER.test(th)) || HARD_LINE.test(before);
-      if (!exempt) hits.push({ index: at, line: li + 1, why, text: m[0].trim().slice(0, 50) });
-    }
-  }
-  return hits;
-}
-
-const styleDocs = [];   // [skill, 显示名, 文本]
-for (const s of dirs) if (metaOf[s]) styleDocs.push([s, `${s}/SKILL.md`, metaOf[s].body, metaOf[s].text.length - metaOf[s].body.length]);
-for (const [name, p] of refDocs) styleDocs.push([name.split('/')[0], name, readFileSync(p, 'utf-8'), 0]);
-const styleBad = new Map();
-for (const [s, name, body, off] of styleDocs) {
-  const fmLines = off ? metaOf[s].text.slice(0, off).split('\n').length - 1 : 0;   // SKILL.md 只扫正文，行号折回整文件
-  for (const h of styleHits(body)) styleBad.set(s, [...(styleBad.get(s) ?? []), `  ${name}:${h.line + fmLines} [${h.why}] ${h.text}`]);
-}
-for (const s of new Set(styleDocs.map((d) => d[0]))) {
-  const hits = styleBad.get(s);
-  if (hits) fail(s, `风格中立被破坏，${hits.length} 处：\n${hits.join('\n')}`);
-  else pass(s, '风格中立');
-}
-
-// --leak-test：量上面这套豁免的漏检率。往每份被扫文档的每一行之后插一行违规句（或接在行尾），
-// 看命中数有没有在注入位置多出一条。只量不判，量完退出。
-if (argv.includes('--leak-test')) {
-  const PHRASES = ['禁止使用深色背景', '推荐使用深色背景', '默认配色为深蓝配金'];
-  const MODES = { '独立成行': (l, p) => `${l}\n${p}。`, '接在行尾': (l, p) => `${l}${/[。；]$/.test(l) || !l.trim() ? '' : '。'}${p}。` };
-  console.log('风格扫描漏检率（注入后命中数没有在注入处增加 = 漏检）\n');
-  for (const [mode, inj] of Object.entries(MODES)) for (const ph of PHRASES) {
-    let n = 0, miss = 0; const missAt = [];
-    for (const [, name, body] of styleDocs) {
-      const ls = body.split('\n');
-      for (let i = 0; i < ls.length; i++) {
-        const mod = [...ls.slice(0, i), inj(ls[i], ph), ...ls.slice(i + 1)].join('\n');
-        const lo = ls.slice(0, i).join('\n').length, hi = lo + inj(ls[i], ph).length + 1;
-        n++;
-        if (!styleHits(mod).some((h) => h.index >= lo && h.index <= hi)) { miss++; if (missAt.length < 3) missAt.push(`${name}:${i + 1}`); }
-      }
-    }
-    console.log(`  ${mode.padEnd(6)} 「${ph}」  ${miss}/${n} 漏检 = ${(100 * miss / n).toFixed(1)}%${missAt.length ? `  例：${missAt.join(' ')}` : ''}`);
-  }
-  process.exit(0);
-}
+// ── 3. 风格中立不在这里查 ─────────────────────────────────────
+// 以前用正则扫"禁止/默认配色"之类的词，再按"同一句有没有'因为/代价'"豁免。它考的是措辞，不是立场：
+// 加一个"因为"就能过，真正的审美立法换个说法照样进来。"这条是技术不变量还是口味"是读的人判断的事，
+// 在改 skill 时按 CLAUDE.md / docs/MAINTAINING.md 自己审，不交给正则。
 
 // ── 4. 跨 skill 引用必须指向真实存在的 skill ─────────────────
 for (const s of dirs) {

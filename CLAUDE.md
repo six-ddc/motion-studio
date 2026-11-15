@@ -31,6 +31,12 @@ node skills/film-core/scripts/deliver.mjs --film <slug>     # 定稿渲染 → �
 
 一条贯穿全套的原则：**skill 呈现能力，不规定风格。**
 
+同一原则的另一面：**skill 给方向、方法论和硬约束，不给效果模板。** 模型写代码的能力足够强，
+skill 的活是把需求和难点讲清楚（原理、在 seek(t) 下难在哪、代价、踩过的坑），顶多指一下现成的库，
+而不是预先写好转场库、特效函数、参数预设让模型挑着调——那会把模型锁在模板的参数空间里，片子也会长得一样。
+套件运行时只留管线和"自己写极易写错"的基础件（种子随机、检查点重放、字体加载、着色器宿主、three 每帧复位……）。
+以前的效果模板在 `examples/`，不随安装、不被 skill 引用。
+
 不要往任何 skill 里加默认配色、默认字体组合、默认转场，或者"禁止 X"。
 这套东西早期版本就是因为把一种审美写成了法律而失败的——
 规则对水墨片成立，对霓虹赛博全是错的；模型为了守规则每次都退回它最会写的那一招，
@@ -45,7 +51,7 @@ node skills/film-core/scripts/deliver.mjs --film <slug>     # 定稿渲染 → �
 
 ```bash
 node skills/film-core/scripts/accept.mjs   # 查片子：已交付的对账收据，未交付的只报告（--deep 把门全跑一遍）
-node dev/selfcheck.mjs                     # 查 skill 本身：9 个 skill、依赖方向、gates.json、风格中立、语法
+node dev/selfcheck.mjs                     # 查 skill 本身：9 个 skill、依赖方向、gates.json、语法
 node dev/test.mjs                          # 回归：各 skill 自测 + 阴性/阳性对照（--quick 跳过慢的三维夹具）
 ```
 
@@ -83,6 +89,7 @@ skills/film-core/    入口与内核：契约、共享 lib、基础运行时、�
 skills/film-*/       另外 8 个能力 skill：motion webfx physics typography narration assets story critique
                      装机只拷 skills/film-*/（装法见 skills/README.md）
 dev/                 开发工具，不随安装：selfcheck、test（期望表 test-fixtures.json）、各 skill 的基准脚本
+examples/            从套件退出的效果模板（运行时、只为它们存在的夹具与基准），不随安装、不维护，见 examples/README.md
 tests/fixtures/      阴性/阳性对照夹具 _test-*：没有 runtime/、测现行代码、不交付；脚本对它们加 --films-dir tests/fixtures
 docs/                开发台账：MAINTAINING.md 维护约定、INTEGRATION.md 变更与 bug 记录、verified/<skill>.md 实测记录
 films/<slug>/        片子；已交付的带 receipt.json

@@ -1,6 +1,6 @@
 // film-typography 运行时：文字作为视觉元素的基础层——字体保障、拆字与前缀测量、可变轴、中日韩排版、字幕绘制。
 // 用法：scene.html 里 import './runtime/text.js'（套件挂载；交付时冻结进片子）。依赖 film-core 的 motion.js。
-// 文字动画手法（入场预设、打字机节奏、乱码、沿路径、数字滚动、翻转、Magic Move）在同 skill 的 textfx.js，建在本文件之上。
+// 文字动画手法不在这里：原理见 film-typography references/methods.md，按本片需要自己写。
 //
 // 约定：拆字、测量、断行在**加载时**做一次；seek(t) 只读预计算结果并按 t 画。
 //
@@ -169,7 +169,7 @@ export function segments(text, { locale = 'zh', granularity = 'grapheme' } = {})
 /**
  * 前缀测量：一串片段在同一行上的位置。返回 [{ s, x, w }] + totalWidth，x_i = measureText(前 i 段).width。
  * 逐段宽度相加会丢 kerning 与 letterSpacing，长行累计误差可达数像素；本套件里一切"拆开逐段画"的布局
- * （splitText、字幕 layoutCaption、textfx 的 layoutText）都走这一个函数。
+ * （splitText、字幕 layoutCaption）都走这一个函数。
  * gaps[i] 是第 i 段前要插的字符串（字幕的词间空格）；它算进位置，不算进该段的宽度。
  * 调用前 ctx.font / ctx.letterSpacing 必须已设好，字体已加载（loadFonts）。
  */
@@ -206,7 +206,7 @@ export function inkCount(ctx, { x = 0, y = 0, w = ctx.canvas.width, h = ctx.canv
 }
 
 // ===========================================================================
-// 3. 遮罩升起（入场 / 出场基元；进度由调用方给，缓动、交错、节奏都在调用方——见 textfx.js unitProgress）
+// 3. 遮罩升起（入场 / 出场基元；进度由调用方给，缓动、交错、节奏都在调用方）
 // ===========================================================================
 /**
  * 逐段从基线下方升进一个行遮罩。alpha 不动。出场：把进度反过来给，或 dir:-1 让字向上离开遮罩。
@@ -404,7 +404,7 @@ export function layoutCaption(ctx, words, { spaces = null, joiner = '' } = {}) {
  *       state ∈ 'past' | 'active' | 'future'；activeP = 当前词已念进度 0..1（扫光、字重渐变、逐词弹起用它）。
  *       给了 style 就不看 idle / active / mode。
  *   t 默认取 cap.t（captionAt 记下的时刻）；要错开时显式传 opts.t。
- * 只画单行；多行、竖排、逐字入场在调用方用 wrapCJK / textfx 自己排。
+ * 只画单行；多行、竖排、逐字入场在调用方用 wrapCJK 自己排。
  */
 export function drawCaption(ctx, cap, opts) {
   if (!cap) return;

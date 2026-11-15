@@ -11,7 +11,7 @@
 #   都没有退回 时长×35% 并明说（可能落在平台期，12 帧全同）。
 # 手机图在图头写明观看宽度假设：默认竖持 360px（横版片按手机竖持全宽 360 判，与 check.mjs readability 同口径）；
 #   style_guide critique 块写了 view_width 就用它；--hold landscape = 横持（横版片 720，竖版片按 360 高折算）。
-# 每张产物旁写 <产物>.meta.json（源 MP4、场景指纹、帧率、观看宽度假设），review_log.mjs / fresh.mjs 据此判过期。
+# 每张产物旁写 <产物>.meta.json（源 MP4、场景指纹、帧率、观看宽度假设），fresh.mjs 据此判过期。
 #
 # `--film <slug>` 是全套 Agent 工具的统一接口（film-core references/api.md §8）。
 # 这里它会挑 films/<slug>/out/ 下的成片，规则和 align.py 的 pick_source 一致：

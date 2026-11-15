@@ -33,16 +33,15 @@
 |---|---|---|---|
 | 机制驱动 | 把核心变量映射到一个视觉变量，整片靠这一条规则支撑；可用三刀诊断筛掉通用卡片容器 | film-story 的 `SKILL.md` §1/§3C、`references/mechanism.md` | 适合把抽象原理或连续变化讲透的片子。对人物故事、KOL 观点输出、具体产品演示或纯视觉片，强求单一连续变量只是走形式 |
 | KOL 钩子、留存与转化弧线 | 前 3 秒停留钩子、静音首帧、未闭合悬念环、听觉化口播人设、痛点—爽点—CTA 种草结构 | film-story 的 `references/creator-playbook.md` | 钩子过猛而证据不足会沦为标题党；信息流快节奏照搬到深度横版片会显得浮躁 |
-| 讲法和长相的比选、近作对照 | 脚本结构和视觉方向多想几个候选再挑；用 `siblings.mjs` 看一眼仓库里已有的片子 | film-story 的 `references/divergence.md` | 写下候选要花时间；它只能证明"对比过"，不能保证"选得好"（可在 `checks` 加 `divergence` 强制留痕） |
+| 讲法和长相的比选、近作对照 | 脚本结构和视觉方向多想几个候选再挑；用 `siblings.mjs` 看一眼仓库里已有的片子 | film-story 的 `references/divergence.md` | 写下候选要花时间；它只能证明"对比过"，不能保证"选得好" |
 | 音频先行、关键词触发 | 画面读取旁白的字级时间戳，用 `vo.at('字')` 触发 | film-narration 的 `SKILL.md` | 有旁白且需要同步时几乎是必需的；无旁白的片子用不上。镜头长度跟着句子走，画面容易变成台词的配图 |
 | 画面先行 | 镜头节奏先定（节拍栅格或一张具名时刻表），旁白和配乐去贴它；配方 `--recipe visual` | film-story 的 `references/lookdev.md` §5 | 旁白要按镜头时长去写，句子可能要删改；没有分镜断言对账 |
 | 参考锚、风格帧比稿、粗剪预演 | 审美写明参照谁；候选方向各画一帧再挑；占位形状先把时间跑通 | film-story 的 `references/lookdev.md` §1–4 | 各多一轮：拆解参考、每个方向几十行代码、一次小样渲染。换来的是在最便宜的时刻改长相和节奏 |
 | 节拍驱动 | 从配乐测出节拍栅格，让事件对准节拍 | film-narration `scripts/beats.py`、film-core `runtime/motion.js` 的 `beatGrid` | 每个事件都卡拍会显得机械，完全不卡拍又会和音乐脱节 |
-| 镜头语言与转场 | 时间轴、16 种转场、共享元素 Magic Move、缓动表 | film-motion 的 `references/transitions.md` | 每个转场都要把参数写全；花样太多会看起来像样品册 |
-| 视觉 token（look.json） | 本片把颜色和字体集中写成一处 token，生成 CSS 变量供 scene 引用；不带任何预设值 | film-typography 的 `SKILL.md`「可选：look.json」 | 多了一层间接引用；token 改名时 scene 里的引用不会跟着改 |
-| 文字即画面 | 拆字、可变字体轴、乱码解码、打字机、文字 Magic Move | film-typography 的 `SKILL.md` | 中文字体要子集化并随片打包；小字号要按观看场景验证可读性 |
+| 镜头语言与转场 | 剪辑点对齐旁白、各类转场与共享元素的原理、缓动的度量 | film-motion 的 `references/transitions.md` | 花样太多会看起来像样品册 |
+| 文字即画面 | 拆字、可变字体轴、乱码解码、打字机、文字 Magic Move 的原理 | film-typography 的 `SKILL.md` | 中文字体要子集化并随片打包；小字号要按观看场景验证可读性 |
 | 物理与涌现 | 粒子、碰撞、布料、群集、跟车仿真，全部支持 seek | film-physics 的 `SKILL.md` | 涌现出来的状态无法用分镜断言验证，需要写 `probe`（ghost-jam friction F-018） |
-| 着色器、后期、三维 | 片元着色器层、泛光、景深、体积光、按帧契约改造的 three.js | film-webfx 的 `SKILL.md`、film-webfx 的 `references/three.md` | SwiftShader 软件渲染慢（`bench3d.mjs` 给出了每帧毫秒数）；保留式场景图每帧都要复位 |
+| 着色器、后期、三维 | 片元着色器、泛光、景深、体积光、three.js 接进 seek | film-webfx 的 `SKILL.md`、film-webfx 的 `references/three.md` | SwiftShader 软件渲染慢（实测每帧毫秒数见 film-webfx 代价表）；保留式场景图每帧都要复位 |
 | 透视 vs 正交 | 斜着看一个平面时，选用针孔投影还是仿射压扁 | film-motion 的 `references/camera3d.md` | 压扁就是正交投影，平行线不会汇聚。刻意做图解或等轴测风格时值得用 |
 
 ## 3. 游戏开发思路

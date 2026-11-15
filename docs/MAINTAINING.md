@@ -82,8 +82,7 @@
 ## 开发工具与夹具（`dev/`、`tests/fixtures/`，不随安装）
 
 ```bash
-node dev/selfcheck.mjs            # 套件形状：9 个 skill、依赖方向、gates.json 与 checks 认领、风格中立、实测记录、语法；装机 md 行数
-node dev/selfcheck.mjs --leak-test  # 风格扫描的漏检率
+node dev/selfcheck.mjs            # 套件形状：9 个 skill、依赖方向、gates.json 与 checks 认领、实测记录、语法；装机 md 行数
 node dev/test.mjs [--quick]       # 各 skill 自测 + 阴性/阳性对照（期望表 dev/test-fixtures.json，加夹具只改表）
 ```
 

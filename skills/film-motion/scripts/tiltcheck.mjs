@@ -48,7 +48,7 @@ await main(async () => {
     for (const r of runs) console.log(`${orthoOk ? '  ·' : '  ?'} ${describeRun(r)}`);
     if (orthoOk) { console.log(`本片声明 ortho_ok：${orthoOk}（只报告）`); return; }
     console.log('如果这是"斜着看的平面"，它是正交投影：平行线不收拢、远近边一样宽，读成长方形而不是斜放的方形。\n'
-      + '要透视用 film-motion 的 runtime/camera3d.js；有意的平面/图解风格就在 style_guide critique 块写 "ortho_ok": "<理由>"。');
+      + '要透视就做真正的透视投影（投影矩阵或 three.js 相机）；有意的平面/图解风格就在 style_guide critique 块写 "ortho_ok": "<理由>"。');
     if (args.has('strict')) process.exitCode = 1;
   } finally { await S.close(); }
 });

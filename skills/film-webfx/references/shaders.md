@@ -1,60 +1,73 @@
-# 着色器模板库
+# 片元着色器：时间、噪声、光线步进、置换
 
-完整可运行的源码在本 skill 的 `assets/templates.mjs` 里（随安装分发；导出 `TEMPLATES` / `TIERS`，都是纯字符串，按名字取出模板体拷进片子）。仓库开发工具 `dev/film-webfx/bench.mjs`（不随安装分发）每次都会编译、计时，并校验「同一个 t 结果可重复、跨启动结果一致」。
-本页只讲怎么接入和代价。拼接顺序为 `GLSL.header + GLSL.hash + GLSL.noise + GLSL.loop + 模板体`（WebGL2 时把 header 换成 `header2`，模板体不用改）。耗时均为 1080×1920、SwiftShader、单次 `render()` 的结果。
+目录：1 时间怎么进着色器 · 2 噪声、fbm、domain warp、curl · 3 光线步进 SDF · 4 置换类扭曲（水波、热浪、玻璃、液化） · 5 坑
 
-## 时间怎么接（所有模板通用）
+耗时均为 1080×1920、SwiftShader、单次 `render()`，本仓库实测。拼接顺序 `GLSL.header + GLSL.hash + GLSL.noise + GLSL.loop + 你的 main`（WebGL2 把 header 换成 `header2`，主体不用改）。
+
+## 1. 时间怎么进着色器
 
 | 需求 | 写法 | 原因 |
 |---|---|---|
-| 普通的线性演化 | `fbm(p + vec2(0., .3*u_time))` | u_time 就是 t，直接使用即可 |
-| 循环片（首尾帧一致） | `createShaderLayer({period: D})` 加 `loopFbm(p, u_time/u_period, r)` | JS 用 double 取模，t=D 时 u_time 精确为 0；loopNoise 把相位映射到圆上，首尾帧逐像素一致（`loop_fbm` 实测 loopSeam 通过 ✓） |
-| 每帧换一次的颗粒 | uniform `u_frame = Math.round(t*fps)`，`hash12(gl_FragCoord.xy + 17.*u_frame + u_seed)` | 颗粒必须按帧跳变，而不是随 t 连续漂移；按帧号取种子，可以保证同一帧的各个子帧（运动模糊）颗粒相同 |
-| 高频振荡、长片 | 在 JS 里算 `phase = (t*f) % 1`，传入 `u_phase` | t 很大时 float32 精度不够 |
-| 事件触发（念到某个字时） | 在 JS 里算 `p = norm(t, vo.at('X'), vo.at('X')+0.6)`，传入 `u_p` | 时刻来自 narration，参见 film-narration；着色器只接收 0 到 1 的进度值 |
+| 线性演化 | `fbm(p + vec2(0., .3*u_time))` | u_time 就是 t |
+| 循环片（首尾帧一致） | `createShaderLayer({period: D})` + `loopFbm(p, u_time/u_period, r)` | JS 用 double 取模，t=D 时 u_time 精确为 0；loopNoise 把相位映射到圆上，首尾帧逐像素一致（实测过门 3） |
+| 每帧换一次的颗粒 | `u_frame = Math.round(t*fps)`，`hash12(gl_FragCoord.xy + 17.*u_frame + u_seed)` | 颗粒按帧跳变，不随 t 连续漂移；同一帧的运动模糊子帧颗粒相同 |
+| 高频振荡、长片 | JS 里算 `phase = (t*f) % 1` 传 `u_phase` | t 大时 float32 不够 |
+| 念到某个字时触发 | JS 里 `p = norm(t, vo.at('X'), vo.at('X')+0.6)` 传 `u_p` | 时刻来自 film-narration；着色器只接 0–1 进度 |
 
-## 噪声与图案
+循环噪声的原理：把相位 φ 放到半径 r 的圆上，作为第三维喂 3D 噪声：`vnoise3(vec3(p.x, p.y + r·sin 2πφ, r·cos 2πφ))`。r 越大一圈里变化越多；>2 时看得出"转圈"。同理可用 4D 噪声把二维相位放到环面上。
 
-### `loop_fbm` — 循环 fbm（9.7 ms）
-`loopFbm(p, phase, r)`：5 层，每层调用一次 `vnoise3`。`r` 是相位圆的半径：越大，一个循环里的变化越多；太大（>2）时会看出「转圈」的感觉。
+## 2. 噪声、fbm、domain warp、curl
 
-### `t1_fbm` — 线性 fbm（5.3 ms）
-每多一层，成本约增加 20%；超过 6 层后，在 1080 宽的画面上基本看不出差别。
+**value noise**：格点 hash 值，`f*f*(3-2f)` 平滑插值。便宜，但有方格感。**gradient / simplex noise**：格点放随机梯度，各向同性更好，每次贵约 1.5–2 倍；如需，lygia 的 `generative/` 有现成的 snoise / cnoise / worley。
 
-### `t2_warp` — 三重 domain warp（21 ms）
-`f = fbm(p + 4*r)`，`r = fbm(p + 4*q)`，`q = fbm(p)`。这是做流体、大理石、墨流的主要手段。把时间加在 q 和 r 的偏移量里（两处速度不同），比加在 p 上更像「流动」而不是「平移」。半分辨率下只要 5.4 ms，而且内容是低频的，降低分辨率几乎没有损失。
+**fbm**：`Σ aⁱ·n(Mⁱ p)`，a≈0.5；每层乘一个带旋转的矩阵（如 `mat2(1.6,1.2,-1.2,1.6)`）而不只是 ×2，能消掉轴向条纹。
+- 代价：每层约占 20%（5 层 5.3 ms）。超过 6 层在 1080 宽画面上基本看不出差别。
+- 远处/缩小时高频层只会变成闪烁：按像素足迹（`fwidth(p)`）截断层数，这比多算更好看。
 
-### `curl_field` — curl noise 流场（19 ms）
-`curl(p) = (∂n/∂y, -∂n/∂x)`，需要 4 次 fbm，得到的是无散度速度场，可以直接可视化成条纹或方向色。粒子沿流场积分的做法参见 film-physics；GLSL 的 float32 与 JS 的 double 不能逐位一致，所以粒子位置以 JS 的计算为准，着色器只负责画出流场。
+**domain warp**（流体、大理石、墨流）：`q = fbm(p)`，`r = fbm(p + 4q)`，`f = fbm(p + 4r)`。三重 = 15 次 noise，21 ms；半分辨率 5.4 ms，内容低频，降分辨率几乎无损。
+- 时间加在 q、r 的偏移里（两处速度不同），比加在 p 上更像"流动"而不是"平移"。
+- `dot(q,q)`、`length(r)` 是现成的第二、三个通道，拿来混色比再算一遍噪声便宜。
 
-### `t3_raymarch` — SDF 光线步进（40 ms）
-64 步，加上用中心差分求法线所需的 6 次求值。成本主要取决于步数乘以 SDF 的复杂度。对有大面积天空或背景的画面，提前 `break`（`h<1e-3 || d>30`）能省一半以上。
+**curl noise**（流场条纹、风向）：`curl(p) = (∂n/∂y, −∂n/∂x)`，中心差分要 4 次 fbm，19 ms；得到无散度速度场。
+- 只**画**流场：方向色、沿方向的正弦条纹。粒子沿流场积分属于状态推进，走 film-physics 的重放，或 fxchain 反馈（fxchain.md）。GLSL float32 与 JS double 不能逐位一致，粒子位置以 JS 为准，着色器只负责画。
 
-### `t5_terrain` — fbm 高度场步进（144 ms）
-这是一个性能断崖：每一步都要算一次 5 层 fbm。确实要用时，可以降到 0.5 分辨率（36 ms）或减少步数。
+**worley / 细胞噪声**：取最近（或次近）特征点距离 F1、F2；`F2−F1` 得到裂纹/细胞边。每像素查 3×3（2D）或 27（3D）个格子，比 value noise 贵数倍。
 
-## 位移与扭曲（吃 2D 层当纹理）
+## 3. 光线步进 SDF
 
-需要调用 `fx.texture('u_src', canvas)`。如果内容每帧都变，就每帧调用一次，1080×1920 每次上传约 2 ms。
+`d += sdf(ro + rd·d)`，直到 `h < ε·d` 或 `d > far`；法线用中心差分 6 次求值，或四面体法 4 次。SDF 组合：`min` 并、`max` 交、`smin`（多项式平滑并）做融合；`mod` 重复空间；软阴影沿光线再步进一次取 `min(k·h/t)`。
 
-### `displace` — 噪声置换（6.6 ms）
-`TEX(u_src, v_uv + (noise2 - .5) * u_amp)`。`u_amp` 的单位是 uv（0.03 约等于画面宽度的 3%）。做水波时，把噪声换成 `sin(dot(uv, dir)*k - ω*u_time)`；做热浪时，只在 y 方向偏移，并让噪声向上移动；做玻璃时，用一张 SDF 的梯度作为偏移方向。采样越界时，CLAMP_TO_EDGE 会把边缘拉成条纹，解决办法是留出边距，或者让 `u_amp` 在边缘处衰减。
+| 内容 | 1080×1920 |
+|---|---:|
+| 64 步 + 法线 + 一盏灯 | 40 ms |
+| fbm 高度场地形，每步一次 5 层 fbm，最多 96 步 | 144 ms（半分辨率 36 ms） |
 
-## 后期
+- 成本 ≈ 步数 × SDF 复杂度。大面积天空/背景的画面提前 `break` 能省一半以上。
+- 地形是**性能断崖**：每步一次 fbm。真要用：降分辨率、松弛步长（`d += 0.5h`）、远处用更少层的 fbm。
+- 要场景图、PBR、阴影图、模型时用 three（three.md），SDF 适合"一个数学形体就是整个画面"的场合。
+- 参考写法如需：Inigo Quilez 的 SDF 函数集与 smin、lygia 的 `sdf/`、`lighting/raymarch`。
 
-### `chroma` — 色差（7.1 ms）
-R、B 通道沿径向反向偏移，G 通道不动，共三次采样。
+## 4. 置换类扭曲（吃 2D 层当纹理）
 
-### `grade` — 色调映射 + 颗粒 + 晕影（6.3 ms）
-依次做 Reinhard 色调映射、颗粒（按帧号 hash）和径向晕影，一遍完成。曲线、强度和形状由本片 style_guide 决定，模板只提供接口。
+原理都是 `TEX(u_src, v_uv + offset(v_uv, t))`，区别只在 offset：
 
-### `bright` — 泛光的亮部提取（4.1 ms）
-用 `smoothstep(thresh, thresh+.1, luma)` 选出亮部。完整的泛光链见 compositing.md：先提取亮部，再在 1/4 分辨率下模糊（T4 档 270×480 只要 2.9 ms），最后用 `lighter` 叠回。
+| 效果 | offset | 备注 |
+|---|---|---|
+| 噪声置换、液化 | `(vnoise2(p + t) − .5)·amp` | 6.6 ms；amp 单位是 uv（0.03 ≈ 画宽 3%） |
+| 水波 | `dir·sin(dot(uv,dir)·k − ω·t)·amp`，多方向叠加；同心波用 `normalize(uv−c)·sin(|uv−c|·k − ωt)` | 振幅随距离/时间衰减；起波时刻挂 `vo.at` |
+| 热浪 | 只在 y 方向偏移，噪声向上移动，幅度按热源遮罩 | 低频、半分辨率即可 |
+| 玻璃、透镜 | 用一张 SDF/高度图的梯度作偏移方向，`offset = ∇h·η` | 边缘再叠菲涅耳高光和色散（R/B 用不同 η）才像玻璃 |
+| 涟漪法线 → 光照 | 先算高度场导数，再用它同时做偏移与高光 | 一次导数两处用 |
 
-### 风格化、调色、多 pass、帧间反馈
+- 内容每帧变就每帧 `texture()` 上传，1080×1920 约 2 ms；内容静止用 `static` 只传一次（compositing.md §2）。
+- 采样越界时 CLAMP_TO_EDGE 会把边缘拉成条纹：留边距，或让 amp 在边缘衰减。
+- 预乘 alpha：偏移采样后原样输出即可；要在着色器里调色先反预乘（compositing.md §1）。
+- 低频、作用于 SVG/DOM 元素的整块扭曲可用 SVG `feDisplacementMap`，不写 GLSL（compositing.md §4）。
 
-半调、抖动、像素化、Sobel 描边、Kuwahara、ASCII、镜头畸变、lift/gamma/gain、3D LUT 是 `assets/runtime/fxglsl.js` 的 `STYLIZE`（参数与代价见 `stylize.md`）；
-泛光 / halation / 变形镜头拉丝这类多遍效果和反应扩散、墨晕拖影这类"这一帧取决于上一帧"的效果用 `fxchain.js`（见 `fxchain.md`）。
+## 5. 坑
 
-### `t4_blur25` — 5×5 采样模糊（41 ms）
-同样的视觉半径，在 1/4 分辨率下只要 2.9 ms。2D 的 `ctx.filter='blur(Npx)'` 在半径 4–48px 范围内都约为 13–16 ms（`dev/film-webfx/blur2d-check.mjs`），普通的高斯模糊用它更省事。
+- **不要用 `fract(sin(x)*43758.5453)` 做 hash**：sin 大参数在不同后端结果不同。用无 sin 的 hash（`GLSL.hash`）或整数哈希（`GLSL.pcg`，WebGL2）。
+- **`u_seed` 混进坐标而不是混进 hash 结果**：`hash12(p + u_seed)` 换种子换整张图；`hash12(p) + u_seed` 只是平移了值。
+- **循环片里的任何非周期项**（线性漂移、`u_time` 直接乘频率）都会让门 3 红；要循环，所有时间项都得以 period 为周期。
+- **首帧 JIT 20–80 ms**：在 `ready` 里 `render(0)` 一次，别让第一帧的计时误导降级判断。
+- 着色器里的 `for` 循环在 WebGL1 必须是常量上界；变上界写成常量上界 + `if (i >= n) break;`。

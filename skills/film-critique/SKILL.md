@@ -25,7 +25,7 @@ MP4 本身读不出内容，代码也读不出画面。这个 skill 把片子变
 | 跑全部客观脚本并读结论；对照 style_guide 里能机读的法律 | 看静帧和接触表，描述"这里有个方块，那里有一排竖线" | 判断有没有意外的语义（像脸、像齿轮），以及是故意还是偷懒 |
 | 定位带时间戳的问题并给出证据帧；只重渲改动过的秒数 | 指出"这几格完全相同"；按 tendencies 清单逐条找候选 | 构图、质感、整体节奏；听觉上的音色、音效、混音、口播语气 |
 
-**没人在场时**，跑完全部客观检查，把结果和证据帧写进 review_log；主观项写"未经人眼确认"，**不打分**（`review_log.mjs` 不传 `--seen-by` 时就是这样生成的）。
+**没人在场时**，跑完全部客观检查，把结果和证据帧写进 review_log；主观项写"未经人眼确认"，**不打分**。
 假装打了分比留白更糟，因为下一轮的人会以为那一项有人看过。不过即使没人看，仍有两步要做。
 
 **第一步：把每条法律拆成机械部分和感知残余。** 一条 HUMAN 法律里能机读的部分变成判据，剩下的残余才交给人；残余越小，人判得越可靠。
@@ -151,28 +151,22 @@ bash <film-critique>/scripts/contact.sh films/<slug>/out/silent-9x16.mp4 [特写
 
 ## 六、记录
 
-```bash
-node <film-critique>/scripts/review_log.mjs --film <slug>                    # 无人在场
-node <film-critique>/scripts/review_log.mjs --film <slug> --seen-by 杜 --note "第二版配色"
-```
+读 `out/critique/checks.json` 和看过的图，自己往 `docs/review_log.md` 追加一节（文件不存在时用 `assets/review_log.md` 模板新建，与 `new-film --recipe explainer` 用的是同一份）。每轮至少写清：
 
-脚本从 checks.json 生成一节，追加到 `docs/review_log.md`（文件不存在时用 `assets/review_log.md` 模板新建，与 `new-film --recipe explainer` 用的是同一份）。每轮按固定结构写：
-
-- **派生品新鲜度**：已过期的派生品在本轮开头用 ⚠ 引用块醒目列出（只提示，不拦截）。
+- **派生品新鲜度**：先跑 `fresh.mjs --film <slug>`，有过期的在本轮开头说明。
 - **检查过的时间点**：每行写时刻、来源（切点的前/入/中/出/后、MARKS 中点、均匀取点、发现处）、帧路径、脚本在附近的结论、人判。没有转场拼图时要明写"转场中段没被专门看过"。
 - 客观项表、本片项表（**HUMAN 行写明看哪一帧**：时间窗中点帧或现有拼图，见 checks.md 第 0 节）、疑点表、倾向性提醒（有人在场时 T1–T9 每条一行）、静帧上看到的内容（模型描述）。
 - **发现的问题、修法和遗留**（FAIL 在前，按时间排序，带证据帧）；改了什么、重渲了哪个区间；**故意保留**的项（HOLD 及理由，交付说明照抄）。
 - **下一轮先读（交接）**：创作决定和放弃的备选、哪些测过、哪些只看过、哪些没人查、最弱的一镜、新点名的默认、用户手改过的文件、渲染状态。下一轮（换会话或换 agent）动手前，先读最新一轮的这一节。
 
-需要人填的地方留**结构化空项**（空的表格格子、`字段：` 后面留空），不写"（待填）"，这样空着就表示没人填，一眼能数出来。
-脚本**永远不填分数**；`--seen-by` 只记录谁看过，不传时人判格写"未经人眼确认"。
+需要人填的地方留空，不写"（待填）"，这样空着就表示没人填。没人看过的主观项写"未经人眼确认"，不填分数。
 派生品新鲜度的做法：每个派生品旁边写一个 `<产物>.meta.json`，`fresh.mjs --film <slug>` 列出新鲜、过期、未知三类（加 `--strict` 才 exit 1）。它比较的是输入是否逐字节相同，不是画面有没有变（`references/sampling.md` §4）。
 
 ## 七、循环
 
 ```
 写完代码 → stills.mjs + transitions.mjs → 看 → check.mjs → 修 → 渲（只渲改动的秒数）
-         → contact.sh → 看 → check.mjs --mp4 → review_log.mjs（看过期提示）→ 填修法 / 遗留 → 修 → …
+         → contact.sh → 看 → check.mjs --mp4 → 写 review_log（先看 fresh.mjs）→ 修 → …
 ```
 
 - **修法不在这里**：文字问题找 film-typography，运动和时序找 film-motion，旁白对点找 film-narration，物理找 film-physics。
@@ -193,7 +187,6 @@ node <film-critique>/scripts/review_log.mjs --film <slug> --seen-by 杜 --note "
 | `scripts/contact.sh` | 成片的五种对照图（帧率读 film.json，特写对准转场，手机图标明观看宽度） |
 | `scripts/fresh.mjs` | 派生品新鲜度（只提示；`--selftest` 是阴性/阳性对照） |
 | `scripts/check.mjs` | 客观检查和本片机读法律，输出 checks.json 与证据帧 |
-| `scripts/review_log.mjs` | 把 checks.json 写成 review_log 的一节，主观项默认"未经人眼确认" |
 | `scripts/_film.mjs` `_pool.mjs` `_pixels.mjs` `_anchors.mjs` `_flow.mjs` `_kinetics.mjs` `_legible.mjs` `_inputs.mjs` | check.mjs 的内部模块，依次负责找片和截帧（用 film-core lib）、并行池、原生分辨率像素统计、锚点判定、衔接与节奏、运动读数、画面中的文字、输入指纹（**尚未接入流程**）；`_cuts.mjs` 负责剪辑点来源与取帧规则，`_fresh.mjs` 负责派生品 meta 读写与过期判定 |
 
 所有脚本都能从任意 cwd 调用（`--film <slug>`；找片顺序为 `--films-dir` > `$FILMS_DIR` > 从 cwd 向上找 `films/`，与 film-core 相同），

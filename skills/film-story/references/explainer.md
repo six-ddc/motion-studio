@@ -44,11 +44,11 @@
 
 ## 4. 声明的检查
 
-`--recipe explainer` 会在 film.json 的 `checks` 里并入以下默认检查（已有的不动；若还想强制检查多方案比选留痕，可手动往 `checks` 加 `"divergence"`）：
+`--recipe explainer` 会在 film.json 的 `checks` 里并入以下默认检查（已有的不动）：
 
 | id | 认领方 | 查什么 |
 |---|---|---|
-| `shotlist`（可选加 `divergence`） | film-story（`check_shotlist.py`） | 分镜锚点、覆盖与交叠、重要区间时长、旁白状态断言；（加了 `divergence` 时再查比选留痕） |
+| `shotlist` | film-story（`check_shotlist.py`） | 分镜锚点、覆盖与交叠、重要区间时长、旁白状态断言 |
 | `facts.script` | film-story（`factcheck.mjs`） | 旁白数字与事实对账（自动忽略行内语气/停顿/区间标记） |
 | `verify` | film-narration（`align.py --verify`） | 对成片音轨重新转写 |
 | `narration` `mp4` `truepeak` `loop` `readability` `contrast` `facts.screen` `style-guide` `laws` `still` `empty` `marks` `claims` `tilt` `page` | film-critique（`check.mjs`） | 见 film-critique `references/checks.md` 第 0 节 |

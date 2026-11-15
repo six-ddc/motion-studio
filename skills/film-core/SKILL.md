@@ -40,7 +40,7 @@ node <core>/scripts/new-film.mjs <新slug> --from <已有slug>     # 以已有�
 **运行时不拷贝。** scene.html 直接写 `import './runtime/motion.js'`。服务器把 `/runtime/<名>` 解析成片内的 `runtime/<名>`（存在就用它），
 否则解析成已安装 skill 的 `assets/runtime/<名>`，这就是「挂载」。用到哪个 skill 的运行时就 import 哪个，建片时不用预先猜。交付时这些文件会被「冻结」，也就是复制进片子目录，之后不再随套件变化。细节和代价见 `references/runtime.md` §2。
 要改已有片子就跳过建骨架，先读那支片的 `docs/`，尤其是 `style_guide.md`，审美判据以它为准。新片默认只出静帧或低分辨率小样，用户确认或明确说"直接出"之后才渲终稿并 deliver。人的判断放在两个最便宜的时刻最划算：几个方向各出一帧让用户挑长相，占位形状的粗剪小样让用户定节奏（`film-story/references/lookdev.md`）。改已有片子之前，先比对片子目录的 mtime 和 receipt，
-再读上一轮 review_log 里的「下一轮先读」；对话之外发生的改动视为用户的意图，不要覆盖，并向用户说明。手写有名字的效果之前先查 `film-motion/references/effects.md`。
+再读上一轮 review_log 里的「下一轮先读」；对话之外发生的改动视为用户的意图，不要覆盖，并向用户说明。效果怎么实现由你决定：各能力 skill 只讲原理、在 seek(t) 下的难点和代价，不提供效果模板。
 
 **kit（品牌或系列共享的组件，可选）。** 已经定下来的 logo、主题、token、标准帧放在仓库顶层的 `kits/<名>/`。film.json 写上 `"kits": ["acme"]` 之后
 就能 `import './runtime/kits/acme/brand.js'`，它走同一张挂载表在线挂载，交付时冻结进 `runtime/kits/`，收据里记下版本和哈希。kit 不是套件的默认模板，没声明的片子不受影响。契约、kit.json、声明才开的标准帧门见 `references/kits.md`。
@@ -100,8 +100,8 @@ window.ready = (async () => { /* await 字体、图片、narration.json */ })();
 - **`camera(t, [[t, zoom, x, y], …], sp)` 和 `applyCamera(ctx, cam, w, h)`**：zoom 在对数空间插值（从 1 到 2 与从 2 到 4 一样快）。相机运动和画面内的运动都用弹簧时，容易让人看晕。
 - **`beatGrid(bpm, offset, beatsPerBar)`** 返回 `{ spb, at(beat), bar(n), phase(t), index(t) }`，bpm 和 offset 来自节拍检测（film-narration）。每个事件都卡在拍上会显得机械。
 - **镜头组合子**：`sequence([{ name, dur | until }], { overlap, align, marks })` 把镜头表变成 `at(t) → [{ name, local, progress, enter, exit }]`，`until` 可以写旁白时刻、节拍或 `marks` 里的名字；`overlap` 是交棒窗口，两个镜头同时活着。
-  `Q.cuts` 直接给 `window.CUTS`，`Q.windows`/`Q.marks` 给 `CUT_WINDOWS`/`MARKS`。`series(durs)` 首尾相接，`loopT` `rate` `freeze` 是局部时间映射。它们只管时间；要转场 kind、缓动和离屏合成，用 film-motion 的 `timeline()`。
-- 其他：`sat lerp clamp norm(t, from, to) win(t, start, dur, ease) wrap(t, len) labelAlpha()`。`win` 等于 `ease(sat((t-start)/dur))`，ease 传一个函数（缓动词汇表在 film-motion 的 `choreo.js`，也可以自己写）。
+  `Q.cuts` 直接给 `window.CUTS`，`Q.windows`/`Q.marks` 给 `CUT_WINDOWS`/`MARKS`。`series(durs)` 首尾相接，`loopT` `rate` `freeze` 是局部时间映射。它们只管时间；转场怎么画（离屏合成、擦除、溶解……）见 film-motion。
+- 其他：`sat lerp clamp norm(t, from, to) win(t, start, dur, ease) wrap(t, len) labelAlpha()`。`win` 等于 `ease(sat((t-start)/dur))`，ease 传一个函数（缓动曲线的原理与取舍见 film-motion）。
 - **事件表（`runtime/events.js`，可选）**：一张 `[{t, type, id?, …}]` 同时驱动光、粒子、镜头和声音——`channel` 把每个事件的响应写成 τ = t − e.t 的闭式函数，
   `throttle` `burstEnds` `snapToFrames` 在加载期对整张表做一次，`toCues` 把同一张表交给 film-narration 出声。帧率读内核注入的 `window.FILM.fps`。见 `references/events.md`。
 
@@ -215,10 +215,10 @@ accept 和 deliver 还会读 `checks`。类型、默认值和校验规则见 `re
 
 | skill | 负责什么 |
 |---|---|
-| film-motion | 2D 动效词汇：缓动表、交错编排、镜头加转场的时间轴、Magic Move、透视相机 camera3d、界面重建、压扁扫描 |
-| film-webfx | 着色器、后期、三维（按帧契约改造的 three.js）、SVG 滤镜、混合模式 |
-| film-physics | 粒子、重力、碰撞、布料、群集，全部可以 seek（闭式解、定步重放） |
-| film-typography | 文字绘制：拆字、可变字体轴、中日韩排版、字幕绘制、小字号可读性 |
+| film-motion | 2D 动效的原理与取舍：缓动、交错、转场与剪辑点、共享元素、矢量形状、透视、界面重建；压扁扫描 |
+| film-webfx | 着色器、后期、三维（three.js 怎么接进 seek）、SVG 滤镜、混合模式 |
+| film-physics | 可 seek 的物理：闭式解 / 定步重放 / 预烘焙三条路，粒子、碰撞、布料、群集的原理 |
+| film-typography | 字体加载与随片打包、拆字与中日韩排版、文字动效的原理、字幕绘制、小字号可读性 |
 | film-narration | 旁白 TTS、字级时间戳、节拍、音效、合流，只输出时间数据 |
 | film-assets | 字体、图标、图片、音频的来源与授权，子集化，打包 |
 | film-story | 调研与事实核查、视觉机制、讲法与长相的发散、分镜、解说片配方 |

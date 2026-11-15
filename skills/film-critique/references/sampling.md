@@ -7,7 +7,7 @@
 | 优先级 | 来源 | 可信度 |
 |---|---|---|
 | 1 | `--cuts 3.2,8.0-8.4`（单个数表示硬切，`a-b` 表示窗口） | 手动给出 |
-| 2 | `window.CUT_WINDOWS = TL.transitionMarks()`（film-motion `timeline()`）加上 `window.CUTS = [硬切秒…]`（render.mjs 已支持读取） | 与画面数据同源 |
+| 2 | 场景声明 `window.CUT_WINDOWS = [{start, end, cut?, label?}]` 加上 `window.CUTS = [硬切秒…]`（render.mjs 已支持读取） | 与画面数据同源 |
 | 3 | `window.MARKS` 中首尾相接（相差 ≤ 1 帧）的位置当作硬切 | **推测**：只有 MARKS 本身按镜头分段时才准确 |
 | 4 | `--scan`：计算 48×48 块的亮度帧间差，阈值为 max(4%, 中位数 ×6)；多个采样点连续超过阈值算渐变窗口，单个超过算硬切，并二分查找到具体帧 | **推测** |
 | — | 以上都没有时，退回到 MARKS 中点或均匀取 5 个点，并写明"转场中段没有被专门采样" | |
@@ -38,4 +38,4 @@
 每个产物旁边都有一份 `<产物>.meta.json`，记录片子目录中除 `out/ docs/ tools/ receipt.json` 以外每个文件的 md5（film.json 去掉 `renderer` 字段后计算）、
 contact 类产物的源 MP4 大小与 mtime，以及本图的取帧表和所用假设。判定规则：全部一致为新鲜；任一项不一致为过期（报告会点名是哪个文件）；没有 meta 为未知（不当作新鲜）。
 **实际测到的和以为测到的不一样**：这里测的是输入是否逐字节相同，而不是画面有没有变化（改了注释也算过期）；片子目录之外的资源变化检测不到；contact 类产物新鲜只说明它与那个 MP4 一致，
-MP4 本身是否最新由 film-core 的 accept / 收据负责。review_log.mjs 会在每轮开头用 ⚠ 列出过期项；只有 `fresh.mjs --strict` 才会改变退出码；`--selftest` 运行阴性/阳性对照。
+MP4 本身是否最新由 film-core 的 accept / 收据负责。写 review_log 前先跑 `fresh.mjs` 看过期项；只有 `fresh.mjs --strict` 才会改变退出码；`--selftest` 运行阴性/阳性对照。

@@ -3,16 +3,14 @@
 //
 //   node <film-story>/scripts/siblings.mjs --film <slug> [--films-dir d] [--out path] [--no-render] [--tile 420]
 //
-// 打印一张表（片子 / 画幅 / 选定的视觉方向 / 代表帧来源），并把每支片子的一张代表帧并排拼成
+// 打印一张表（片子 / 画幅 / 代表帧来源），并把每支片子的一张代表帧并排拼成
 // films/<slug>/out/siblings.png（第一格是本片自己，有画面就放，没有就标"尚无画面"）。
 //
-// 为什么要它：模型不记得上一支片子长什么样。"跨次生成不要收敛到同一套选择"靠自觉做不到，
-// 只能把上一次生成变成一个看得见的文件。方法见 references/divergence.md 第 3 节。
+// 为什么要它：模型不记得上一支片子长什么样，这里只把"长什么样"变成一张看得见的图。
+// 各片选了什么方向、为什么，直接去读它们的 docs/style_guide.md，这里不替你解析。
 //
 // 取数规则（取不到就如实说，不静默跳过）：
 //   画幅        film.json format；没有 → 未声明
-//   视觉方向    该片 style_guide 里选定的那一行，用 check_shotlist.py --divergence 解析——和门同一份解析，
-//               两处各写一份迟早给出相反结论；取不到 → 未声明（并说为什么）
 //   代表帧      out/ 下的 final-*-poster.png > silent-*-poster.png > 其他 *-poster.png
 //               > 成片 final-*/silent-*.mp4（跳过 -loop）取 40% 处一帧 > 现渲 scene.html 40% 处一帧（--no-render 关掉）
 //               都没有 → 图上画一个标了原因的空格
@@ -23,21 +21,16 @@ import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSy
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { parseArgs, filmsDir, resolveFilm, fail, main, FILM_OPTS } from '../../film-core/lib/film.mjs';
 import { openScene, launchBrowser } from '../../film-core/lib/browser.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const CHECK_PY = join(HERE, 'check_shotlist.py');
 const RATIO = { '9x16': 9 / 16, '16x9': 16 / 9, '1x1': 1 };
 // new-film.mjs 写进 scene.html 的占位段落标记（film-core/scripts/new-film.mjs）
 const SCAFFOLD = /占位内容：只为让脚手架立刻能渲通/;
-// 表和图上只显示"选定："之后的内容（补记里那句括号说明留在 style_guide 里，不进对照表）
-const shortDir = (x) => (x ?? '').replace(/^选定[^：:]{0,40}[：:]\s*/, '');
 
 const args = parseArgs({
   usage: 'node siblings.mjs --film <slug> [--films-dir d] [--out path] [--no-render] [--tile 420]',
-  about: '近作对照：把其他片子的代表帧和视觉方向并排拼成 films/<slug>/out/siblings.png。只读其他片子，只写 --out。',
+  about: '近作对照：把其他片子的代表帧并排拼成 films/<slug>/out/siblings.png。只读其他片子，只写 --out。',
   opts: {
     ...FILM_OPTS, film: ['<slug>', '本片（必填；其他片子都是它的近作）'],
     out: ['<path>', '输出图（默认 films/<slug>/out/siblings.png）'], 'no-render': '没有现成画面时不现渲 scene.html',
@@ -73,7 +66,7 @@ await main(async () => {
     browser = await (browser ?? launchBrowser());
     await composite(await browser, rows, tile, outPath);
     console.log(`\n对照图：${outPath}`);
-    console.log('打开它看一遍——表里的方向是作者自己声明的，图是实际长出来的样子，两者常常不一致。');
+    console.log('打开它看一遍；各片的方向和取舍去读它们的 docs/style_guide.md。');
     const miss = rows.filter((r) => !r.self && !r.png);
     if (miss.length) console.log(`没有代表帧的片子（图上已标出）：${miss.map((r) => r.slug).join('、')}`);
   } finally {
@@ -82,21 +75,9 @@ await main(async () => {
   }
 });
 
-// ── 画幅 + 选定的视觉方向 ─────────────────────────────────────
+// ── 画幅 ─────────────────────────────────────────────────────
 function meta(d) {
-  const readJ = (f) => { try { return JSON.parse(readFileSync(join(d, f), 'utf8')); } catch { return null; } };
-  const format = readJ('film.json')?.format ?? null;
-  let direction = null, why = null;
-  if (!existsSync(join(d, 'docs', 'style_guide.md'))) why = '没有 docs/style_guide.md';
-  else {
-    try {
-      const j = JSON.parse(execFileSync('python3', [CHECK_PY, '--film', d, '--divergence'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
-      direction = j.direction;
-      if (direction && j.direction_detail && !direction.includes(j.direction_detail)) direction += ` — ${j.direction_detail}`;
-      if (!direction) why = 'style_guide 里没有标明选定的视觉方向';
-    } catch (e) { why = `解析失败：${String(e.stderr || e.message).trim().split('\n').at(-1)}`; }
-  }
-  return { format, direction, why };
+  try { return { format: JSON.parse(readFileSync(join(d, 'film.json'), 'utf8'))?.format ?? null }; } catch { return { format: null }; }
 }
 
 // ── 代表帧 ─────────────────────────────────────────────────────
@@ -141,13 +122,12 @@ async function frame(d, s, FD, tmp, { self, render }, getBrowser) {
 // ── 输出 ──────────────────────────────────────────────────────
 function printTable(rows) {
   const cell = (x) => String(x ?? '').replace(/\|/g, '\\|');
-  console.log('| 片子 | 画幅 | 选定的视觉方向（取自它的 style_guide） | 代表帧 |');
-  console.log('|---|---|---|---|');
+  console.log('| 片子 | 画幅 | 代表帧 |');
+  console.log('|---|---|---|');
   for (const r of rows) {
     const fmt = r.format ?? '未声明';
-    const dir = r.direction ? shortDir(r.direction).slice(0, 90) : `未声明（${r.why}）`;
     const fr = r.png ? r.src : `**无**：${r.frameWhy}`;
-    console.log(`| ${cell(r.slug)}${r.self ? '（本片）' : ''} | ${cell(fmt)} | ${cell(dir)} | ${cell(fr)} |`);
+    console.log(`| ${cell(r.slug)}${r.self ? '（本片）' : ''} | ${cell(fmt)} | ${cell(fr)} |`);
   }
 }
 
@@ -159,9 +139,8 @@ async function composite(browser, rows, tile, outPath) {
     const img = r.png
       ? `<img src="data:image/png;base64,${Buffer.from(r.png).toString('base64')}" style="width:${w}px;height:${H}px">`
       : `<div class="miss" style="width:${w - 6}px;height:${H - 6}px"><b>${r.self ? '本片尚无画面' : '无代表帧'}</b><span>${esc(r.frameWhy)}</span></div>`;
-    const dir = r.direction ? esc(shortDir(r.direction).slice(0, 70)) : `<i>未声明（${esc(r.why)}）</i>`;
     return `<figure style="width:${Math.max(w, 260)}px" class="${r.self ? 'self' : ''}${r.png ? '' : ' nofr'}">${img}
-      <figcaption><b>${esc(r.slug)}${r.self ? '（本片）' : ''}</b> · ${esc(r.format ?? '画幅未声明')}<br>${dir}<br><small>${esc(r.png ? r.src : '无代表帧')}</small></figcaption></figure>`;
+      <figcaption><b>${esc(r.slug)}${r.self ? '（本片）' : ''}</b> · ${esc(r.format ?? '画幅未声明')}<br><small>${esc(r.png ? r.src : '无代表帧')}</small></figcaption></figure>`;
   }).join('\n');
   const html = `<!doctype html><meta charset="utf-8"><style>
     body{margin:0;padding:20px;background:#ececec;font:15px/1.4 "PingFang SC","Noto Sans SC",sans-serif;color:#222;width:max-content;max-width:2400px}

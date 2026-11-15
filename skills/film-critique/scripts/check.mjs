@@ -860,7 +860,7 @@ if (on('tilt')) {
   cost.tilt_ms = Date.now() - t0; cost.tilt_frames = tts.length;
   for (const r of truns) {
     if (laws.ortho_ok) add('PASS', '本片法律', 'tilt.ortho', `${tilt.describeRun(r, fmt)}——本片声明 ortho_ok：${laws.ortho_ok}`);
-    else add('LOOK', '疑点', 'tilt.ortho', `${tilt.describeRun(r, fmt)}。如果这是斜着看的平面，它是正交投影：平行线不收拢、远近边一样宽，读成长方形而不是斜放的方形。要透视用 film-motion 的 runtime/camera3d.js；有意如此就在 critique 块写 "ortho_ok": "<理由>"`, { t: r.worstT, ev: saveEvidence('tilt', r.worstT) });
+    else add('LOOK', '疑点', 'tilt.ortho', `${tilt.describeRun(r, fmt)}。如果这是斜着看的平面，它是正交投影：平行线不收拢、远近边一样宽，读成长方形而不是斜放的方形。要透视就做真正的透视投影（投影矩阵或 three.js 相机）；有意如此就在 critique 块写 "ortho_ok": "<理由>"`, { t: r.worstT, ev: saveEvidence('tilt', r.worstT) });
   }
 }
 

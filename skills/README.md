@@ -48,7 +48,7 @@ node ~/.claude/skills/film-core/scripts/deliver.mjs --film my-film              
 | skill | 负责什么 |
 |---|---|
 | **film-core** | 入口与内核：契约、脚手架与配方、渲染与预览、确定性验收、交付与验收、共享库、基础运行时 |
-| film-motion | 2D 动效词汇：缓动与交错、镜头加转场的时间轴、Magic Move、透视相机、界面重建 |
+| film-motion | 2D 动效的原理与取舍：缓动与交错、转场与剪辑点、共享元素、矢量形状、透视、界面重建 |
 | film-webfx | 着色器、后期、三维、SVG 滤镜、混合模式 |
 | film-physics | 粒子、重力、碰撞、布料、群集，全部可以 seek |
 | film-typography | 文字绘制（含字幕）、可变字体轴、中日韩排版、小字号可读性 |
@@ -118,25 +118,22 @@ node skills/film-core/scripts/deliver.mjs --film x  # 交付一支：定稿渲�
 
 这套东西的核心主张是"skill 呈现能力，不规定风格"。这种主张容易写，也容易慢慢失效：
 加一条"推荐用深色背景"不会有人拦，加上几次之后，套件就退回到它当初要治的那个毛病。
-所以这条主张被做成了一项**可执行的检查**，而不只是文档里的一句话。检查共八项：
+同样会失效的还有另一种形式：把效果写成模板代码让模型挑函数、调参数，片子就会长成模板的样子。
+所以能力 skill 只讲原理、难点和代价，效果由模型按本片需要自己写（以前的效果模板移到了仓库 `examples/`，不随安装）。
+`dev/selfcheck.mjs` 只查机器能判的结构事实，共七项：
 
 | 检查 | 判据 |
 |---|---|
 | 结构完整 | 每个 skill 都有 SKILL.md；实测记录放在仓库的 `docs/verified/<skill>.md`（开发台账，不随安装），skill 目录里不许再有 VERIFIED.md |
 | frontmatter | `name` 与目录同名；`description` 存在且足够长（它是唯一的触发机制） |
-| **风格中立** | 没有无条件禁令，没有默认配色、字体组合或转场。要区分"下规定"和"否定其存在或引用反例"：写"你不会找到默认配色"是在描述这个毛病，不是在犯这个毛病 |
 | 跨 skill 引用 | 引用的 skill 真实存在 |
 | 文件引用 | `scripts/` `references/` `assets/runtime/` 下被引用的文件真实存在 |
 | 实测记录质量 | 有"没解决"一节；有带单位的实测数字；**出现"应该可以"直接判不合格** |
 | 工具与运行时分离 | `assets/runtime/` 里不许出现 Node API（它跑在浏览器里） |
 | 运行时守契约 | 套件自己写的 `assets/runtime/` 里不许有 `Math.random` / `Date.now` / `setTimeout` 等调用。第三方库列在 `<skill>/assets/vendored.json`（写明 upstream 和 license），不做词法检查，它们在 seek 期间是否违约由逐片的 seamcheck 探针判定 |
 
-这项检查本身验证过：往 `film-webfx/SKILL.md` 里植入三条违规（默认配色、默认转场、
-无条件禁令），三条全部被抓到；移除后检查立刻恢复安静。
-
-**但它只能做词法检查。** 它能抓到"默认配色"这四个字，却抓不到
-"模型读完这套 skill 之后，是不是每次都画出同一种东西"。后者才是这套东西真正要防的问题，
-只能靠行为测试。这一半记录在仓库的 [`docs/neutrality-eval.md`](../docs/neutrality-eval.md)：
+措辞上有没有把口味写成法律，靠改 skill 的人自己审（以前有过一个正则扫描，它考的是措辞不是立场，已删）。
+"模型读完这套 skill 之后，是不是每次都画出同一种东西"才是真正要防的问题，只能靠行为测试。这一半记录在仓库的 [`docs/neutrality-eval.md`](../docs/neutrality-eval.md)：
 四个全新的 agent（两组带 skill、两组作对照），两个差异极大的主题，判据**在看到结果之前**就写定了，
 并且明确写了"这个测试可能证伪我自己的主张"。改过 `film-story` 或
 `film-core` 之后应该重跑，prompt 原样记在那份文件里。

@@ -1,117 +1,163 @@
-# 文字手法详解
+# 文字手法：原理、代价、坑
 
-每条手法依次说明做法、参数、代价和代码。代码都是 `seek(t)` 里的片段。标有 **[已跑]** 的手法在 `tests/fixtures/_test-typography/scene.html` 里通过了 seamcheck；其余是用同一组基元写的片段，**没有单独验证**，使用前先在自己的片子里跑一遍 seamcheck。以下代码假设已有：
+每条手法按**原理 → 代价 / 什么时候值得 → 坑 → 可用的库**写。代码自己写；这里只讲难点和确定性陷阱。
+所有手法共用一个前提：拆分、测量、断行、精灵图、路径弧长表都在**加载时**做一次，`seek(t)` 只读这些结果按 t 画。
+距离、角度、幅度、缓动、交错间隔没有默认值——同样是"升起"，0.3em 和 2em 是两种手感，由本片 style_guide 定。
 
-```js
-import { sat, norm, settle, SPRING, seeded } from './runtime/motion.js';   // film-core
-import * as T from './runtime/text.js';
-import * as X from './runtime/textfx.js';                                   // unitProgress、typeSchedule/typedAt 等
-const ease = (p) => 1 - (1 - p) ** 3;
-// 加载时：ctx.font = F; const g = T.splitText(ctx, TEXT);   // [{ch, x, w}], g.totalWidth
+目录：0 共用基础（拆分单元、逐单元进度）· 1 硬切 · 2 淡入淡出 · 3 遮罩升起 · 4 裁切滑入 · 5 逐字交错 · 6 打字机 · 7 乱码解码 · 8 字重渐变 · 9 轴动画 · 10 笔画顺序 · 11 描边生长 · 12 缩放冲击 · 13 字作遮罩 · 14 逐词高亮 · 15 模糊对焦 · 16 沿路径排字 · 17 切分揭示 / 按行升起 · 18 数字滚动 · 19 逐字 3D 翻转 · 20 文字 Magic Move · 21 强调（波浪、脉冲、抖动）· 附：出场、组合、耗时、没解决
+
+## 0. 共用基础
+
+**拆分单元。** 中文按字拆时，标点不该自己单独飞进来：闭标点、句读、间隔号、破折号、空格挂到**前一个**单元，开标点（「（《“ 与 `([{`）挂到**后一个**单元。
+`时间的纯函数，乱序也一样。` → `时 间 的 纯 函 数， 乱 序 也 一 样。`。拼回去要逐字节等于原文（写个断言）。
+`punctClass` / `NO_LINE_START` / `NO_LINE_END`（`assets/runtime/text.js`）给出了标点分类，可以直接拿来判挂靠方向。
+按词拆用 `Intl.Segmenter(locale, {granularity:'word'})`，中文走 ICU 词典切词——**切法随 Chromium/ICU 版本可能变**，要逐字节固定就自己给词表。
+
+**位置。** 每个单元的 x 用前缀测量（`prefixMeasure` / `splitText`），不要把逐字 measureText 相加（kerning 会丢，见 SKILL.md 硬约束 4）。
+多行先 `wrapCJK` 断行，再逐行前缀测量。变换（缩放、旋转）以单元的视觉中心 `x + w/2` 为原点，否则字会绕左下角甩。
+
+**逐单元进度。** 一切交错手法的核心是一行：
 ```
+p_i(t) = ease( sat( (t - start - delay_i) / dur ) )     // delay_i = order_i * stagger，或自己给的表
+```
+乱序的 `order` 必须来自种子随机（film-core `seeded()`），`Math.random` 违约。`sort(() => rnd() - 0.5)` 结果确定但分布不均，要均匀用 Fisher–Yates。
+交错顺序（距离、网格、种子错峰）和缓动怎么选，见 film-motion。
 
-目录：1 硬切 · 2 淡入淡出 · 3 遮罩升起 · 4 裁切滑入 · 5 逐字交错 · 6 打字机 · 7 乱码解码 · 8 字重渐变 · 9 轴动画 · 10 笔画顺序 · 11 描边生长 · 12 缩放冲击 · 13 字作遮罩 · 14 逐词高亮 · 15 模糊对焦 · 附：出场、组合
+**可用的库（如需）**：GSAP SplitText 的思路就是上面这套（拆 → 测 → 每单元一个 tween），但它拆的是 DOM、按真实时间播放；在 canvas 里手写拆分更直接。
+要在 DOM 上做，Splitting.js 只负责拆成 span + CSS 变量，时间仍要由 seek 设置（CSS transition 无法 seek，见 kernel.md §3）。
 
 ## 1. 硬切
-`if (t >= t0) ctx.fillText(…)`。硬切在 seek 栅格上表现为"在某一帧出现"，t0 最好落在帧边界上，否则用不同 fps 渲染时，文字出现的帧会不同。
+`if (t >= t0) fillText(…)`。t0 最好落在帧边界上，否则换 fps 渲染时出现的那一帧会变。代价：没有过程，全靠排版和出现时机。
 
-## 2. 淡入 / 淡出 **[已跑：段落出场]**
-`globalAlpha = ease(norm(t, t0, t0 + 0.4))`。alpha 相当于把墨量覆盖率乘以 alpha，所以过渡过程中的有效对比度可以用 measurements.md §3 的同一算法估算（未单独实测）。
+## 2. 淡入 / 淡出
+`globalAlpha = p`。alpha 相当于把墨量乘以 alpha，过渡中的有效对比度可用 measurements.md §3 的算法估算（未单独实测）。
+代价：没有方向感，用多了画面"软"；半透明叠字会糊。
 
-## 3. 遮罩升起 **[已跑]**
-```js
-const IN = (i) => X.unitProgress(t, i, { start: 0.2, dur: 0.5, stagger: 0.04, ease });
-T.drawRiseIn(ctx, g, t, { x, y, size, align: 'center', rise: 1.2, progress: IN });
-// 出场：沉回遮罩
-T.drawRiseIn(ctx, g, t, { x, y, size, rise: 1.2, progress: (i) => IN(i) * (1 - ease(norm(t, 3, 3.6))) });
-// 出场：向上离开遮罩 —— 用 dir:-1 并让 p 从 1 走到 0
-```
-参数：`rise` 是位移量（字号的倍数，必须给出）；`progress(i)` 返回每段已缓动的进度（必须给出，交错与缓动都在这里实现）。中文逐字交错取 0.03–0.05 s，英文逐词交错更自然。代价：升起过程中字被裁掉一半，可读性损失中等；遮罩矩形默认高 `size*1.5`，带降部的字母（gjpqy）和带上标的中文标点可能被裁掉，这时要调整遮罩，或改用 `progress` 加大。
+## 3. 遮罩升起
+**原理**：一个行高的裁切矩形（`ctx.rect` + `clip`），每个单元在矩形里从基线下 `rise·size` 处升到基线：`y_i = y + (1 - p_i)·rise·size`。出场把 p 反过来，或改成向上离开。
+`drawRiseIn`（text.js）就是这个基元，缓动和交错由调用方的 `progress(i)` 给。
+**代价**：升起过程中字被裁掉一半，可读损失中等；中文逐字超过 15 字显得拖沓，按词更接近"阅读"节奏。
+**坑**：遮罩高度默认 `1.5·size`，带降部的字母（gjpqy）和上标位置的标点可能被裁——换字体先看一帧。
 
 ## 4. 裁切滑入
-固定一个窗口 `ctx.rect(x, y - size, g.totalWidth, size * 1.3); ctx.clip()`，把文字画在 `x - (1 - p) * g.totalWidth`，让它从左侧滑进窗口。代价：方向必须与画面运动一致（镜头往右推时，字从右边进来就会冲突）。整行一起动比逐字动的开销小，可读性损失中等。
+固定窗口 `rect(x, y - size, totalWidth, 1.3·size)` + `clip`，文字画在 `x - (1-p)·totalWidth`。
+**代价**：方向必须与画面运动一致（镜头右推时字从右进就冲突）。整行动比逐字动省事。
 
-## 5. 逐字交错（位移 / 缩放 / 旋转）
-```js
-// 加载时：lay = X.layoutText(ctx, TEXT); rnd = seeded(7); order = lay.units.map((_, i) => i).sort(() => rnd() - 0.5)
-X.drawUnits(ctx, lay, x, y, (u, i) => {
-  const p = X.unitProgress(t, i, { start: t0, dur: 0.5, stagger: 0.03, order, ease });
-  return p <= 0 ? null : { rot: (1 - p) * 0.4, sx: p, sy: p };      // 现成预设见 textfx.md §2 的 IN.*
-});
-```
-代价：总时长为 dur + (n-1)·stagger，长句很容易超过 1.5 s，观众读到一半时字还没出完。乱序必须使用 `seeded()`（`Math.random` 违反契约）；`sort(() => rnd()-0.5)` 的分布不均匀但结果确定，要均匀分布就用 Fisher–Yates。
+## 5. 逐字交错（位移 / 缩放 / 旋转 / 斜切 / 字距）
+**原理**：§0 的 `p_i` 驱动每个单元的变换：位移 `(1-p)·dist`、缩放 `from + (1-from)·p`、旋转 `(1-p)·angle`、字距 `(i - n/2)·(1-p)·spread`（从散开收拢）。
+**代价**：总时长 = dur + (n-1)·stagger，长句很容易超过 1.5 s，观众读到一半字还没出完。每句都交错，观众就一直在等字；适合短句、口号、标题。
+带过冲的缓动加缩放，用在正文上显得廉价，用在一个词上记忆点高。
 
-## 6. 打字机 **[已跑]**
-使用运行时的 `typeSchedule` / `typedAt` / `cursorOn`（textfx.md §5）：加载时排好每个单元的出现时刻，seek 里用 `typedAt(t, SCHED)` 取已打出的字数，光标闪烁也是 t 的函数。代价：匀速打字时节奏被字数绑定（可以传 `pauses` 让标点处停顿）；可读性损失低。`typedAt` 每变化一次就对应一次 tick 音效（参见 film-narration 的音效部分）。多行文本先用 `wrapCJK` 断好行，再把时间预算逐行分配（见测试片）。
+## 6. 打字机
+**原理**：加载时排一张出现时刻表 `at[i]`：`at[i+1] = at[i] + perUnit·(1 ± jitter·(hash01(seed,i) - 0.5)·2) + pause(以哪个标点结尾)`。
+seek 里二分查找 `n = #{at[i] <= t}`，画前 n 个单元。光标是 t 的函数：距上次击键 < hold 秒常亮，否则按 `floor((t - last - hold)·blink·2) % 2` 闪。
+**代价**：匀速时节奏被字数绑定、像机器；标点停顿和种子抖动让它像人。和配音同步时节奏跟旁白走，不跟字数走。可读损失低。
+**坑**：n 每变一次就是一个 tick 音效时刻（音效摆放归 film-narration）。多行先 `wrapCJK` 断好，再把时间预算逐行分；不要边打边断行，否则行尾的字会在下一帧跳到下一行。
+jitter 必须来自 (seed, i) 的哈希，不是来自上一帧。
 
 ## 7. 乱码解码（scramble）
-使用运行时的 `scramble`（textfx.md §4）：替换字只取决于 (seed, 单元, t)，画在最终字的位置上，不会推开后面的字。代价：可读性损失高（解码完成前读不出来），但记忆点也高。替换字宽度不同会导致左右抖动，解决办法是按最终字的 x 坐标放置，或者使用等宽字体；中文的替换池要用同字号的汉字，否则宽度和灰度都会跳变。
-
-## 8. 字重渐变 **[已跑]**
-```js
-const w = 100 + 800 * ease(norm(t, t0, t0 + 1.2));
-ctx.font = `${w} ${size}px "X Variable"`;                  // 标准行为，连续
-const gw = T.splitText(ctx, WORD);                         // 字重变了 advance 也变，重新测
-T.drawRiseIn(ctx, gw, t, { x: cx, y, size, align: 'center', rise: 1.2, progress: () => 1 });
+**原理**：单元 i 在 `t_i = start + delay_i` 出现，乱码持续 `settle` 秒后锁定为原字。乱码字取
 ```
-代价：字重增大时字会变宽（Inter 80px 从 400 到 900，宽度从 241.5 px 变为 276.4 px），整行被推开。解决办法有两种：每帧重新测量并重新居中（测试片的做法，仍然是 t 的纯函数）；或者只对行里孤立的一个词做动画，并为它预留宽度。
-字体必须是可变字体，且 `@font-face` 声明了字重范围（fontsource 的 `font-weight: 100 900`）；静态字体会跳档或者触发合成粗体。
-
-## 9. 轴动画（wdth / opsz / slnt / 自定义）**[已跑：opsz]**
-```js
-T.setAxes(ctx, { wdth: 75 + 50 * p, slnt: -10 * p }, `${size}px "Roboto Flex Variable"`);
-ctx.fillText(TEXT, x, y);
-T.clearAxes(ctx, nextFont);                                 // 别让轴设置泄漏到后面画的字
+pool[ floor( hash01(seed, i, j, floor(t·rate)) · pool.length ) ]     // j 是单元内第几个字
 ```
-代价：这是**非标准行为**（见 chromium.md A1）；字体必须真的有该轴（用 `fontTools` 查看 fvar：`python -c "from fontTools.ttLib import TTFont;print([a.axisTag for a in TTFont('x.woff2')['fvar'].axes])"`）。
-`font-variation-settings` 里的 `wght` 会覆盖 ctx.font 中的字重。wdth 变化同样会推开整行。
+**只依赖 (seed, i, j, 时间步)**，所以乱序求值结果一致；`rate` 决定每秒换几次字。标点和空格通常不参与乱码，直接随锁定出现。
+**代价**：解码完成前读不出来，记忆点高。题材是数据、密码、揭晓时值得，**只揭晓一次**；每个标题都解码就成了"黑客片模板"。
+**坑**：
+- 乱码字是运行时才画的字，**pool 里每个字都要传进 `loadFonts`**，否则第一次被抽中的那一帧用回退字体画。
+- 替换字宽度不同会推挤后面的字、左右抖动：每个乱码字按**原字的中心**居中放（位置在加载时就定），或用等宽字体 / 固定 advance。
+- 中文的 pool 要用同字号、灰度接近的汉字；中英符号混杂的 pool 宽度和灰度都会跳。
+- 不要用"上一帧的乱码字 + 1"这类递推，seek 乱序时会错。
+
+## 8. 字重渐变（wght）
+**原理**：`ctx.font = \`${w} ${size}px "X"\``，w 可取任意数（可变字体上是**标准、连续**行为，chromium.md B）。
+**代价 / 坑**：字重变了 advance 也变（Inter 80px 400→900：241.5→276.4 px），整行被推开。要么每帧按当前字重重新前缀测量并居中（仍是 t 的纯函数），要么只动孤立的一个词并预留宽度。
+字体必须是可变字体，且 `@font-face` 声明了字重范围（如 `font-weight: 100 900`）；静态字体会跳档或触发合成粗体。
+
+## 9. 轴动画（wdth / opsz / slnt / GRAD / 自定义）
+**原理**：canvas 元素的 CSS `font-variation-settings` 会被 2D context 继承，但只在重新给 `ctx.font` 赋值时读取（`setAxes` 两步都做）。
+**代价**：**非标准**，依赖 Chromium 实现（chromium.md A1）；OffscreenCanvas 不可用；wdth 变化同样推开整行。
+**坑**：字体必须真有该轴（`python -c "from fontTools.ttLib import TTFont;print([a.axisTag for a in TTFont('x.woff2')['fvar'].axes])"`）；
+`wght` 轴会覆盖 ctx.font 里的字重；画完调 `clearAxes`，否则后面的字全继承这组轴。
 
 ## 10. 笔画顺序（书写）
-思路：`hanzi-writer-data` 为每个字提供 `strokes`（轮廓 SVG path）和 `medians`（中线点列）。对第 k 笔，用 `Path2D(strokes[k])` 做 clip，沿 `medians[k]` 画一条粗线，线长随进度增长。
-```js
-// data = 预加载的 JSON（素材来源与许可：参见 film-assets skill —— 它不是 MIT）
-// 字形坐标系是 1024 单位、y 轴向上：ctx.translate(x, y); ctx.scale(s, -s); ctx.translate(0, -900)
-data.strokes.forEach((d, k) => {
-  const p = sat((t - t0) / 0.35 - k);                       // 每笔 0.35 s 依次
-  if (p <= 0) return;
-  ctx.save(); ctx.clip(new Path2D(d));
-  const pts = data.medians[k]; const n = Math.max(2, Math.ceil(pts.length * p));
-  ctx.lineWidth = 140; ctx.lineCap = 'round'; ctx.beginPath();
-  pts.slice(0, n).forEach(([px, py], j) => (j ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
-  ctx.stroke(); ctx.restore();
-});
-```
-**未验证**。代价：实现成本高；只覆盖数据集里有的字（常用简繁汉字），字形是数据集的楷体风格，与片子使用的字体不一致。
+**原理**：hanzi-writer-data 每字给 `strokes`（每笔轮廓 path）和 `medians`（中线点列）。第 k 笔：`clip(new Path2D(strokes[k]))`，沿 `medians[k]` 画粗线，长度随 `p_k = sat((t - t0)/每笔时长 - k)` 增长。
+数据坐标是 1024 单位、y 轴向上，要 `scale(s, -s)` 翻转。
+**代价**：实现成本高；只覆盖数据集里的字，字形是数据集的楷体风格，和片子字体不一致；写完之前读不出来。适合单字特写、书法、教学。
+**库**：`hanzi-writer-data`（许可不是 MIT，参见 film-assets）。**未在本仓库验证。**
 
 ## 11. 描边生长 → 填充
-思路：用 opentype.js 的 `font.getPath(text, x, y, size).toPathData()` 得到路径数据，再转成 `Path2D`；用 `ctx.setLineDash([L*p, L])` 控制描边长度，L 用离屏 `SVGPathElement.getTotalLength()` 计算（未挂载也能测量，本 skill 未复测）。
-p 到 1 后，再用填充淡入或遮罩升起。代价：轮廓是闭合外形，描出来的是"空心字外框在生长"，而不是沿笔画中线书写；中文字的轮廓段数多、L 很大，用 `setLineDash` 一次画完会显得"多处同时生长"，按子路径逐段延迟更像书写。**未验证**。
+**原理**：用 opentype.js `font.getPath(text, x, y, size).toPathData()` 拿字形轮廓转 `Path2D`；`setLineDash([L·p, L])` 控制描边长度，L 用离屏 `SVGPathElement.getTotalLength()` 求；p 到 1 后再淡入填充。
+**代价 / 坑**：轮廓是闭合外形，描出来是"空心字外框在生长"，不是沿中线书写；中文轮廓子路径多，一次性 dash 会"多处同时生长"，按子路径逐段延迟更像书写。
+opentype.js 读的字体文件必须是片子里打包的那份。**未在本仓库验证。**
+**库**：opentype.js 或 fontkit（解析字体、导出字形路径，确定性最好，与浏览器无关）。路径按弧长生长、修剪路径的做法见 film-motion。
 
 ## 12. 缩放冲击
-```js
-const s = settle(t - t0, SPRING.playful.stiffness, SPRING.playful.damping);   // 闭式弹簧（film-core motion.js）
-ctx.save(); ctx.translate(cx, y); ctx.scale(s, s); ctx.textAlign = 'center'; ctx.fillText(NUM, 0, 0); ctx.restore();
-```
-代价：过冲量由弹簧参数决定，用在正文上容易显得廉价，用在数字或结论上记忆点高；s<0.5 的那几帧字号低于可读下限。
+**原理**：`scale = settle(t - t0, stiffness, damping)`（film-core `motion.js` 的闭式弹簧），以字的中心缩放。
+**代价**：过冲量由弹簧参数决定；用在正文上廉价，用在数字、结论、节拍重音上记忆点高。s < 0.5 的几帧字号低于可读下限。
 
 ## 13. 字作遮罩 / 字里透画面
-先在离屏 canvas 上 `drawImage(画面层)`，再设置 `globalCompositeOperation = 'destination-in'` 后 `fillText`（字形之外的部分全部清掉），最后画回主 ctx。
-OffscreenCanvas 上不能用 `setAxes`/`disableFontSynthesis`（没有 canvas 元素），需要轴时改用隐藏的 `<canvas>` 元素。代价：小字号时透出的纹理会让字更难读，通常要配合粗字重和大字号。
+**原理**：离屏 canvas 先 `drawImage(画面层)`，再 `globalCompositeOperation = 'destination-in'` 后 `fillText`，最后画回主画布。
+**代价 / 坑**：小字号时透出的纹理让字更难读，通常要粗字重加大字号。OffscreenCanvas 上不能 `setAxes` / `disableFontSynthesis`，需要轴时改用隐藏的 `<canvas>` 元素。
 
 ## 14. 逐词高亮（字幕式）
-`drawCaption(ctx, vo.captionAt(t), { style: (i, state, p) => ({ fill, dy, axes }) })`，用法见 SKILL.md「字幕绘制」。
-代价：时间轴必须来自 narration.json（film-narration）。如果 `style` 返回 `axes: { wght: … }` 让当前词做字重渐变（非标准行为，见第 9 条），当前词会变宽；而 `layoutCaption` 按 `font` 的基础字重测量，加粗的词会和下一个词挤在一起。解决办法是给词间留出空隙，或者改用颜色、位移来高亮。**没有接入真实的 narration.json 运行过。**
+`drawCaption(ctx, vo.captionAt(t), { style })`，用法见 SKILL.md「字幕绘制」。时间轴必须来自 narration.json（film-narration），不能手填。
+**坑**：`style` 返回 `axes: {wght}` 让当前词变粗时，当前词会变宽，而 `layoutCaption` 按基础字重测量，加粗的词会挤到下一个词上——留出词间空隙，或改用颜色、位移高亮。**没有接入真实 narration.json 运行过。**
 
 ## 15. 模糊对焦
-``ctx.filter = `blur(${(1 - p) * size * 0.15}px)` ``，画完后复位为 `'none'`（对应运行时的 `IN.blur`）。代价：`ctx.filter` 在软件渲染（SwiftShader）下很慢，大字加上大模糊半径会明显拖慢逐帧渲染；模糊过程中完全读不出文字。
+``ctx.filter = `blur(${(1 - p)·r}px)` ``，画完复位 `'none'`。
+**代价**：`ctx.filter` 在软件渲染（SwiftShader）下很慢，大字大半径会明显拖慢逐帧渲染；模糊期间完全读不出来。适合梦境、回忆。
+
+## 16. 沿路径排字
+**原理**：加载时把路径（折线 / 三次贝塞尔 / 圆弧 / 任意参数函数）按 512 段左右采样，建**弧长表**；`at(s)` 二分弧长表插值出点和切线角。
+每个单元放在弧长 `offset + 单元中心 x` 处，`translate` 到点、`rotate(切线角)` 后画。offset 随 t 变，字就沿路径流动；超出两端时沿端点切线外推，字可以从路径外开进来。
+**代价 / 坑**：参数 u 不等于弧长，直接按 u 放字会疏密不均——一定要弧长参数化。曲率大的地方弯道内侧的字会重叠（中文尤其明显），要么放缓曲率，要么按法向偏移把字放到外侧。纯装饰性的弧线容易显得廉价。
+**库（如需）**：路径弧长也可以用离屏 `SVGPathElement.getTotalLength()` / `getPointAtLength()` 求（加载时采样成表，seek 里不调 DOM）；按弧长采样的细节见 film-motion。
+
+## 17. 切分揭示 / 按行升起
+**切分**：整行切成 N 条（横或竖），每条用自己的条带 clip，从 ±dist 滑进来，可交替方向。代价：大字标题用一次有力量；条数多加交替就是典型 MG 预设，小字号切口锯齿明显。
+**按行**：每行一个行遮罩，整行从遮罩下升起（多行版的 §3）。安静、有编辑感，很少显得廉价；行数多时总时长长。
+
+## 18. 数字滚动（里程表 / 老虎机）
+**原理**：列宽取 0–9 中最宽的 advance（或字体有 `tnum` 时直接等宽），否则滚动时左右抖。每位一个连续位置 pos ∈ [0,10)，在自己的窗口里画 `floor(pos)` 和下一个数字，竖向偏移 `frac(pos)·lineHeight`。
+- 里程表：个位 `pos = v mod 10` 连续滚；第 k 位只在低位从 9 滚到 0 的最后一个单位里滚：`pos_k = floor(v/10^k) mod 10 + sat((v mod 10^k) - (10^k - 1))`。
+- 老虎机：`pos = 目标位 + 10·圈数·(1 - ease(p))`，每位可以不同圈数、不同延迟。
+**代价**：数字本身是主角时值得；所有数字都在滚、或滚得太久（数值早已读不清）就失去意义；老虎机与题材无关时像游戏 UI。
+**坑**：v 是 t 的函数（如 `v = lerp(a, b, ease(p))`），不要每帧 `v += Δ`。前导零是否显示要明确决定。
+
+## 19. 逐字 3D 翻转
+canvas 2D 只有仿射变换，做不出透视。加载时把每个字画成离屏精灵，seek 里变换精灵：
+- **仿射近似**：绕轴转 θ ≈ 该方向缩放 cos θ。便宜，但没有近大远小，接近 90° 时像"压扁"而不是"翻转"。小字号、快速翻转够用。
+- **透视条带**：把精灵切成 N 条，每条在深度 `z = v·sin θ` 处按 `f/(f+z)` 单独缩放（f 为焦距 px，越小透视越强），即分段仿射逼近透视。cos θ < 0 时换背面精灵（翻牌换字）。
+**代价 / 坑**：条与条之间宽度阶跃，竖笔画出现台阶（120px 的字上 16 条肉眼可见，40 条消失），耗时随条数线性增长；条间留 0.5px 左右重叠，否则会漏缝。精灵的颜色在加载时就定了，要变色用 `source-atop` 叠色或多备一套。
+需要真透视或光照时，把字当贴图交给 film-motion 的透视做法或 film-webfx 的三维 / 着色器。
+
+## 20. 文字 Magic Move（词序重排）
+**原理**：A、B 两句各自布局；相同的单元按就近次序配对（允许换序：「纯函数的时间」→「时间的纯函数」六个字全配上），其余记为只在 A / 只在 B。
+配对的字从 A 位置沿拱起的路径（`arc·size·4q(1-q)`，奇偶交替上下拱）飞到 B 位置；只在 A 的前段淡出，只在 B 的后段淡入。配对表在加载时算。
+**代价**：词序变化本身就是要点时值得；两句没有共享的字时退化成交叉淡化。
+**坑**：配对比的是字符串，挂靠的标点会让同一个字配不上——两边标点一致或按纯字配。两个布局用同一个字号，不同字号就在外面 scale。
+
+## 21. 强调（波浪、脉冲、抖动）
+波浪 `dy_i = amp·sin(2π·freq·t + i·phase)`；脉冲在 [t0, t0+dur] 内 `scale = 1 + amp·sin(π·q)`；抖动的位移取 `hash01(seed, i, floor(t·rate))`。都只依赖 t。
+**代价**：强调**一个**词时活泼；整句一直波动看起来就是字在抖，难以阅读。
 
 ## 出场
 
-- 任何入场手法反过来用就是出场：把 p 乘以 `1 - ease(norm(t, out0, out1))`（对应运行时的 `OUT(入场预设)`）。
-- 出场和入场一样长时，代价是占用下一条信息的入场时间；出场明显更快（测试片短 30–50%）时节奏利落，代价是出场本身没有记忆点。需要让出场表达意义时（例如"这件事消散了"），值得放慢。
-- 循环片：所有出场都要在 `DURATION - 1/fps` 之前完成，首帧与末帧相同（测试片在 3.7 s 结束，4 s 循环一次）。
+- 任何入场反过来就是出场：把 p 乘以 `1 - ease(norm(t, out0, out1))`。
+- 出场和入场一样长，代价是占用下一条信息的入场时间；出场明显更快（短 30–50%）节奏利落，代价是出场本身没有记忆点。出场要表达意义时（"这件事消散了"）值得放慢。
+- 循环片：所有出场在 `DURATION - 1/fps` 之前完成，首末帧相同。
 
 ## 组合
 
-- 用**不同手法**区分主次（测试片中主标题用遮罩升起，正文用淡出），代价是画面语言变杂；用同一手法的不同速度区分，代价是速度差不够大时分不出主次。
-- 同时运动的文字块越多，视线越没有落点，代价是观众每块都只读到一半；故意制造"信息过载"时值得付这个代价。
+- 用不同手法区分主次，代价是画面语言变杂；用同一手法的不同速度区分，代价是速度差不够大时分不出主次。
+- 同时运动的文字块越多，视线越没有落点，观众每块都只读到一半；故意制造"信息过载"时值得付。
+
+## 耗时
+
+1920×1080、SwiftShader 下实测（整个镜头 seek 耗时中位数）：交错、乱码、打字机、切分、数字滚动、Magic Move 都在 0.2–0.7 ms；
+透视条带翻转 6 字 × 40 条约 3.1 ms。截图约 32 ms/帧，所以文字手法不是瓶颈；`ctx.filter` 模糊是例外。
+
+## 没解决
+
+- 拆分只处理中文与拉丁文；阿拉伯文、天城文逐字素绘制会破坏连字（`splitText` 同样受限）。
+- 竖排文字的动画（沿竖排方向交错、标点旋转）没有现成做法，见 cjk.md §6。

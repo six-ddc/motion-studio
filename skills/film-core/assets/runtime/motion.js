@@ -14,11 +14,10 @@ export const norm = (t, from, to) => sat((t - from) / (to - from));
 
 /**
  * 区间进度：ease(sat((t - start) / dur))。dur ≤ 0 时是阶跃（t ≥ start 为 1）。
- * ease 必须是函数（p → 值）：缓动词汇表在 film-motion choreo.js 的 EASE / easeOf，或自己写；这里不替你选。
- * film-motion 的 envelope、film-typography 的 unitProgress 都建在它上面。
+ * ease 必须是函数（p → 值），自己写；缓动曲线的原理与取舍见 film-motion。这里不替你选。
  */
 export function win(t, start, dur, ease) {
-  if (typeof ease !== 'function') throw new Error('win(t, start, dur, ease)：ease 必须是函数（如 choreo.js 的 EASE.cubic.out，或 p => p）');
+  if (typeof ease !== 'function') throw new Error('win(t, start, dur, ease)：ease 必须是函数（如 p => p，或 p => 1 - (1 - p) ** 3）');
   if (dur <= 0) return t >= start ? 1 : 0;
   return ease(sat((t - start) / dur));
 }
@@ -180,7 +179,7 @@ export function beatGrid(bpm, offset = 0, beatsPerBar = 4) {
 
 // ---------------------------------------------------------------------------
 // 镜头组合子：把"第几秒归哪个镜头、镜头内走到哪"从手写 if 里拿出来（Remotion Sequence/Series/Loop/Freeze 的纯函数版）。
-// 只管时间，不管怎么画、怎么转场：转场 kind、缓动、离屏合成在 film-motion 的 timeline()/createStage()。
+// 只管时间，不管怎么画、怎么转场：转场怎么画见 film-motion。
 // 全部在加载时建一次，seek 里只查表。
 // ---------------------------------------------------------------------------
 

@@ -1,14 +1,15 @@
-// events.js（film-core）/ feel.js、closed.js（film-physics）的 Node 数值断言。运行：node tests/fixtures/_test-events/tests/unit.mjs
+// events.js（film-core）/ feel.js、closed.js（夹具片内 runtime/）的 Node 数值断言。运行：node tests/fixtures/_test-events/tests/unit.mjs
 // 运行时之间的相对 import（feel.js → ./events.js → ./rand.js）用 film-core 的 registerRuntimeResolver 按挂载表语义解析。
 // 参照一律是**独立实现**：RK4 / 定步模拟 / 整数节拍的冷却计时器 / 暴力枚举约束，不调被测函数；"改动前"的公式原样抄在本文件里做逐位/数值对照。
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const { registerRuntimeResolver } = await import('file://' + join(ROOT, 'skills/film-core/lib/runtime-node.mjs'));
+const { registerRuntimeResolver, importRuntime } = await import('file://' + join(ROOT, 'skills/film-core/lib/runtime-node.mjs'));
 registerRuntimeResolver();
+const FIX = join(ROOT, 'tests/fixtures/_test-events');   // feel.js / closed.js 不在套件里了：夹具片内 runtime/ 自带一份（场景内容，不是被测的套件代码）
 const E = await import('file://' + join(ROOT, 'skills/film-core/assets/runtime/events.js'));
-const F = await import('file://' + join(ROOT, 'skills/film-physics/assets/runtime/feel.js'));
-const C = await import('file://' + join(ROOT, 'skills/film-physics/assets/runtime/closed.js'));
+const F = await importRuntime('feel.js', { film: FIX });
+const C = await importRuntime('closed.js', { film: FIX });
 const { hash01 } = await import('file://' + join(ROOT, 'skills/film-core/assets/runtime/rand.js'));
 
 let pass = 0, failN = 0;

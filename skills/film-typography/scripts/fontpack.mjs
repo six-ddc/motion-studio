@@ -9,7 +9,7 @@
 //                               单文件字体。若有 --text 且找得到 .venv/bin/pyftsubset（从 cwd 和仓库根往上找，
 //                               或 $VIRTUAL_ENV），用它子集化为 woff2（可变轴保留）；找不到时原样拷贝并在 stderr 提示怎么装
 // 文字来源：--text "…" 或 --text-file <path>（可多次给，合并去重）。
-// 输出：默认追加进 assets/fonts/fonts.css。--css-name <文件名> 换一个 css（look.mjs 用 look-fonts.css），
+// 输出：默认追加进 assets/fonts/fonts.css。--css-name <文件名> 换一个 css，
 //       --fresh 从空 css 开始写而不是追加（重跑同一组字体时不会叠出重复的 @font-face）。
 //
 // 用法:

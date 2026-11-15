@@ -10,14 +10,12 @@
   4. 音画矛盾：claims 里写"这句旁白在断言机制处于什么状态"，脚本在旁白实测区间上
      逐毫秒求曲线值验证。（唐片"纸上只剩一点余墨"时墨量已经是 0，就是这条要抓的）
      source 为 scene / pixels / anchor 的曲线只验意图与规格，画面实测交给 film-critique check.mjs（--plan / --verdict）。
-  5. 发散留痕（film.json checks 声明了 divergence 才查）：讲法 / 视觉方向 / 近作对照写没写。
-     只声明了 divergence、没声明 shotlist 的片子只查这一项（0–4 不跑，也不要求 narration.json）。
   另有提示（不判失败）：没有 keyframes、正文疑似手写秒数、镜头功能（role）占比。
 
 用法：
   python3 check_shotlist.py --film <slug> [--films-dir <dir>] [--write] [--floor 1.0]
   找片：--film 给 slug 或片子目录；films/ 按 --films-dir > $FILMS_DIR > 从 cwd 往上找（film-core lib/film.py）
-  （--plan / --verdict / --divergence 是给 check.mjs、siblings.mjs 调的机器接口，输出 JSON）
+  （--plan / --verdict 是给 check.mjs 调的机器接口，输出 JSON）
 
 只用标准库。exit 0 = 通过；1 = 对账失败；2 = 输入缺失或格式错。
 shotlist.md 里第一个 ```json 代码块是机器可读部分，格式见 references/templates.md。
@@ -286,223 +284,6 @@ def fmt(x):
     return f"{x:7.3f}"
 
 
-# ---------- 发散留痕：讲法（mechanism.md）/ 视觉方向 + 近作对照（style_guide.md） ----------
-# 方法见 references/divergence.md。这里只查"这一步留下了实质的痕迹"，不评判选得好不好。
-# 宽容格式：候选可以是 ### 标题、**粗体行**、"- **…**" 列表项；编号 0/A/B/一/二 都认；节名有几种叫法。
-# 严格实质：≥2 个候选、有一个标了选定、每个落选的写了输在哪；或者一条带理由的跳过声明 + 一行选定。
-# 样板 films/weiqi-intro/docs/style_guide.md（"视觉概念：三个方向，选了一个"）必须一字不改就通过。
-DIV_COMMENT = re.compile(r"<!--.*?-->", re.S)
-DIV_HEAD = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-DIV_BOLD = re.compile(r"^\s*(?:[-*+]\s+)?\*\*(.+?)\*\*")
-DIV_ID = re.compile(r"^(?:候选|概念|方向|讲法|结构|look)?\s*([0-9]|[A-Z]|[一二三四五六七八])(?=\s*[.、·:：）)]|\s|$)", re.I)
-DIR_SEC = re.compile(r"视觉方向|视觉概念|长相|\blook\b", re.I)
-STRUCT_SEC = re.compile(r"讲法|脚本结构|叙事结构")
-NEAR_RE = re.compile(r"近作|拉开|前[一二两三几]支|其他片子|别的片子|siblings", re.I)
-WON = re.compile(r"选定|选中|采用")
-LOST = re.compile(r"落选|淘汰|死于|否决|吸收|放弃")
-REASON = re.compile(r"(输在[哪里]?|代价|理由|因为|死于[^\s：:]*|演不出|读不出|看不出|不如|淘汰原因)\s*[：:—\-]*\s*(.*)")
-SKIP = re.compile(r"跳过")
-MEANINGFUL = re.compile(r"[\w一-鿿]")
-
-
-def _meaningful(s, n):
-    """一段文字里至少有 n 个字/字母/数字（标点、星号、空白不算）——判"写了东西"而不是"留了个标签"。"""
-    return len(MEANINGFUL.findall(s or "")) >= n
-
-
-def _div_lines(text):
-    return DIV_COMMENT.sub("", text or "").splitlines()
-
-
-def _marker(line):
-    """标题行或粗体行的文字（候选、节名都从这里认）；普通正文行返回 None。"""
-    h = DIV_HEAD.match(line)
-    if h:
-        return len(h.group(1)), h.group(2)
-    b = DIV_BOLD.match(line)
-    if b:
-        return 99, b.group(1)          # 粗体行不是层级，不截断所在的节
-    return None
-
-
-def _section(lines, pat):
-    """第一个名字匹配 pat 的 # 标题节：返回 (标题文字, 节内各行)；没有返回 (None, [])。"""
-    for i, line in enumerate(lines):
-        h = DIV_HEAD.match(line)
-        if h and pat.search(h.group(2)):
-            lvl, body = len(h.group(1)), []
-            for nxt in lines[i + 1:]:
-                h2 = DIV_HEAD.match(nxt)
-                if h2 and len(h2.group(1)) <= lvl:
-                    break
-                body.append(nxt)
-            return h.group(2), body
-    return None, []
-
-
-def _status(s):
-    """一行里先出现的是"选定"还是"落选/死于/吸收"——"落选（与选定方向相比…）"算落选。"""
-    w, l = WON.search(s), LOST.search(s)
-    if w and (not l or w.start() < l.start()):
-        return "won"
-    if l:
-        return "lost"
-    return None
-
-
-def _candidates(body):
-    """节内的候选：带编号的标题/粗体行开一个候选，到下一个候选或节尾为止。"""
-    cands, cur = [], None
-    for line in body:
-        mk = _marker(line)
-        m = DIV_ID.match(mk[1].strip()) if mk else None
-        if m:
-            cur = {"id": m.group(1).upper(), "title": mk[1].strip(), "lines": []}
-            cands.append(cur)
-        elif cur is not None:
-            cur["lines"].append(line)
-    for c in cands:
-        st = _status(c["title"])
-        if st is None:
-            for line in c["lines"]:
-                if re.match(r"\s*(?:[-*+]\s+)?(?:\*\*)?结果", line):
-                    st = _status(line)
-                    if st:
-                        break
-        c["status"] = st
-        c["reasoned"] = any(_meaningful(m.group(2), 4) for line in c["lines"]
-                            for m in [REASON.search(line)] if m)
-        c["default"] = c["id"] == "0" or "默认" in c["title"]
-    return cands
-
-
-def _skip_and_pick(body):
-    """跳过声明（"跳过…：<理由>"）和一行"选定：…"。返回 (跳过理由或 None, 选定那行或 None)。"""
-    skip = pick = None
-    for line in body:
-        s = line.strip()
-        m = SKIP.search(s)
-        if m and skip is None and _meaningful(s[m.end():], 8):
-            skip = s
-        p = WON.search(s)
-        if p and pick is None and not SKIP.search(s) and _meaningful(s[p.end():], 4):
-            pick = s
-    return skip, pick
-
-
-def _judge(cands, body, what, need_default):
-    """一节候选/跳过的判定 → (失败列表, 摘要, 选定的那一行)。"""
-    errs = []
-    skip, pick = _skip_and_pick(body)
-    won = [c for c in cands if c["status"] == "won"]
-    if len(cands) >= 2 or (cands and not skip):
-        if len(cands) < 2:
-            errs.append(f"{what}只有 {len(cands)} 个候选（发散要 ≥2 个；不发散就写一条带理由的跳过声明）")
-        if not won:
-            errs.append(f"{what}的 {len(cands)} 个候选里没有一个标了「选定」")
-        for c in cands:
-            if c["status"] is None:
-                errs.append(f"{what}候选 {c['id']}「{c['title'][:24]}」没写结果（选定 / 落选 / 死于… / 吸收）")
-            elif c["status"] == "lost" and not c["reasoned"]:
-                errs.append(f"{what}候选 {c['id']}「{c['title'][:24]}」落选了但没写输在哪")
-        if need_default and not any(c["default"] for c in cands):
-            errs.append(f"{what}没有候选 0（本题的默认{'讲法' if '讲法' in what else '长相'}）——它要写成正式候选、由判据杀死，而不是被回避")
-        summ = f"{len(cands)} 个候选，选定 {'/'.join(c['id'] for c in won) or '—'}"
-        chosen = won[0] if won else None
-    elif skip:
-        if not pick:
-            errs.append(f"{what}声明了跳过，但没写「选定：…」——跳过的是发散，不是选择")
-        summ, chosen = f"跳过：{skip[:40]}", ({"title": pick, "lines": []} if pick else None)
-    else:
-        errs.append(f"{what}既没有候选也没有跳过声明")
-        summ, chosen = "—", None
-    return errs, summ, chosen
-
-
-def divergence(film):
-    """返回 {"errors": [...], "warns": [...], "rows": [...], "direction": 选定的视觉方向那一行或 None}。
-    siblings.mjs 用 --divergence 取 direction，和门用同一份解析——两处各写一份迟早给出相反结论。"""
-    out = {"errors": [], "warns": [], "rows": [], "direction": None, "direction_detail": None}
-    docs = film / "docs"
-    sib = sorted(d.name for d in film.parent.iterdir()
-                 if d.is_dir() and d.name != film.name and not d.name.startswith((".", "_")))
-
-    # 视觉方向（style_guide.md 顶部）+ 近作对照
-    sg = docs / "style_guide.md"
-    if not sg.exists():
-        out["errors"].append("docs/style_guide.md 不存在 —— 视觉方向要在分镜之前定（film-story references/divergence.md）")
-    else:
-        lines = _div_lines(sg.read_text(encoding="utf-8"))
-        name, body = _section(lines, DIR_SEC)
-        if name is None:
-            out["errors"].append("style_guide.md 没有视觉方向一节（标题含「视觉方向」「视觉概念」或「长相」）："
-                                 "≥2 个候选并标明选定，或一条带理由的跳过声明")
-            out["rows"].append("  BAD 视觉方向  —")
-        else:
-            errs, summ, chosen = _judge(_candidates(body), body, "视觉方向", need_default=False)
-            out["errors"] += errs
-            if chosen:
-                clean = lambda x: re.sub(r"[*`]", "", x).strip()
-                out["direction"] = clean(chosen["title"])
-                out["direction_detail"] = next((clean(x)[:80] for x in chosen["lines"] if _meaningful(x, 6)), None)
-            out["rows"].append(f"  {'OK ' if not errs else 'BAD'} 视觉方向  「{name}」 {summ}")
-        # 近作对照：一个名字含"近作/拉开/前两支…"的标题、粗体行或以它开头的行，到下一个标题为止
-        block, label = None, None
-        for i, line in enumerate(lines):
-            mk = _marker(line)
-            hit = (mk and NEAR_RE.search(mk[1])) or NEAR_RE.match(re.sub(r"^\s*(?:[-*+]\s+)?", "", line))
-            if hit:
-                label, block = (mk[1] if mk else line.strip()), [line]
-                for nxt in lines[i + 1:]:
-                    if DIV_HEAD.match(nxt):
-                        break
-                    block.append(nxt)
-                break
-        if block is None:
-            out["errors"].append("style_guide.md 没有近作对照（标题或行首含「近作」「拉开」「前两支」之类）："
-                                 "跑 siblings.mjs 看过其他片子，写下拉开了什么、或有意重复了什么")
-            out["rows"].append("  BAD 近作对照  —")
-        else:
-            text = "\n".join(block)
-            named = [s for s in sib if s in text]
-            skip, _ = _skip_and_pick(block)
-            alone = re.search(r"没有(其他|别的)片子|第一支片子", text)
-            ok = bool(named or skip or alone)
-            if not ok:
-                out["errors"].append(f"近作对照「{label[:20]}」没有点名任何一支其他片子（现有：{' / '.join(sib) or '无'}）"
-                                     f"——要么点名并写拉开/重复了什么，要么写「仓库里没有其他片子」，要么写跳过理由")
-            how = f"点名 {', '.join(named)}" if named else ("跳过：" + skip[:40] if skip else ("无其他片子" if alone else "未点名"))
-            out["rows"].append(f"  {'OK ' if ok else 'BAD'} 近作对照  「{label[:20]}」 {how}")
-
-    # 讲法（mechanism.md 的「讲法」一节）
-    mech = docs / "mechanism.md"
-    lines = _div_lines(mech.read_text(encoding="utf-8")) if mech.exists() else []
-    name, body = _section(lines, STRUCT_SEC)
-    if name is None:
-        # 整节没有只警告；这一节由 assets/mechanism.md 模板带进片子，写了却留空不填 = 下面判失败。
-        out["warns"].append("mechanism.md 没有「讲法」一节（脚本结构的发散：候选 0 = 本题默认讲法 + 2–3 个不同类的讲法）。"
-                            "见 references/divergence.md")
-        out["rows"].append("  --  讲法      没有这一节（只警告）")
-    else:
-        errs, summ, _ = _judge(_candidates(body), body, "讲法", need_default=False)
-        out["errors"] += errs
-        out["rows"].append(f"  {'OK ' if not errs else 'BAD'} 讲法      「{name}」 {summ}")
-    return out
-
-
-def div_only(film):
-    """film.json 只声明了 divergence（没声明 shotlist）：只查发散留痕，不要求 narration.json / shotlist。"""
-    div = divergence(film)
-    print(f"影片 {film}  只声明了 divergence：只查发散留痕（shotlist 对账没声明，不跑）")
-    print("\n发散留痕（讲法 / 视觉方向 / 近作对照，见 references/divergence.md）:\n" + "\n".join(div["rows"]))
-    for w in div["warns"]:
-        print(f"[警告] {w}", file=sys.stderr)
-    for e in div["errors"]:
-        print(f"[失败] {e}", file=sys.stderr)
-    print(f"\n结果：{len(div['errors'])} 个失败，{len(div['warns'])} 个警告", file=sys.stderr)
-    sys.exit(1 if div["errors"] else 0)
-
-
 def main():
     ap = core.parser(__doc__)
     ap.add_argument("--plan", action="store_true",
@@ -512,17 +293,9 @@ def main():
     ap.add_argument("--write", action="store_true", help="把解析后的时间表写回 shotlist.md 的 timeline 标记之间")
     ap.add_argument("--floor", type=float, default=None,
                     help="weight>=2 的叙事区间最少拿到的秒数。不给就读 shotlist json 顶层的 \"floor\"（本片声明），再没有才用 1.0")
-    ap.add_argument("--divergence", action="store_true",
-                    help="（给 siblings.mjs 用）只查发散留痕，输出 JSON（不需要 narration.json / shotlist）")
     args = ap.parse_args()
 
     film = core.resolve_film(args.film, args.films_dir)
-    if args.divergence:
-        print(json.dumps(divergence(film), ensure_ascii=False))
-        sys.exit(0)
-    want_div = bool(core.check_param(film, "divergence"))
-    if want_div and not core.check_param(film, "shotlist") and not (args.plan or args.verdict or args.write):
-        div_only(film)
     nar_p, sl_p = film / "narration.json", film / "docs" / "shotlist.md"
     if not nar_p.exists():
         die(f"{nar_p} 不存在 —— 音频先行：先跑 film-narration 出实测时间轴，再排分镜")
@@ -810,16 +583,6 @@ def main():
                 re.search(r"(?<![\w.])\d+\.\d+\s*(s|秒)(?!\w)", line):
             warns.append(f"shotlist.md 正文第 {i} 行疑似手写秒数：{line.strip()[:60]}（时刻请只放 json 锚点里）")
 
-    # ---------- 5. 发散留痕（在 --plan / --verdict 之后：那两个接口的输出不变） ----------
-    # 这是解说片配方的流程留痕，不是技术约束（film-core references/kernel.md）：只在本片 film.json checks 声明了
-    # divergence 时才查。--divergence（siblings.mjs 用的解析接口）不受这个开关影响：它只报"写了什么"，不判对错。
-    if want_div:
-        div = divergence(film)
-        errors.extend(div["errors"])
-        warns.extend(div["warns"])
-    else:
-        div = {"rows": ["  –   本片 film.json checks 没有声明 divergence：不查讲法 / 视觉方向 / 近作对照的留痕（要查就加上 \"divergence\"）"]}
-
     # ---------- 输出 ----------
     print(f"影片 {film}  旁白实测 {tl.vo_end:.3f}s  偏移 {tl.off:.3f}s  成片 {t_end:.3f}s")
     print("\n".join(rows))
@@ -831,7 +594,6 @@ def main():
         print("\n旁白断言（在实测区间上逐毫秒求值）:\n" + "\n".join(claim_rows))
     if kf_rows:
         print("\n静帧闸门关键帧:\n" + "\n".join(kf_rows))
-    print("\n发散留痕（讲法 / 视觉方向 / 近作对照，见 references/divergence.md）:\n" + "\n".join(div["rows"]))
     if deferred:
         names = sorted({c["curve"] for c in deferred})
         anc = any(curves.source(c["curve"]) == "anchor" for c in deferred)  # 没用 anchor 的片子输出与原来逐字相同

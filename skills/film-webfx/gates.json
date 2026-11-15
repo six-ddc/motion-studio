@@ -3,13 +3,12 @@
   "gates": [
     {
       "id": "seam4",
-      "about": "着色器层 / 三维后期把上一层画布当图源再画：门 4 顺序 vs 并行逐帧比。与 film-motion 共享这道门（同 id、同命令，注册表合并 uses，一支片子只跑一次）；deliver 已永远开门 4，所以只给 accept --deep",
+      "about": "着色器层 / 三维舞台把上一层画布当图源再画：门 4 顺序 vs 并行逐帧比。deliver 已永远开门 4，所以只给 accept --deep",
       "when": {
         "uses": [
           "webfx.js",
           "fxchain.js",
-          "stage3d.js",
-          "post3d.js"
+          "stage3d.js"
         ]
       },
       "needs": [

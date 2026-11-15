@@ -2,7 +2,7 @@
 
 目录：1 方法与取舍 · 2 事件表与通道 · 3 响应核 · 4 加载期规则与有记忆的量 · 5 给声音的桥 · 6 帧率
 
-可选能力，不是内核契约。镜头手感、后坐、屏震、顿帧在 film-physics `references/events.md`（`feel.js`、`closed.js`）。
+可选能力，不是内核契约。镜头手感、后坐、屏震、顿帧的原理在 film-physics `references/events.md`。
 
 ## 1. 方法与取舍
 
@@ -38,10 +38,10 @@ support 为 Infinity（如 ζ=0 的 `springKick`）时每次求值扫"之前全�
 
 | 工厂 | 公式与参数（秒/1秒） |
 |---|---|
-| `flashDecay(dur)` / `sqrtFade(dur)` | `1−τ/dur` / `√(1−τ/dur)`；film-physics `closed.js flash()` 委托前者 |
+| `flashDecay(dur)` / `sqrtFade(dur)` | `1−τ/dur` / `√(1−τ/dur)` |
 | `expDecay(rate,{eps?})` | `exp(−rate·τ)`，support=`ln(1/eps)/rate`（eps 是截断阈值，技术量） |
 | `gaussPulse({at,width})` | 截在 ±4 width；at 可为负（峰值在事件前），但 `at+4·width ≤ 0` 报错（整段都在事件前） |
-| `oscillate(t,x0,v0,target,k,c)` | 阻尼振子 `{x,v}` 闭式，全套件唯一一份（closed.js `spring` 调它） |
+| `oscillate(t,x0,v0,target,k,c)` | 阻尼振子 `{x,v}` 闭式 |
 | `springKick(p,{eps?})` | 单位速度冲量响应 = `oscillate(τ,0,1,0,…).x`；`p` 为 `{k,c}`、`{stiffness,damping}`（motion.js 的名字，同义）或 `{omega,zeta}`；`.velocity(τ)` |
 | `riseHoldFall({rise,hold,fall})` | 目标保持后指数回落，输出一阶跟随；多发"保持被重置"用 film-physics `recoil` |
 | `holdFrames(k,{minFrames,fps?})` | 短核拉长到 `minFrames/fps`（峰值不变，手感变软）；fps 缺省 `FILM.fps` |

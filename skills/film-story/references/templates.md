@@ -20,7 +20,7 @@
 
 ## docs/mechanism.md
 
-记录本片的视觉主轴（连续变量映射，或冲突/反差/证据弧线）、前 3 秒钩子与留存思路，以及可选的方案比选。选定机制的状态变量由作者写入 `shotlist.md` 的 `curves`；台词定稿直接维护在 `script.json`（唯一真相源，不在 mechanism.md 重复维护第二份全文）。只有 `film.json` 的 `checks` 声明了 `divergence` 时，`check_shotlist.py` 才会检查本文件里的「讲法」比选留痕（`references/divergence.md` §1、§5）。
+记录本片的视觉主轴（连续变量映射，或冲突/反差/证据弧线）、前 3 秒钩子与留存思路，以及可选的方案比选。选定机制的状态变量由作者写入 `shotlist.md` 的 `curves`；台词定稿直接维护在 `script.json`（唯一真相源，不在 mechanism.md 重复维护第二份全文）。「讲法」怎么比选见 `references/divergence.md` §1。
 
 ## docs/shotlist.md
 
@@ -84,4 +84,4 @@
 
 ## docs/style_guide.md
 
-模板各节的注释就是填写说明。机器会读取的部分：**视觉方向**和**近作对照**（`siblings.mjs` 读取选定方向；声明了 `checks.divergence` 时由 `check_shotlist.py` 检查，见 `references/divergence.md` §2–3、§5）；**自检打分项**（film-critique 会读取本片声明的标准）。叙事区间下限若不同于默认 `1.0s`，同步写入 `shotlist.md` json 顶层的 `"floor"` 字段以便验收自动生效。
+模板各节的注释就是填写说明。机器会读取的部分：**自检打分项**（film-critique 会读取本片声明的标准）。叙事区间下限若不同于默认 `1.0s`，同步写入 `shotlist.md` json 顶层的 `"floor"` 字段以便验收自动生效。

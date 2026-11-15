@@ -14,7 +14,7 @@
 ```json
 {
   "schema": 1,
-  "brand":  { "colors": { "ink": "#3A1604", "accent": "#F06A2C" }, "fonts": { "sans": "Film Sans" }, "look": "look.json" },
+  "brand":  { "colors": { "ink": "#3A1604", "accent": "#F06A2C" }, "fonts": { "sans": "Film Sans" } },
   "assets": { "logo": "assets/logo.svg", "music": "assets/music.wav" },
   "text": {
     "tagline":    { "text": "拼一拼，说一说，游戏就成了。", "locked": true, "maxChars": 14 },
@@ -37,7 +37,7 @@
 
 | 字段 | 含义 |
 |---|---|
-| `brand` | 品牌 token。`colors` / `fonts` 是名字到值的映射；可以用 `look` 指向本片的 look.json（只用于衔接，内核不读）。审美判断仍以本片 style_guide 为准 |
+| `brand` | 品牌 token。`colors` / `fonts` 是名字到值的映射。审美判断仍以本片 style_guide 为准 |
 | `assets` | 素材登记表，把 id 映射到相对片子目录的路径。预检会检查文件是否存在；场景用 `C.asset(id)` 取路径（换图的变体只需改这里） |
 | `text` | 槽位表，把槽位 id 映射到 `"文本"` 或一个对象。对象里 `text` 必填，其余可选：`maxChars`；`font` 加 `box {w, lines}`（预检用它量宽度）；`lang`（代码槽位的语言，如 lua/js，预检会做语法检查）；`emph`（片子自定义的强调词）；`locked`（与旁白或时间数据来源绑定，变体不允许修改）；`note`；`description` / `kind`（语义声明，见下文）。其余字段原样传给场景 |
 | `claims` | 画面或旁白里的宣传说法，包含 `text` 和 `source`（docs/facts.md 事实总表里的 id；**宣传数据必须有来源**）。可以加 `where` |

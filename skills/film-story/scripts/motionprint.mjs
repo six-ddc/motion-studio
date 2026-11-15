@@ -4,7 +4,6 @@
 //   node <film-story>/scripts/motionprint.mjs <video.mp4> [--out <dir>] [--fps 30] [--width 320] [--json]
 //   node <film-story>/scripts/motionprint.mjs --film <slug> [--format 9x16] [--fps <film.json fps>] [--from s] [--to s] [--out <dir>] [--json]
 //   node <film-story>/scripts/motionprint.mjs --film <slug> --probe [--keys a,b] [--jump x | --ratio 3] [--table]   # 读 window.probe(t) 信号，标逐帧跳变
-//   node <film-story>/scripts/motionprint.mjs --curves [--json]      # 缓动表 EASE（film-motion 的 choreo.js）/ 弹簧预设（film-core 的 motion.js）的 t80，运行时实算
 //
 // 只测量，不判定：没有阈值、没有 FAIL，退出码只表示"量没量成"。数字拿去和参考片对照，取舍由 style_guide 定。
 //
@@ -27,17 +26,15 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { cli, FILM_OPTS } from '../../film-core/lib/cli.mjs';
-import { capability } from '../../film-core/lib/env.mjs';
-import { importRuntime } from '../../film-core/lib/runtime-node.mjs';
 
 const argv = process.argv.slice(2);
 cli({
-  usage: 'node motionprint.mjs <video.mp4> [选项]  |  --film <slug> [选项]  |  --curves [--json]',
+  usage: 'node motionprint.mjs <video.mp4> [选项]  |  --film <slug> [选项]',
   about: '运动的"速度指纹"：把视频或场景锚点轨迹的运动手感量成数字。只测量不判定，退出码只表示量没量成。',
   positional: '<video.mp4>', positionalHelp: '视频模式：要量的视频',
   opts: {
     ...FILM_OPTS, entry: ['<x.html>', '场景模式：临时换入口'],
-    curves: '打印缓动表 / 弹簧预设的 t80', format: ['<9x16|1x1|16x9>', '场景模式画幅'],
+    format: ['<9x16|1x1|16x9>', '场景模式画幅'],
     fps: ['<N>', '采样帧率（视频默认 30；场景默认 film.json fps）'], width: ['<px>', '视频模式缩放宽度（默认 320）'],
     from: ['<s>', '场景模式起点'], to: ['<s>', '场景模式终点'], vmin: ['<v>', '运动段的速度下限（px/帧）'],
     out: ['<dir>', '另把 motionprint.json / energy.txt 写到这个目录'], json: '输出 JSON',
@@ -389,41 +386,6 @@ async function probeMode(S, slug, format) {
   ].filter((x) => x != null).join('\n'));
 }
 
-// ───────────────────────── 缓动 / 弹簧的 t80（运行时实算） ─────────────────────────
-async function curvesMode() {
-  capability('film-motion');                                            // 缓动表在 film-motion：没装 → 「缺能力 film-motion」exit 1
-  const { EASE, easeOf, resolveEase } = await importRuntime('choreo.js');
-  const { SPRING, settle, springInfo, spring } = await importRuntime('motion.js');
-  const N = 100000;
-  const first = (f, y) => { for (let i = 0; i <= N; i++) if (f(i / N) >= y) return i / N; return null; };
-  const rows = [];
-  for (const [fam, v] of Object.entries(EASE)) {
-    if (typeof v === 'function') rows.push({ name: fam, t80: first(v, 0.8), t50: first(v, 0.5) });
-    else for (const dir of ['in', 'out', 'inOut', 'outIn']) rows.push({ name: `${fam}.${dir}`, t80: first(v[dir], 0.8), t50: first(v[dir], 0.5) });
-  }
-  const extra = {
-    "easeOf.anticipate({pull:.12, at:.3, release:'expo.out'})": easeOf.anticipate({ pull: 0.12, at: 0.3, release: 'expo.out' }),
-    'easeOf.cubicBezier(.25,.1,.25,1)': easeOf.cubicBezier(0.25, 0.1, 0.25, 1),
-    'easeOf.cubicBezier(.68,-.55,.27,1.55)': easeOf.cubicBezier(0.68, -0.55, 0.27, 1.55),
-    'easeOf.spring(spring({duration:.5, overshoot:.08}))': easeOf.spring(spring({ duration: 0.5, overshoot: 0.08 })),
-    'easeOf.steps(4)': easeOf.steps(4),
-  };
-  for (const [k, f] of Object.entries(extra)) rows.push({ name: k, t80: first(resolveEase(f), 0.8), t50: first(f, 0.5) });
-  const springs = Object.entries(SPRING).map(([k, sp]) => {
-    const { duration } = springInfo(sp);
-    const M = 200000; let t80s = null;
-    for (let i = 0; i <= M; i++) { const t = (duration * i) / M; if (settle(t, sp.stiffness, sp.damping) >= 0.8) { t80s = t; break; } }
-    return { name: k, stiffness: sp.stiffness, damping: sp.damping, duration_s: r3(duration), t80_s: r3(t80s), t80: r3(t80s / duration) };
-  });
-  const out = { eases: rows.map((r) => ({ ...r, t80: r.t80 == null ? null : r3(r.t80), t50: r.t50 == null ? null : r3(r.t50) })), springs,
-    note: 't80 = 第一次达到 80% 行程的 p（缓动）/ 秒数与占停止时长的比例（弹簧，停止时长 ε=0.5%）' };
-  emit(out, null, () => [
-    '缓动 t80（第一次到 0.8 的 p）',
-    ...out.eases.map((r) => `  ${r.name.padEnd(56)} ${String(r.t80).padStart(6)}`),
-    '弹簧预设 t80（秒 / 占停止时长）',
-    ...springs.map((s) => `  ${s.name.padEnd(8)} ${s.stiffness}/${s.damping}  停止 ${s.duration_s}s  t80 ${s.t80_s}s = ${s.t80}`),
-  ].join('\n'));
-}
 
 function emit(obj, map, text) {
   const out = flag('out');
@@ -438,8 +400,7 @@ function emit(obj, map, text) {
 
 const pos = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--json', '--curves', '--probe', '--table'].includes(argv[i - 1])));
 try {
-  if (has('curves')) await curvesMode();
-  else if (flag('film')) await filmMode(flag('film'));
+  if (flag('film')) await filmMode(flag('film'));
   else if (pos[0]) await videoMode(pos[0]);
-  else die('用法：motionprint.mjs <video.mp4> | --film <slug> | --curves   （见文件头注释）');
+  else die('用法：motionprint.mjs <video.mp4> | --film <slug>   （见文件头注释）');
 } catch (e) { die(e?.message ?? String(e)); }
