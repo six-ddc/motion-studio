@@ -17,7 +17,7 @@
 //   node fontpack.mjs --film <slug> --css node_modules/@fontsource-variable/noto-sans-sc/wght.css --text-file films/x/script.json
 //   node fontpack.mjs --film <slug> --file path/Font.ttf --family "My Font" --weight "100 900" --text "…"
 //
-// 字体从哪找、授权是否可商用：参见 film-assets skill。这里只管打包与加载。
+// 字体从哪找：参见 film-assets skill。这里只管打包与加载。
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve, basename, extname } from 'node:path';
 import { execFileSync } from 'node:child_process';

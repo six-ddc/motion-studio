@@ -7,7 +7,7 @@ description: 一支片子在写渲染代码之前的"文戏与导演设计"—�
 
 本 skill 负责片子进入画面编码之前的**立意、调研、脚本、传播设计与分镜编排**。它提供可按题型自由组合的方法论工具箱，**不规定固定的先后八股或单一审美套路**——硬套死流程只会把不同题材压成同一种腔调。
 
-本 skill 不负责：画面渲染实现（film-motion / film-typography / film-physics / film-webfx）；素材授权与下载（film-assets）；语音合成与时间戳生成（film-narration）；成片质检（film-critique）。
+本 skill 不负责：画面渲染实现（film-motion / film-typography / film-physics / film-webfx）；素材来源与下载（film-assets）；语音合成与时间戳生成（film-narration）；成片质检（film-critique）。
 
 ## 三条技术硬约束（其余皆是方法参考，按需取舍）
 

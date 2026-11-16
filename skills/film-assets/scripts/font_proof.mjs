@@ -3,7 +3,7 @@
 //
 //   node <film-assets>/scripts/font_proof.mjs --film <slug> --font assets/fonts/x.subset.woff2 \
 //        [--text "要验的句子"] [--size 96]
-//   不给 --text 时读同名 .subset.json 台账里的 chars。
+//   不给 --text 时读同名 .subset.json 里记的 chars。
 //   分片包：--font assets/fonts/<name>.subset.css（subset_font.py --pack 的产出，或任何本地 @font-face CSS），
 //   每片按自己的 unicode-range 注册成同一个私有族，和浏览器里真实的分片选择一致。[--weight 600]
 //
@@ -24,7 +24,7 @@ const A = parseArgs({
   opts: {
     ...FILM_OPTS,
     font: ['<path>', '字体文件或分片包 CSS（相对片子目录）'],
-    text: ['<文字>', '要验的文字；不给时读同名 .json 台账的 chars'],
+    text: ['<文字>', '要验的文字；不给时读同名 .subset.json 里记的 chars'],
     size: ['<px>', '字号（默认 96）'],
     family: ['<族名>', '分片 CSS 里有多个族时指定'],
     weight: ['<N>', '字重'],
@@ -44,7 +44,7 @@ if (!existsSync(fontPath)) die(`字体不存在：${fontPath}`);
 let text = A.flag('text');
 if (!text) {
   const manifest = fontPath.replace(/\.(woff2|ttf|otf|css)$/, '.json');
-  if (!existsSync(manifest)) die('没给 --text，也找不到同名 .json 台账');
+  if (!existsSync(manifest)) die('没给 --text，也找不到同名 .subset.json');
   text = JSON.parse(readFileSync(manifest, 'utf8')).chars.replace(/[\x20-\x7e]/g, '');
 }
 const size = Number(A.flag('size', 96));

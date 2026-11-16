@@ -126,7 +126,7 @@ node <film-core>/scripts/font_source.mjs --film <slug> [--step 0.25] [--format 1
 
 **盲区**：只检查采样时刻画过的字（`--step` 越小覆盖越全，默认 0.25 s，上限 800 次 seek）；Worker 里的 OffscreenCanvas、
 WebGL 自己栅格化的字都检查不到；`new FontFace(name, ArrayBuffer)` 的来源无法看到，只能根据"页面请求过的字体文件都在 `assets/` 里"推断，并发出警告。
-它不检查授权（由 film-assets 的 `audit.mjs` 和素材台账负责），也不检查"字够不够"（由 film-assets 的 `subset_font.py --check` 负责）。
+它不检查代码里 `local()`、绝对路径、外链素材的全貌（由 film-assets 的 `audit.mjs` 负责），也不检查"字够不够"（由 film-assets 的 `subset_font.py --check` 负责）。
 
 ## 5. 症状表：先看现象，再找门
 

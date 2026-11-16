@@ -53,7 +53,7 @@ node ~/.claude/skills/film-core/scripts/deliver.mjs --film my-film              
 | film-physics | 粒子、重力、碰撞、布料、群集，全部可以 seek |
 | film-typography | 文字绘制（含字幕）、可变字体轴、中日韩排版、小字号可读性 |
 | film-narration | 旁白、字级对齐、节拍、音效、合流，只输出时间数据 |
-| film-assets | 字体、图标、图片、音频的来源与授权，子集化，打包 |
+| film-assets | 字体、图标、图片、音频的来源，子集化，打包 |
 | film-story | 调研与事实核查、视觉机制、发散、分镜、解说片配方 |
 | film-critique | 静帧闸门、对照图、按本片法律打分、质量检查 |
 

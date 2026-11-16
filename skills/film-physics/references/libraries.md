@@ -48,7 +48,7 @@ const w2 = RAPIER.World.restoreSnapshot(snap);    // handle 不变，用 getRigi
 ```
 - 唯一能做真检查点的现成引擎：`clone` 用 takeSnapshot 实现，恢复后续跑与连续跑逐位一致。旧 world 必须 `free()`，否则 wasm 内存泄漏（seek 多了 OOM）。
 - 跨机器：官方对 `-compat` 包只承诺同平台一致；要跨平台一致用 `@dimforge/rapier2d-deterministic-compat`。**没测过。**
-- 库文件（含 .wasm）随片打包，来源与授权归 film-assets。运行时从 CDN 拉的代价是渲染依赖网络、版本可能漂移，确定性门复现不了。
+- 库文件（含 .wasm）随片打包，从哪下载归 film-assets。运行时从 CDN 拉的代价是渲染依赖网络、版本可能漂移，确定性门复现不了。
 
 ## cannon-es（3D）
 

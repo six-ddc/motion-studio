@@ -1,7 +1,7 @@
 // 代码合成音效：纯函数，浏览器和 Node 都能 import（不依赖 node:fs）。
 // 场景里可以 import 它做 WebAudio 预听；成片音效由 scripts/sfx.mjs 调它离线渲成 WAV。
 //
-// 合成音的代价：零授权风险、可按 t 精确摆放、可重复；但 UI 点击这类「真实物件声」
+// 合成音的取舍：可按 t 精确摆放、可重复；但 UI 点击这类「真实物件声」
 // 合成出来听着廉价。转场 whoosh、低频 thump、tick 用合成足够；需要质感时用素材
 // （cues 里写 file，见 scripts/sfx.mjs）。
 

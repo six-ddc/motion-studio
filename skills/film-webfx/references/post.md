@@ -73,7 +73,7 @@
 - **3D LUT**：WebGL2 用 `sampler3D` 硬件三线性（9.0 / 2.4 ms）；WebGL1 把 n³ 摊成宽 n²、高 n 的 2D 条带，b 方向手工在两片之间插值（7.7 / 2.1 ms）。fxchain.js 导出 `parseCube(text)`（只认 `LUT_3D_SIZE` 与 [0,1] 定义域，其余抛错）和 `cubeCanvas(cube)`（条带画布）。
 - 两条路同一 17³ LUT 实测逐通道最大差 1/255、平均 0.073/255。条带只有 8 位：暗部陡曲线会出色阶断层；3D 纹理存 16 位浮点。
 - LUT 和 LGG 都假定输入在 [0,1]；接在 HDR 后面先做色调映射，否则 > 1 的部分被截。
-- LUT 文件放片子 `assets/`，在 `window.ready` 里 fetch 完再解析；授权见 film-assets。
+- LUT 文件放片子 `assets/`，在 `window.ready` 里 fetch 完再解析；从哪找见 film-assets。
 
 ## 6. 对细线与小字的影响（夹具 360×480 格里的 1px / 2px 线）
 

@@ -24,7 +24,7 @@
 
 ## 内置浏览器（mcp__Claude_Browser__*）
 
-使用前先读 `anthropic-skills:built-in-browser` skill。适合 JS 渲染的页面、产品 UI 截图和折叠内容。`get_page_text` 读取正文，`read_page` 获取结构，`computer` 的 `screenshot` / `zoom` 用来截图。它有自己的登录态，但不是用户的 Chrome。截图存到 `films/<slug>/assets/` 或 `out/research/`，facts.md 里写路径、来源 URL 和日期；授权问题归 film-assets。
+使用前先读 `anthropic-skills:built-in-browser` skill。适合 JS 渲染的页面、产品 UI 截图和折叠内容。`get_page_text` 读取正文，`read_page` 获取结构，`computer` 的 `screenshot` / `zoom` 用来截图。它有自己的登录态，但不是用户的 Chrome。截图存到 `films/<slug>/assets/` 或 `out/research/`，facts.md 里写路径、来源 URL 和日期；素材下载与处理归 film-assets。
 
 ## browser-cli skill（用户已登录的真实 Chrome）
 

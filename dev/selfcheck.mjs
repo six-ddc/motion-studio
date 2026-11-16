@@ -193,7 +193,7 @@ for (const s of dirs) {
 //     词法禁令分不出这两种，只能逼人给每个库打补丁（three-film 就是这么来的），新库（lottie-web、pixi、p5）一个都进不来。
 //   - seek 期间真正的违约不会因此放过：每支片子的 seamcheck 探针在 seek 期间统计禁用 API 调用并判失败，
 //     门 1a/1b/2/4 在像素层比对——那才是判据。
-// vendored.json 每项要写 upstream 和 license（台账，见 film-assets），列了但文件不存在算不合格（清单会腐烂）。
+// vendored.json 每项要写 upstream 和 license（第三方代码依赖的元数据），列了但文件不存在算不合格（清单会腐烂）。
 for (const s of dirs) {
   const rt = join(SKILLS, s, 'assets', 'runtime');
   if (!existsSync(rt)) continue;

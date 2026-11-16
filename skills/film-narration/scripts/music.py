@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""代码合成配乐（原创、零授权风险、确定性）：先定曲，再把画面事件挂到它的节拍/段落上。
+"""代码合成配乐（原创、段落跟着片子走、确定性）：先定曲，再把画面事件挂到它的节拍/段落上。
 
 用法（任意 cwd）:
     python music.py --film <slug> --style chip                       # -> out/music.wav + out/music.json

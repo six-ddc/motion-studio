@@ -29,7 +29,7 @@ description: 给代码渲染的片子找素材、把素材处理成片子能自�
 
 - **产品 UI、真实界面**：用真实截图，不用"差不多"的素材图，也不凭记忆画。
 - **需要和 `seek(t)` 精确对齐的东西**（运动、参数可变的图形）：用代码画更可控。
-- **音效**：whoosh、thump、tick 这类声音用合成往往就够了，还能和事件逐帧对齐；什么时候值得找真实录音，见 `references/audio.md` 第 4 节。
+- **音效**：whoosh、thump、tick 这类声音用合成往往就够了，还能和事件逐帧对齐；什么时候值得找真实录音，见 `references/audio.md` 第 3 节。
 - **配乐**：可以用现成的曲子，也可以代码合成（film-narration）；各自的代价见 `references/audio.md` 第 2 节。
 
 ## 来源地图（按需要的素材类型查）
@@ -41,7 +41,7 @@ description: 给代码渲染的片子找素材、把素材处理成片子能自�
 - **字符覆盖范围**：GB2312（6763 字）够日常文案用；人名地名、古文、繁体需要 GB18030 或大字库，覆盖范围窄的字体会在生僻字上回退。
 - **文件大小**：中文字体全量每个字重 8-30 MB，需要子集化；西文可变字体通常小于 500 KB，不必子集化。
 
-常用的开源中文字体有思源/Noto CJK、霞鹜文楷、得意黑、站酷系列等，系统和网上的其他字体也可以用，下载下来放进片子就行。清单见 `references/fonts.md` 第 2–5 节。
+常用的开源中文字体有思源/Noto CJK、霞鹜文楷、得意黑、站酷系列等，系统和网上的其他字体也可以用，下载下来放进片子就行。清单见 `references/fonts.md` 第 2–4 节。
 
 ### 图标、图片、视频：见 `references/icons-images.md`（图标库的选择维度、素材站、视频素材的处理）
 
@@ -55,7 +55,7 @@ description: 给代码渲染的片子找素材、把素材处理成片子能自�
 
 ### 字体子集化：`scripts/subset_font.py`
 
-只保留本片用到的字（实测单个字重从 11 MB 降到 24.5 KB woff2，共 158 个字符）。分片包 `--pack`（仓库根目录已装 noto-sans-sc，是本机无需下载的中文方案）和放行缺字的 `--allow-missing`，命令与参数见 `references/fonts.md` 第 6–7 节。
+只保留本片用到的字（实测单个字重从 11 MB 降到 24.5 KB woff2，共 158 个字符）。分片包 `--pack`（仓库根目录已装 noto-sans-sc，是本机无需下载的中文方案）和放行缺字的 `--allow-missing`，命令与参数见 `references/fonts.md` 第 5–6 节。
 
 ```bash
 .venv/bin/python <fa>/scripts/subset_font.py --film <slug> \
@@ -67,7 +67,7 @@ node <fa>/scripts/font_proof.mjs --film <slug> --font assets/fonts/<name>.subset
 ```
 
 默认收录的字符包括：`script.json`/`narration.json` 里的全部字符串、`content.json` 的画面文字（基础槽位、claims，以及**全部变体覆盖内容的并集**，不收 note，所以变体里的新字不会漏）、`scene.html` 里的所有非 ASCII 字符、`assets/text/*.txt`、可打印 ASCII
-和常用中文标点。运行时拼出来的文字要放进 `assets/text/*.txt`。子集化的代价（改文案要重跑、丢失 OpenType 特性）见 `references/fonts.md` 第 8 节。字体来源门在 film-core（见硬约束 1）。
+和常用中文标点。运行时拼出来的文字要放进 `assets/text/*.txt`。子集化的代价（改文案要重跑、丢失 OpenType 特性）见 `references/fonts.md` 第 7 节。字体来源门在 film-core（见硬约束 1）。
 
 ### SVG 转 path：`scripts/svg2path.mjs`
 

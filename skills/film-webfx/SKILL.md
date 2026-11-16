@@ -149,7 +149,7 @@ node <film-webfx>/scripts/fxreplay-check.mjs --film <slug>          # 用了 fxc
 3. 后期的风格参数每帧全量传，没有默认值；颗粒按 `floor(t·fps)` 播种；粒子是 (i, 种子, t) 的闭式函数；镜头是 t 的纯函数，不积分。
 4. 锚点在渲染之后用渲染时的矩阵投影（`S.anchor`），不另外推算一遍坐标。
 
-可选能力：**世界文字可读性** `S.legible(name, obj, {from, to, em})` 测投影后的字高与压扁比，film.json 的 `checks` 声明 `{"legible": {"min_px": …, "min_squash": …}}` 时由 film-critique 判定（three.md §2）。模型要登记进 film-assets 的台账（"3D 模型"一类）。
+可选能力：**世界文字可读性** `S.legible(name, obj, {from, to, em})` 测投影后的字高与压扁比，film.json 的 `checks` 声明 `{"legible": {"min_px": …, "min_squash": …}}` 时由 film-critique 判定（three.md §2）。
 
 **代价**（SwiftShader，全表见 three.md §7）：基准 PBR 场景约 8 ms；开任何后期先付一遍直通约 11 ms；景深最贵（+78 ms）；逐像素效果合进一遍只比单开一项多几 ms；软阴影 +5 ms；GPU 闭式粒子 1 万个几乎不花钱；后期 RT 开 MSAA +53 ms。
 

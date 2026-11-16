@@ -14,7 +14,7 @@ deliver 和 accept --deep 才会运行它；声明之后 render 也会在渲染�
 
 | 项 | 实际检查的内容 | 不检查的内容 |
 |---|---|---|
-| assets | 入口页、片内 js/css、content.json `assets` 里**以字面量写出**的本地路径是否存在；外链素材（与 film-assets audit 口径相同）；页面加载时**实际**发生的 404 和外部请求（外部请求一律拦截，所以也顺带证明了能离线渲染） | 授权与台账（归 audit.mjs）；用变量拼出来的路径，只有加载时真的发出了请求才能发现；其他 .html 文件（备用入口、旧版本）不扫描 |
+| assets | 入口页、片内 js/css、content.json `assets` 里**以字面量写出**的本地路径是否存在；外链素材（与 film-assets audit 口径相同）；页面加载时**实际**发生的 404 和外部请求（外部请求一律拦截，所以也顺带证明了能离线渲染） | 用变量拼出来的路径，只有加载时真的发出了请求才能发现；其他 .html 文件（备用入口、旧版本）不扫描 |
 | fonts | `document.fonts` 里 status=error 的 face；ready 之后仍处于 loading 的 face；`loadFonts(…).catch(() => {})` 或 `try { fonts.load } catch {}` 这类吞掉异常的写法；content.json 的全部文本加上采样时刻页面上可见的 DOM 文字中，**用该元素自己的计算字体**逐字检查画不出来的字（判断方法是 film-typography `text.js` 的 `missingGlyphs`，没有安装时 SKIP） | 绘制文字用的是不是系统字体（归内核门 fontsrc）；canvas 上绘制的文字（由 fontsrc 逐字检查）；没有用到的 unicode-range 分片（处于 unloaded 状态是正常的，不做判断） |
 | overflow | content.json 槽位的 `maxChars` / `maxLines` / `box:{w, lines?}` 加 `font`（用 canvas 量宽度）；采样时刻带 `data-slot` 的元素是否出现以下情况：内容溢出自己的盒子（scrollWidth/Height）、超出舞台、超出标题安全区、压住带 `data-avoid` 的元素；`data-max-chars` | 没有标 `data-slot` 的文字只报 ⚠（飞入飞出的卡片是有意出画，脚本无法区分）；canvas 上绘制的文字（用 anchors 加 film-critique 的遮挡/出画检查）；两个采样时刻之间的瞬间状态 |
 | code | 页面里的 `[data-code-lang]` 代码块，以及 content.json 里带 `lang` 的槽位：lua 用 `luac -p` 检查（没有安装时 SKIP 并说明），js 用 `node --check`，json 用 `JSON.parse`；代码行元素的 display 是 flex/grid，或者 white-space 折叠了行首空格 | 代码能不能运行、运行结果对不对；没有声明 `data-code-lang` 的代码（例如没标语言的 `飞船.lua`） |

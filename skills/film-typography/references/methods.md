@@ -83,7 +83,7 @@ pool[ floor( hash01(seed, i, j, floor(t·rate)) · pool.length ) ]     // j 是�
 **原理**：hanzi-writer-data 每字给 `strokes`（每笔轮廓 path）和 `medians`（中线点列）。第 k 笔：`clip(new Path2D(strokes[k]))`，沿 `medians[k]` 画粗线，长度随 `p_k = sat((t - t0)/每笔时长 - k)` 增长。
 数据坐标是 1024 单位、y 轴向上，要 `scale(s, -s)` 翻转。
 **代价**：实现成本高；只覆盖数据集里的字，字形是数据集的楷体风格，和片子字体不一致；写完之前读不出来。适合单字特写、书法、教学。
-**库**：`hanzi-writer-data`（许可不是 MIT，参见 film-assets）。**未在本仓库验证。**
+**库**：`hanzi-writer-data`（npm，逐字的笔画与中线数据）。**未在本仓库验证。**
 
 ## 11. 描边生长 → 填充
 **原理**：用 opentype.js `font.getPath(text, x, y, size).toPathData()` 拿字形轮廓转 `Path2D`；`setLineDash([L·p, L])` 控制描边长度，L 用离屏 `SVGPathElement.getTotalLength()` 求；p 到 1 后再淡入填充。

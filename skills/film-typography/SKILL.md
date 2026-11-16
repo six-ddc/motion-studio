@@ -1,6 +1,6 @@
 ---
 name: film-typography
-description: 代码渲染影片里"文字作为视觉元素"的能力：字体加载与缺字保障、按字/词/行拆分并保留 kerning、文字入场/出场/强调手法（遮罩升起、打字机、逐字交错、乱码解码、沿路径排字、数字滚动、逐字翻转、文字按字符变形过渡）、可变字体轴动画、中日韩排版（断行、避头尾、标点挤压）、竖版小字号可读性下限，以及画面内字幕的全部绘制（逐词高亮的字形、颜色、描边、布局）。scene.html 里要画标题、大字报、kinetic typography、数字跳动、标签、引言卡、烧进画面的字幕时加载；遇到"字体没生效""中文换行难看""标点太空""字发虚看不清""加粗没效果""字距不对"也用它。字幕的时间轴归 film-narration，字体文件来源与授权归 film-assets。
+description: 代码渲染影片里"文字作为视觉元素"的能力：字体加载与缺字保障、按字/词/行拆分并保留 kerning、文字入场/出场/强调手法（遮罩升起、打字机、逐字交错、乱码解码、沿路径排字、数字滚动、逐字翻转、文字按字符变形过渡）、可变字体轴动画、中日韩排版（断行、避头尾、标点挤压）、竖版小字号可读性下限，以及画面内字幕的全部绘制（逐词高亮的字形、颜色、描边、布局）。scene.html 里要画标题、大字报、kinetic typography、数字跳动、标签、引言卡、烧进画面的字幕时加载；遇到"字体没生效""中文换行难看""标点太空""字发虚看不清""加粗没效果""字距不对"也用它。字幕的时间轴归 film-narration，字体文件来源归 film-assets。
 ---
 
 # film-typography
@@ -34,7 +34,7 @@ import { loadFonts, splitText, prefixMeasure, wrapCJK, layoutCJK, drawCaption } 
 ## 硬约束（技术不变量，违反就是 bug）
 
 1. **字体随片打包**（内核契约，见 `../film-core/references/kernel.md`；film-core 的 fontsrc 门对所有片子始终开启）。系统字体和 CDN 字体会随机器、浏览器构建和时间变化，本机这次渲得对，不代表换台机器也对。字体文件放进 `films/<slug>/assets/fonts/`，`@font-face` 用相对路径引用。
-   打包命令：`node <本skill>/scripts/fontpack.mjs --film <slug> --css <fontsource css> --text-file <文案>`，或 `--file <字体> --family <名字> --text-file <文案>`（用 pyftsubset 子集化，保留可变轴）。字体从哪里找、能不能商用，**参见 film-assets skill**。
+   打包命令：`node <本skill>/scripts/fontpack.mjs --film <slug> --css <fontsource css> --text-file <文案>`，或 `--file <字体> --family <名字> --text-file <文案>`（用 pyftsubset 子集化，保留可变轴）。字体从哪里找，**参见 film-assets skill**。
 2. **在 `window.ready` 里 `await loadFonts([...])`，失败就让它抛错**。回退字体不会报错，只会让排版错位，两台机器渲出的 md5 也不同。`loadFonts` 已经处理了三个坑：`fonts.ready` 只等待已经触发加载的字体，`fonts.check()` 对不存在的字族也返回 true，缺字形时浏览器会逐字回退（见 chromium.md B/C）。
    `specs` 要覆盖本片的**全部文案**（含字幕）和**每个用到的字重**：`[['700 80px "X"', 全部文案], …]`。
    **运行时拼出来的字**（如 `白子：${n} 口气` 里的 n）最容易漏掉。漏掉的字如果属于还没加载的 unicode-range 分片，第一次画到它的那一帧就会用回退字体。所以也可以**按字符类声明**：`[font, { text: 文案, sets: ['digits'], ranges: ['U+2460-2473'] }]`（类名见导出的 `CHARSETS`，写错会直接抛错）。
