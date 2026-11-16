@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fontsrc 阳性对照：模块脚本顶层 await，seek 晚于 load 才挂上</title>
+<style>
+  @font-face { font-family: 'Fix Mono'; font-weight: 700; src: url('./assets/fonts/mono.woff2') format('woff2'); }
+  html, body { margin: 0; overflow: hidden; background: #fff; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; font-family: 'Fix Mono'; font-weight: 700; color: #222; }
+  .row { position: absolute; left: 120px; font-size: 28px; line-height: 36px; white-space: nowrap; }
+  .fname, .lit { position: absolute; left: 1200px; font-size: 48px; display: none; }
+</style>
+<div id="stage">
+  <div class="fname" style="top:200px">ship.lua</div>
+  <div class="lit" style="top:300px">x = x - 1</div>
+</div>
+<script type="module">
+// 阳性对照（就绪竞态）：与 scene.html 同一画面，但写成模块脚本 + 顶层 await，window.seek / window.ready 都在 load 之后才挂上。
+// load 事件不等模块的顶层 await，旧版 font_source 只等 load 就去读 window.seek，判"没有暴露 window.seek"（reuleaux 约 1/3 次）。
+// 这里故意等 1.5s（加载期，不在 seek 里），把竞态变成必现。修好之后它与 openScene 同一套等法，应当是绿的。
+await (await fetch('./film.json')).json();
+await new Promise((r) => setTimeout(r, 1500));
+const ROWS = 30;
+let TPL = null;
+window.DURATION = 8;
+window.ready = document.fonts.load('700 40px "Fix Mono"', 'abcdefghijklmnopqrstuvwxyz0123456789:=.-').then(() => {
+  TPL = document.getElementById('stage').cloneNode(true);
+});
+window.seek = (t) => {
+  const st = TPL.cloneNode(true);
+  document.getElementById('stage').replaceWith(st);
+  for (let i = 0; i < ROWS; i++) {
+    const r = document.createElement('div');
+    r.className = 'row'; r.style.top = `${40 + i * 34}px`;
+    r.textContent = `row ${i}: speed = ${(i * 3) % 7}`;
+    st.append(r);
+  }
+  if (t >= 6) for (const el of st.querySelectorAll('.fname, .lit')) el.style.display = 'block';
+};
+</script>

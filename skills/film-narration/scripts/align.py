@@ -31,6 +31,10 @@
      字时间戳     narration.json 的字级时间戳 vs 每句 wav 的能量包络（_timing.py）：意群起点错拍 ≥ 0.20s → 退出码 6。
                   漂移看全片中位数，几个字挤在一起抓不到；这一条按句查。
 
+     转写范围     只转写、只计旁白区间（narration.json 首字起、末字止，加偏移）前后 --window-margin 秒（默认 1.0）以内：
+                  Whisper 会在片尾静音和配乐尾巴上编字（「感谢观看」「点赞订阅」），区间外的字列出来但不计分。
+                  解码用贪心（temperature=0、不带上一段上下文）：默认的随机采样重解正是尾部编字、结论来回跳的来源。
+
        python align.py --film <slug> --verify                       # 只认 out/final[-<格式>].mp4，没有则 out/vo.wav
        python align.py --film <slug> --verify out/final-9x16.mp4
 
@@ -206,22 +210,33 @@ def units(text: str) -> list[dict]:
     return out
 
 
-def extract_audio(src: Path) -> Path:
+def extract_audio(src: Path, until: float | None = None) -> Path:
+    """转成 16k 单声道。until：只取到这一秒（--verify 截到旁白结束 + 余量，后面的片尾静音/配乐不进 Whisper）。"""
     tmp = Path(tempfile.mkdtemp()) / "audio.wav"
-    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+    cut = ["-t", f"{until:.3f}"] if until is not None else []
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), *cut,
                     "-vn", "-ac", "1", "-ar", "16000", str(tmp)], check=True)
     return tmp
 
 
-def transcribe(audio: Path, model_size: str, language: str | None, hint: str | None):
+# --verify 的解码参数：贪心（温度只取 0）、不拿上一段转写当下一段的上下文。
+# 为什么：faster-whisper 默认在一段的 avg_logprob 太低时按温度 0.2…1.0 **随机采样**重解，
+# 尾部静音/配乐上正好触发——实测 reuleaux out/vo.wav 末字（69.43s）之后 0.8s 里编出「您能放过来。您能放在一起。您的衣服宽度。」
+# （avg_logprob -2.07），同一个文件这次有下次没有，准确率在 97% 上下跳。condition_on_previous_text 会把编出来的字
+# 带进下一段、越编越长（配乐尾巴上整段「请不吝点赞订阅」）。两者都关掉后，同一文件后接 14s 配乐也一个字都没编，转写快约一倍。
+# 代价：输出基本不带标点（比对前本来就去标点，不影响）；只用于校验，--from 反推仍用默认（行文本要给字幕用，要标点）。
+VERIFY_DECODE = {"temperature": 0.0, "condition_on_previous_text": False}
+
+
+def transcribe(audio: Path, model_size: str, language: str | None, hint: str | None, decode: dict | None = None):
     try:
         from faster_whisper import WhisperModel
     except ImportError:
         die("未安装 faster-whisper：.venv/bin/pip install faster-whisper")
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     segments, info = model.transcribe(str(audio), language=language, word_timestamps=True,
-                                      initial_prompt=hint, vad_filter=True)
-    lines, words = [], []
+                                      initial_prompt=hint, vad_filter=True, **(decode or {}))
+    lines, words, pieces = [], [], []
     for i, seg in enumerate(segments):
         sw = [{"w": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3),
                "src": "whisper"} for w in (seg.words or []) if w.word.strip()]
@@ -229,7 +244,27 @@ def transcribe(audio: Path, model_size: str, language: str | None, hint: str | N
                       "end": round(seg.end, 3), "duration": round(seg.end - seg.start, 3),
                       "words": sw})
         words.extend(sw)
-    return lines, words, info
+        # pieces：拼回转写全文用的片段（保留 Whisper 原样的前导空格——去掉的话「22 33」会粘成「2233」被当成一个数）。
+        # 有字级时间戳就按字，没有就整段一块
+        if seg.words:
+            pieces += [(w.start, w.end, w.word) for w in seg.words if w.word.strip()]
+        elif seg.text.strip():
+            pieces.append((seg.start, seg.end, seg.text))
+    return lines, words, info, pieces
+
+
+def in_window(words: list[dict], pieces: list, window: tuple[float, float] | None):
+    """只留中点落在旁白区间里的转写。Whisper 会在片尾静音、配乐尾巴上编字（实测「感谢观看」「点赞订阅」），
+    那些字不在 narration.json 的任何一句里，算进去就是凭空多出的硬错误，准确率在阈值上下跳。
+    返回 (留下的字级时间戳, 留下的全文, 剔掉的 [(起, 止, 文)])。window=None 时全留。"""
+    if window is None:
+        return words, "".join(p[2] for p in pieces), []
+    a, b = window
+    mid = lambda s, e: (s + e) / 2  # noqa: E731
+    kept_w = [w for w in words if a <= mid(w["start"], w["end"]) <= b]
+    kept = [p for p in pieces if a <= mid(p[0], p[1]) <= b]
+    dropped = [p for p in pieces if not a <= mid(p[0], p[1]) <= b]
+    return kept_w, "".join(p[2] for p in kept), dropped
 
 
 def char_times(words):
@@ -563,6 +598,9 @@ def main() -> None:
     ap.add_argument("--max-drift", type=float, default=0.15)
     ap.add_argument("--vo-offset", type=float, default=None,
                     help="校验：旁白在被校验文件里的起点（秒）。默认成片取 film.json narrationOffset、out/vo.wav 取 0")
+    ap.add_argument("--window-margin", type=float, default=1.0, metavar="SEC",
+                    help="校验：只转写/只计 narration.json 首字前、末字后这么多秒以内的内容（默认 1.0；"
+                         "片尾静音和配乐上的幻听不计）。负数 = 整个文件都算（旧行为，排查用）")
     ap.add_argument("--allow-duration-mismatch", action="store_true",
                     help="校验：媒体时长和 narration.json 差 1.5 倍以上也照样转写")
     args = ap.parse_args()
@@ -601,16 +639,38 @@ def main() -> None:
         # 唯一的默认提示是**不含任何答案内容**的文体提示：不给的话 Whisper 常输出繁体（实测 帧→幀）
         style = STYLE_HINT.get(args.language or spec.get("language") or "zh", "")
         hint = (style + (hint or "")) or None
-        lines, words, info = transcribe(extract_audio(src), args.model, args.language, hint)
-        got = "".join(l["text"] for l in lines)
+        # 转写范围 = 旁白区间（narration.json 首字起 / 末字止，加偏移）± 余量。音频截到区间末尾再交给 Whisper，
+        # 区间外（含片头）的转写字再按中点剔一遍。没有 narration.json（或 --window-margin 负数）时整段都算。
+        window = None
+        if nar_pre.exists() and args.window_margin >= 0:
+            nw = json.loads(nar_pre.read_text(encoding="utf-8")).get("words") or []
+            if nw:
+                window = (max(0.0, min(w["start"] for w in nw) + expect_off - args.window_margin),
+                          max(w["end"] for w in nw) + expect_off + args.window_margin)
+        lines, all_words, info, pieces = transcribe(extract_audio(src, window[1] if window else None),
+                                                    args.model, args.language, hint, VERIFY_DECODE)
+        words, got, dropped = in_window(all_words, pieces, window)
         ratio = difflib.SequenceMatcher(None, strip_punct(expected), strip_punct(got),
                                         autojunk=False).ratio()
         rows, total, hard = score_lines(expected_lines, got, dict_readings(spec))
         acc = 1 - hard / total if total else 0.0
         print(f"源: {rel(src, film)}")
-        print(f"识别语言: {info.language} ({info.language_probability:.2f})   音频时长 {info.duration:.3f}s")
+        print(f"识别语言: {info.language} ({info.language_probability:.2f})   送转写 {info.duration:.3f}s")
         print("提示: " + ("带领域词表 —— 结果偏乐观" if args.hint_file else
                             f"仅文体提示「{style}」，不含脚本内容（校验器不看答案）"))
+        if window:
+            print(f"转写范围: {window[0]:.2f}–{window[1]:.2f}s（narration.json 首末字 +{expect_off:g}s 偏移，"
+                  f"前后各留 {args.window_margin:g}s；音频截到 {window[1]:.2f}s）")
+            if dropped:
+                n_drop = sum(len(strip_punct(p[2])) for p in dropped)
+                print(f"  范围外剔除 {n_drop} 字（不计入准确率和漂移）：" +
+                      " ".join(f"{p[0]:.2f}s「{p[2].strip()}」" for p in dropped[:12]) +
+                      (" …" if len(dropped) > 12 else ""))
+                if n_drop > 0.05 * max(1, len(strip_punct(expected))):
+                    print(f"  ⚠ 剔掉的字超过脚本的 5%：若不是片头/片尾的配乐幻听，多半是旁白整体错位超过 "
+                          f"{args.window_margin:g}s（mux 延迟、接错音轨）。用 --window-margin -1 整段转写看一遍")
+        else:
+            print("转写范围: 整个文件" + ("（--window-margin 为负）" if args.window_margin < 0 else "（没有 narration.json 的字级时间戳）"))
         print(f"转写: {got}")
         print()
         ids = [l.get("id") or f"L{i+1}" for i, l in enumerate(spec["lines"])]
@@ -707,7 +767,7 @@ def main() -> None:
     src = Path(args.src)
     src = src if src.is_absolute() else (film / src if (film / src).exists() else Path.cwd() / src)
     need_file(src, "")
-    lines, words, info = transcribe(extract_audio(src), args.model, args.language, args.hint)
+    lines, words, info, _ = transcribe(extract_audio(src), args.model, args.language, args.hint)
     out = {"version": 1, "audio": rel(src, film), "engine": f"whisper-{args.model}",
            "voice": "-", "language": info.language, "duration": round(info.duration, 3),
            "gap": 0, "lines": lines, "words": words}

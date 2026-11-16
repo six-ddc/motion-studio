@@ -86,10 +86,24 @@ const PROBE = () => {
   const norm = (s) => { try { probe.fillStyle = '#000'; probe.fillStyle = s; return probe.fillStyle; } catch { return null; } };
   const P = CanvasRenderingContext2D.prototype;
   const cids = new WeakMap(); let nextCid = 0;
+  // 底色取样的历史：本帧里每次文字绘制在它的框内"画之前 / 画之后"的像素（按画布分）。
+  // 为什么要它：一行字分两种颜色画（裁剪后同一串字画两遍、或先画整行再在原位叠一遍高亮词）时，
+  // 第二遍取到的"已有像素"里有第一遍画的字，底色被算成墨色，对比度误报（reuleaux 为此只能规定先画哪种颜色）。
+  // 规则：取底色时，框里落在"同一行字的前几遍"（同一画布、同一个 fillText/strokeText、同字体串、同一条基线）上、
+  // 且从那一遍画完到现在没被别的东西改过的像素，还原成那一遍画之前的值；逐遍倒推，叠了几遍都能还原。
+  // 不还原的：描边（strokeText 之后的 fillText 是不同的 fn——描边本来就是给字垫的底）、
+  // 错开基线的假阴影、别的字串压在上面的情况，以及前一遍之后又被图形盖过的像素（那就是真底色）。
+  // 每帧开始时 __crit 被清空（rec.length === 0 → 新的一帧），历史跟着清。
+  let hist = new Map();
+  const sameLine = (h, q) => h.fn === q.fn && h.font === q.font
+    && Math.abs(h.ux * q.uy - h.uy * q.ux) < 0.01                          // 同方向
+    && Math.abs(h.ux * (q.y0 - h.y0) - h.uy * (q.x0 - h.x0)) < 1;          // 同一条基线（法向距离 < 1 画布像素）
   for (const fn of ['fillText', 'strokeText']) {
     const orig = P[fn];
     P[fn] = function (text, x, y, ...rest) {
+      let mine = null;   // 这一遍：画完后补上 post，进历史
       if (window.__critOn) try {
+        if (rec.length === 0) hist = new Map();
         const m = /(\d+(?:\.\d+)?)px/.exec(this.font); const px = m ? +m[1] : 10;
         const tr = this.getTransform(); const sc = Math.sqrt(Math.abs(tr.a * tr.d - tr.b * tr.c));
         const mt = this.measureText(String(text));
@@ -101,12 +115,6 @@ const PROBE = () => {
         const bx = Math.max(0, Math.floor(Math.min(...xs))), by = Math.max(0, Math.floor(Math.min(...ys)));
         const bw = Math.min(this.canvas.width, Math.ceil(Math.max(...xs))) - bx;
         const bh = Math.min(this.canvas.height, Math.ceil(Math.max(...ys))) - by;
-        let bg = null;
-        if (bw > 0 && bh > 0) {
-          const d = this.getImageData(bx, by, bw, bh).data; let R = 0, G = 0, B = 0, n = 0;
-          for (let i = 0; i < d.length; i += 16) { R += d[i]; G += d[i + 1]; B += d[i + 2]; n++; }
-          bg = [R / n, G / n, B / n];
-        }
         const style = fn === 'fillText' ? this.fillStyle : this.strokeStyle;
         const cssScale = this.canvas.getBoundingClientRect().width / this.canvas.width || 1;
         const wm = /\b(bold|[1-9]00)\b/.exec(this.font);
@@ -122,10 +130,39 @@ const PROBE = () => {
         const al = this.textAlign, a0 = al === 'center' ? x - mt.width / 2 : al === 'right' || al === 'end' ? x - mt.width : x, a1 = a0 + mt.width;
         const P0 = [tr.a * a0 + tr.c * y + tr.e, tr.b * a0 + tr.d * y + tr.f], P1 = [tr.a * a1 + tr.c * y + tr.e, tr.b * a1 + tr.d * y + tr.f];
         const line = { cid: cids.get(this.canvas), x0: P0[0], y0: P0[1], x1: P1[0], y1: P1[1], em: px * Math.hypot(tr.a, tr.b), base: this.textBaseline, font: this.font };
+        let bg = null;
+        if (bw > 0 && bh > 0) {
+          const d = this.getImageData(bx, by, bw, bh).data;
+          const len = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]) || 1;
+          mine = { fn, font: this.font, x0: P0[0], y0: P0[1], ux: (P1[0] - P0[0]) / len, uy: (P1[1] - P0[1]) / len, bx, by, bw, bh, pre: d };
+          const H = (hist.get(this.canvas) ?? []).filter((h) => sameLine(h, mine)
+            && h.bx < bx + bw && bx < h.bx + h.bw && h.by < by + bh && by < h.by + h.bh);
+          let R = 0, G = 0, B = 0, n = 0;
+          for (let i = 0; i < d.length; i += 16) {
+            let r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
+            if (H.length) {
+              const p = i >> 2, X = bx + (p % bw), Y = by + ((p / bw) | 0);
+              for (let k = H.length - 1; k >= 0; k--) {
+                const h = H[k], u = X - h.bx, v = Y - h.by;
+                if (u < 0 || v < 0 || u >= h.bw || v >= h.bh) continue;
+                const j = (v * h.bw + u) * 4, q = h.post;
+                if (q[j] === r && q[j + 1] === g && q[j + 2] === b && q[j + 3] === a) { r = h.pre[j]; g = h.pre[j + 1]; b = h.pre[j + 2]; a = h.pre[j + 3]; }
+              }
+            }
+            R += r; G += g; B += b; n++;
+          }
+          bg = [R / n, G / n, B / n];
+        }
         rec.push({ text: String(text), px: px * sc * cssScale, weight: wm ? (wm[1] === 'bold' ? 700 : +wm[1]) : 400, color: typeof style === 'string' ? norm(style) : null,
           alpha: this.globalAlpha, bg, onscreen: bw > 0 && bh > 0, box, line });
-      } catch { /* 探针失败不影响场景 */ }
-      return orig.call(this, text, x, y, ...rest);
+      } catch { mine = null; /* 探针失败不影响场景 */ }
+      const ret = orig.call(this, text, x, y, ...rest);
+      if (mine) try {
+        mine.post = this.getImageData(mine.bx, mine.by, mine.bw, mine.bh).data;
+        if (!hist.has(this.canvas)) hist.set(this.canvas, []);
+        hist.get(this.canvas).push(mine);
+      } catch { /* 同上 */ }
+      return ret;
     };
   }
 };
@@ -227,7 +264,7 @@ const COLLECT = () => {
     const s = n.textContent.trim(); if (!s || !n.parentElement) continue;
     const cs = getComputedStyle(n.parentElement), r = n.parentElement.getBoundingClientRect();
     if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0 || r.width === 0 || r.bottom < 0 || r.top > innerHeight) continue;
-    dom.push({ text: s, px: parseFloat(cs.fontSize), weight: +cs.fontWeight || 400, color: null, alpha: +cs.opacity, bg: null, onscreen: true, dom: true });
+    dom.push({ text: s, px: parseFloat(cs.fontSize), weight: +cs.fontWeight || 400, family: cs.fontFamily, color: null, alpha: +cs.opacity, bg: null, onscreen: true, dom: true });
   }
   return [...window.__crit, ...dom];
 };
@@ -433,32 +470,43 @@ const limitOf = (script, weight) => {
 };
 const lumOf = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
 const parseColor = (s) => { if (!s) return null; if (s[0] === '#') return [...hex(s), 1]; const m = /rgba?\(([^)]+)\)/.exec(s); if (!m) return null; const p = m[1].split(',').map(Number); return [p[0], p[1], p[2], p[3] ?? 1]; };
-const textSeen = new Map(); // text -> {px, ratio, times[], full[], script, bold}
+// 按"哪一种字"分开记：字串 + 字重 + 字体族（字号不进键）。
+// 旧版只按字串分组，字一样、字重字号不同的两次绘制被并成一段：标题巨字「周长」（900、190px）和字幕里的「周长」（400、56px）
+// 合起来成了"900 字重、56px"，按 900 档的下限判红——两个值出自两次不同的绘制，哪次都不违规（reuleaux 为此改了标题措辞）。
+// 字号不进键：同一种字在缩放入场时每帧字号都不同，进键会把一段字拆成几十条；同一字重下取最小字号判，阈值是同一档，不会错配。
+// 对比度也逐次判：大字/正文的阈值按这一次绘制自己的字号取，记"对比度 / 阈值"最差的那一次，不拿 A 次的字号配 B 次的对比度。
+const sizeless = (f) => String(f ?? '').replace(/(?:^|\s)\d+(?:\.\d+)?px(?:\s*\/\s*\S+)?/, ' ').replace(/\s+/g, ' ').trim();
+const kindOf = (x) => `${x.weight ?? 400}|${x.dom ? `dom:${x.family ?? ''}` : sizeless(x.line?.font)}`;
+const textSeen = new Map(); // text + kind -> {text, px, ratio, need, times[], full[], script, bold, weight}
 for (const s of samples) for (const x of s.texts) {
   if (!x.onscreen || x.alpha < 0.05 || !x.text.trim()) continue;
   let ratio = null; const c = parseColor(x.color);
   if (c && x.bg) { const a = c[3] * x.alpha; const fg = [0, 1, 2].map((k) => c[k] * a + x.bg[k] * (1 - a)); const [L1, L2] = [lumOf(fg), lumOf(x.bg)].sort((p, q) => q - p); ratio = (L1 + 0.05) / (L2 + 0.05); }
-  const e = textSeen.get(x.text) ?? { px: Infinity, pxT: s.t, ratio: Infinity, ratioT: null, times: [], full: [], script: scriptOf(x.text), bold: false, weight: 400 };
+  const key = `${x.text}\u0000${kindOf(x)}`, w = x.weight ?? 400;
+  const e = textSeen.get(key) ?? { text: x.text, px: Infinity, pxT: s.t, ratio: Infinity, ratioT: null, margin: Infinity, big: false, times: [], full: [], script: scriptOf(x.text), bold: w >= 600, weight: w };
   // 报的是全片最差的那个值，时刻和证据帧就得是最差的那一帧——不是这段字第一次出现的时候
   // （weiqi-intro：对比度最差在相机横移那一刻，证据帧却取在 17.7s 第一次出现时，那一帧什么问题都没有）
-  if (x.px * phone < e.px) { e.px = x.px * phone; e.pxT = s.t; }
-  if (ratio != null && x.alpha > 0.9 && ratio < e.ratio) { e.ratio = ratio; e.ratioT = s.t; }
-  e.bold ||= (x.weight ?? 400) >= 600; e.weight = Math.max(e.weight, x.weight ?? 400);
+  const ppx = x.px * phone;
+  if (ppx < e.px) { e.px = ppx; e.pxT = s.t; }
+  if (ratio != null && x.alpha > 0.9) {
+    const big = ppx >= C_LARGE_PX, m = ratio / (big ? C_LARGE : C_MIN);   // WCAG "大字" ≈ 18.66 CSS px（14pt 粗）/ 24px（18pt）；保守取 18.66
+    if (m < e.margin) { e.margin = m; e.ratio = ratio; e.ratioT = s.t; e.big = big; }
+  }
   e.times.push(s.t); if (x.alpha > 0.9) e.full.push(s.t);
-  textSeen.set(x.text, e);
+  textSeen.set(key, e);
 }
 // 先逐段判，再按"同一项 × 同一文种 × 同字重 × 同字号档"合并：
 // 逐帧换字的乱码、逐字绘制的底纹会产生上百条同质发现，逐条报会把真正的问题淹掉。
 const raw = [];
 const cps = laws.read_cps ?? 9;
-for (const [text, e] of textSeen) {
-  const where = e.times[0], last = e.times.at(-1), base = { text, t: where, first: where, last, script: e.script, bold: e.bold, weight: e.weight, px: e.px };
+for (const e of textSeen.values()) {
+  const text = e.text, where = e.times[0], last = e.times.at(-1), base = { text, t: where, first: where, last, script: e.script, bold: e.bold, weight: e.weight, px: e.px };
   const lim = limitOf(e.script, e.weight);
   if (!on('readability')) { /* 没声明 readability */ }
   else if (lim && lim.v === null) raw.push({ ...base, t: e.pxT, level: 'LOOK', layer: '疑点', id: 'readability.size', why: `${SCRIPT_NAME[e.script]}${e.bold ? '粗体' : ''}这一档没有稳定可读下限（${lim.key}=null）` });
   else if (lim && e.px < lim.v) raw.push({ ...base, t: e.pxT, level: 'FAIL', layer: '客观', id: 'readability.size', why: `阈值 ${lim.v.toFixed(1)}px（${lim.key}）` });
-  const big = e.px >= C_LARGE_PX; // WCAG "大字" ≈ 18.66 CSS px（14pt 粗）/ 24px（18pt）；保守取 18.66。阈值可在 checks 的 {"contrast": {…}} 改
-  if (on('contrast') && e.ratio !== Infinity && e.ratio < (big ? C_LARGE : C_MIN)) raw.push({ ...base, t: e.ratioT, level: 'FAIL', layer: '客观', id: 'readability.contrast', ratio: e.ratio,
+  const big = e.big; // 最差那一次绘制自己的字号决定它按大字还是正文判（阈值可在 checks 的 {"contrast": {…}} 改）
+  if (on('contrast') && e.margin < 1) raw.push({ ...base, t: e.ratioT, level: 'FAIL', layer: '客观', id: 'readability.contrast', ratio: e.ratio,
     why: C_DEFAULT ? `WCAG ${big ? '大字 3' : '4.5'}:1` : `本片声明的对比度下限 ${big ? `大字 ${C_LARGE}` : C_MIN}:1` });
   const need = Math.max(0.5, [...text].length / cps), shown = e.full.length / sfps;
   if (on('readability') && shown + 1 / sfps < need) raw.push({ ...base, level: 'LOOK', layer: '疑点', id: 'readability.time', shown, need });

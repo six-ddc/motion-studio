@@ -226,6 +226,30 @@ const PROBE = () => {
 };
 
 /**
+ * 等场景就绪：load 之后 → window.seek 出现（最多 timeout）→ 兑现 window.ready（有的话）→ document.fonts.ready。
+ * 打开场景页的工具都该走它（openScene、font_source），否则"就绪"在不同工具里是不同的时刻。
+ * 为什么不能只等 load：`<script type="module">` 带顶层 await（fetch narration.json、loadFonts…）时，
+ * load 事件不等模块求值完，window.seek / window.ready 要晚一点才挂上；只等 load 就去读它们是竞态（reuleaux 实测约 1/3 次误报）。
+ * 失败抛 Error，err.code 区分：'NO_SEEK'（timeout 内没暴露 seek）/ 'READY_REJECTED'（window.ready 兑现失败）。
+ * errors：调用方收集的页面错误数组，NO_SEEK 时附在消息里（多半是脚本报错导致 seek 没挂上）。
+ */
+export const SCENE_TIMEOUT_MS = 15_000;
+export async function waitForScene(page, { errors = [], timeout = SCENE_TIMEOUT_MS } = {}) {
+  try {
+    await page.waitForFunction(() => typeof window.seek === 'function', null, { timeout });
+  } catch {
+    const e = new Error(`场景 ${timeout / 1000} 秒内没有暴露 window.seek(t)${errors.length ? '；页面错误：\n  ' + errors.join('\n  ') : ''}`);
+    e.code = 'NO_SEEK';
+    throw e;
+  }
+  // 场景可暴露 window.ready（Promise）等自己的异步资源：字体、纹理、narration.json…
+  try { await page.evaluate(() => window.ready ?? null); }
+  catch (e) { e.code = 'READY_REJECTED'; throw e; }
+  // canvas 文字在字体就绪前量出来是错的
+  await page.evaluate(() => document.fonts.ready.then(() => null));
+}
+
+/**
  * 打开一个影片的场景页。返回 { page, shot(t), info, errors, close }
  *   film   resolveFilm() 的返回
  *   format 画幅 key
@@ -285,12 +309,7 @@ export async function openScene(film, format, { browser, probe = false, port, in
   try {
     const extra = Object.entries(query ?? {}).filter(([, v]) => v != null).map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');
     await page.goto(`http://127.0.0.1:${port}${film.entryUrl}?format=${format}${extra}`, { waitUntil: 'load' });
-    await page.waitForFunction(() => typeof window.seek === 'function', null, { timeout: 15_000 })
-      .catch(() => { throw new Error(`场景 15 秒内没有暴露 window.seek(t)${errors.length ? '；页面错误：\n  ' + errors.join('\n  ') : ''}`); });
-    // 场景可暴露 window.ready（Promise）等自己的异步资源：字体、纹理、narration.json…
-    await page.evaluate(() => window.ready ?? null);
-    // canvas 文字在字体就绪前量出来是错的
-    await page.evaluate(() => document.fonts.ready.then(() => null));
+    await waitForScene(page, { errors });
   } catch (e) { await close(); throw e; }
 
   if (errors.length) { await close(); throw new Error(`场景加载报错，已中止：\n  ${errors.join('\n  ')}`); }

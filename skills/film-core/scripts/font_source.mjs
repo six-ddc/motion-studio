@@ -29,7 +29,7 @@
 // 静态层（不开浏览器也跑）：local()、外链/缺失的 @font-face 文件 → 不合格；代码里出现的系统字体名列出行号
 // （浏览器层是裁判；--static-only 时这些命中直接判不合格，因为没人复核）。
 //
-// 不查：授权与台账（audit.mjs）、字够不够（subset_font.py --check）。
+// 不查：代码里的本机/外链引用全貌（audit.mjs）、字够不够（subset_font.py --check）。
 // 已知盲区：只看采样时刻画过的字（--step 越小越全）；Worker 里的 OffscreenCanvas、WebGL 自己栅格化的字看不到。
 //   判定 6 同理：只在某个采样时刻第一次画到的分片才抓得到；只在两个采样时刻之间出现的字，它触发的晚加载看不到。
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -37,7 +37,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { GENERIC, SYSTEM_FONT_RE } from '../lib/fontcss.mjs';
 import { FILM_OPTS, parseArgs, resolveFilm as coreResolve, fail } from '../lib/film.mjs';
 import { serve } from '../lib/serve.mjs';
-import { launchBrowser, FORMATS, filmBackend, filmGlobals, filmGlobalsScript } from '../lib/browser.mjs';
+import { launchBrowser, waitForScene, FORMATS, filmBackend, filmGlobals, filmGlobalsScript } from '../lib/browser.mjs';
 
 const die = (msg, code = 2) => fail(msg, code);
 const A = parseArgs({
@@ -92,7 +92,7 @@ for (const p of walk(F.dir)) {
       const base = /\.css$/.test(p) ? join(p, '..') : join(F.path(entry), '..');
       const file = resolve(base, url.split(/[?#]/)[0]);
       if (!existsSync(file)) errors.push(`${r}:${line}  @font-face 指向不存在的文件 ${url}`);
-      else if (!inAssets(file)) errors.push(`${r}:${line}  @font-face 文件 ${rel(file)} 不在 assets/ 下（不进台账、不随片管理）`);
+      else if (!inAssets(file)) errors.push(`${r}:${line}  @font-face 文件 ${rel(file)} 不在 assets/ 下（不随片打包，换台机器就没有）`);
     }
   }
   // 代码里出现的系统字体名：字符串字面量 + CSS 的 font / font-family 值
@@ -120,11 +120,6 @@ if (staticOnly || !report ? uniqHits.length : unconfirmed.length) {
   if (staticOnly || !report) errors.push(`代码里写了系统字体名（没有浏览器复核，按不合格算）：${list}`);
   else warns.push(`代码里写了系统字体名，采样时刻没有用它画字（死代码？没采到的分支？）：${list}`);
 }
-// 授权文本随附（OFL 等要求随字体分发）：查不到只警告，台账与授权由 audit.mjs / LICENSES.md 负责
-const fontFiles = existsSync(F.path('assets/fonts')) ? walkAll(F.path('assets/fonts')).filter((p) => /\.(woff2?|ttf|otf|ttc)$/i.test(p) && !p.includes(`${sep}src${sep}`)) : [];
-const licFiles = existsSync(F.path('assets/fonts')) ? walkAll(F.path('assets/fonts')).filter((p) => /^(licen[cs]e|ofl|copying)/i.test(p.split(sep).pop())) : [];
-if (fontFiles.length && !licFiles.length)
-  warns.push(`assets/fonts/ 有 ${fontFiles.length} 个字体文件，但没有许可文本（LICENSE / OFL.txt）。OFL 要求随附，台账见 audit.mjs`);
 
 // ───────────────────────── 报告 ─────────────────────────
 console.log(`字体来源检查  ${F.slug}（${entry}，${format}${report ? `，seek ${report.seeks} 次，步长 ${report.step}s，时长 ${report.duration}s` : staticOnly ? '，仅静态' : '，浏览器层失败，只有静态结果'}）`);
@@ -156,10 +151,6 @@ console.log(staticOnly
   ? `✓ ${F.slug}: 静态层没发现本机/外链字体（未经浏览器复核：变量拼出的字体名、缺字回退都查不到）`
   : `✓ ${F.slug}: 画出来的字全部来自随片字体（assets/）`);
 
-function walkAll(d) {
-  return readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walkAll(p) : [p]; });
-}
-
 async function runBrowser() {
   // 与渲染同一种托管（./runtime/* 片内优先、否则套件）和同一种浏览器（launchBrowser）
   const server = await serve(F.dir);
@@ -178,13 +169,16 @@ async function runBrowser() {
     await page.addInitScript({ content: filmGlobalsScript(filmGlobals(F, format)) });   // window.FILM，与 openScene 同一份
     await page.addInitScript(HOOK);
     await page.goto(`${origin}/${entry}?format=${format}`, { waitUntil: 'load' });
-    try { await page.evaluate(() => window.ready ?? null); } catch (e) {
-      errors.push(`window.ready 失败，浏览器层没跑：${e.message.replace(/^page\.evaluate:\s*/, '')}（字体加载失败常见于 local() / 文件路径错）`);
-      return null;
+    // 就绪的等法与 openScene 同一个函数（等 seek 出现 → window.ready → fonts.ready）：
+    // 旧版只等 load + 当时已存在的 window.ready，模块脚本带顶层 await 时 seek 还没挂上就判"没有暴露 window.seek"（reuleaux 约 1/3 次）
+    try { await waitForScene(page, { errors: pageErrors }); } catch (e) {
+      if (e.code === 'READY_REJECTED') {
+        errors.push(`window.ready 失败，浏览器层没跑：${e.message.replace(/^page\.evaluate:\s*/, '')}（字体加载失败常见于 local() / 文件路径错）`);
+        return null;
+      }
+      die(`${entry}：${e.message}`, 1);
     }
-    await page.evaluate(() => document.fonts.ready.then(() => null));
-    const duration = await page.evaluate(() => (typeof window.seek === 'function' ? window.DURATION : null));
-    if (duration === null) die(`${entry} 没有暴露 window.seek`, 1);
+    const duration = await page.evaluate(() => window.DURATION);
     const dur = Number(duration ?? film.duration);
     if (!(dur > 0)) die('拿不到时长：window.DURATION 和 film.json 的 duration 都没有');
     const eff = Math.max(step, dur / 800);
@@ -348,7 +342,7 @@ function classify(src, origin, fontRequests) {
     return { ok: true, where: 'ArrayBuffer', warn: '用 ArrayBuffer 构造，来源按"页面请求过的字体文件都在 assets/"推断；改用 url() 可直接证明' };
   }
   const u = src.url;
-  if (u.startsWith('data:')) return { ok: true, where: 'data: 内嵌', warn: 'data: 内嵌字体，台账里记不了文件，建议拆成 assets/fonts/ 下的文件' };
+  if (u.startsWith('data:')) return { ok: true, where: 'data: 内嵌', warn: 'data: 内嵌字体，子集化与 --check 管不到它，建议拆成 assets/fonts/ 下的文件' };
   if (!u.startsWith(origin)) return { ok: false, why: `外链 ${u}`, where: u };
   const file = join(F.dir, decodeURIComponent(new URL(u).pathname));
   if (!existsSync(file)) return { ok: false, why: `文件不存在 ${rel(file)}`, where: rel(file) };

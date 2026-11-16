@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "title": "film-critique 可读性夹具：同字不同字重、一行分两色画",
+  "format": "9x16",
+  "fps": 30,
+  "sub": 1,
+  "entry": "scene.html",
+  "duration": 2,
+  "loop": false,
+  "checks": ["readability", "contrast"]
+}
