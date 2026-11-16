@@ -33,47 +33,89 @@ const PUNCT_END = /[，。、；：！？,.;:!?]$/;
 const key = (s) => String(s).replace(PUNCT, '').toLowerCase();
 const wlen = (s) => [...s].reduce((n, c) => n + (c.charCodeAt(0) < 128 ? 0.55 : 1), 0);
 
-/** 与 scripts/subs.py 的 chunk_words 同一算法：先按标点切意群，超长意群均分，再装箱。 */
+// 字幕显示的字 ≠ 念出来的 token。token 没有标点、按引擎的切法分词（edge 实测「叫定|宽曲|线」）、
+// 念法也不是写法（「百分之九十八点八」写作 98.8%）。tts.py 把稿子（或 script.json 的 caption）逐字挂到 token 上，
+// 每个词带 d（屏幕上显示成什么，可为空串）和 br（之后强制断行）。字幕一律显示 d；w 只用来查关键词。
+/** 词在屏幕上的样子：有 d 用 d，否则退回 token。 */
+export const disp = (w) => (w.d ?? w.w);
+
+/** 与 scripts/subs.py 的 chunk_words 同一算法：先按标点（和 br 强制断行）切意群，超长意群均分，再装箱。 */
 export function chunkWords(words, maxChars) {
   const phrases = [];
   let cur = [];
   for (const w of words) {
     cur.push(w);
-    if (PUNCT_END.test(w.w)) { phrases.push(cur); cur = []; }
+    if (w.br || PUNCT_END.test(disp(w))) { phrases.push(cur); cur = []; }
   }
   if (cur.length) phrases.push(cur);
   const pieces = [];
   for (const ph of phrases) {
-    const total = ph.reduce((n, w) => n + wlen(w.w), 0);
+    const hard = !!ph.at(-1).br;
+    const total = ph.reduce((n, w) => n + wlen(disp(w)), 0);
     const n = Math.max(1, Math.ceil(Math.ceil(total - 1e-9) / maxChars));
-    if (n === 1) { pieces.push(ph); continue; }
+    if (n === 1) { pieces.push(Object.assign(ph, { hard })); continue; }
     const target = total / n;
     let part = [], acc = 0, k = 1;
     for (const w of ph) {
-      part.push(w); acc += wlen(w.w);
+      part.push(w); acc += wlen(disp(w));
       if (acc >= target * k - 1e-6 && k < n) { pieces.push(part); part = []; k++; }
     }
     if (part.length) pieces.push(part);
+    pieces.at(-1).hard = hard;
+  }
+  // 不显示任何字的片段（写法≠念法时被并走的 token）跟前一段走，不单独成一块空字幕
+  for (let i = pieces.length - 1; i > 0; i--) {
+    if (pieces[i].every((w) => !disp(w)) && !pieces[i - 1].hard) {
+      pieces[i - 1] = Object.assign(pieces[i - 1].concat(pieces[i]), { hard: pieces[i].hard });
+      pieces.splice(i, 1);
+    }
   }
   const chunks = [];
   let box = [], len = 0;
   for (const pc of pieces) {
-    const L = pc.reduce((n, w) => n + wlen(w.w), 0);
+    const L = pc.reduce((n, w) => n + wlen(disp(w)), 0);
     if (box.length && len + L > maxChars) { chunks.push(box); box = []; len = 0; }
     box = box.concat(pc); len += L;
+    if (pc.hard) { chunks.push(box); box = []; len = 0; }
   }
   if (box.length) chunks.push(box);
   return chunks;
 }
 
 const isLatin = (c) => /[A-Za-z0-9]/.test(c ?? '');
-/** 拉丁词与相邻字之间补空格（接口返回的 token 不带空格）。返回每个词前面要不要空格。 */
+/** 词前要补的空格。带 d 的词：空格已经写在稿子里，不补。只有 token 时：拉丁词与相邻字之间补空格。 */
 export function spacing(words) {
+  if (words.some((w) => w.d != null)) return words.map(() => '');
   return words.map((w, i) => {
     if (!i) return '';
     const prev = words[i - 1].w;
     return (isLatin(prev.at(-1)) || isLatin(w.w[0])) && !PUNCT_END.test(prev) ? ' ' : '';
   });
+}
+
+const OPENERS = new Set('「『“‘（(《【[〈');
+const isKeyChar = (c) => key(c) !== '';
+/** 旧 narration.json（tts.py 加 d 字段之前生成的）：台词原文和 token 逐字一致时，把原文的标点挂回来。
+ *  对不上（写法≠念法、Whisper 反推）就不动——那种情况要重跑 tts.py --captions。 */
+function displayFromText(text, words) {
+  const chars = [...String(text ?? '')];
+  const out = words.map(() => '');
+  let i = 0, pending = '';
+  for (let k = 0; k < words.length; k++) {
+    let need = [...key(words[k].w)];
+    if (!need.length) continue;
+    let s = pending; pending = '';
+    while (need.length) {
+      if (i >= chars.length) return null;
+      const c = chars[i++];
+      if (isKeyChar(c)) { if (key(c) !== need[0]) return null; need.shift(); }
+      s += c;
+    }
+    while (i < chars.length && !isKeyChar(chars[i]) && !OPENERS.has(chars[i])) s += chars[i++];
+    out[k] = s;
+  }
+  while (i < chars.length) out[out.length - 1] += chars[i++];
+  return out;
 }
 
 /** 无状态便捷入口：findKeyword(narrationJson, '公开') -> { start, end, first, last }，查不到抛错。
@@ -98,8 +140,14 @@ export function makeNarration(data, { offset = 0, tail = 0 } = {}) {
     if (w.parts) y.parts = w.parts.map(sh);
     return y;
   };
-  const words = data.words.map((w) => ({ ...sh(w), k: key(w.w) }));
-  const lines = data.lines.map((l) => ({ ...l, ...sh(l), words: (l.words ?? []).map(sh) }));
+  // 没有 d 字段的旧文件：能逐字对上的句子现场补出显示文本（全片 words 是各句 words 按顺序拼起来的）
+  const legacy = !data.words.some((w) => w.d != null);
+  const lineDisp = legacy ? data.lines.map((l) => displayFromText(l.text, l.words ?? [])) : null;
+  const flatDisp = legacy && lineDisp.every(Boolean) && lineDisp.flat().length === data.words.length ? lineDisp.flat() : null;
+  const withD = (w, d) => (d == null ? w : { ...w, d });
+  const words = data.words.map((w, i) => ({ ...sh(withD(w, flatDisp?.[i])), k: key(w.w) }));
+  const lines = data.lines.map((l, li) => ({ ...l, ...sh(l),
+    words: (l.words ?? []).map((w, j) => sh(withD(w, lineDisp?.[li]?.[j]))) }));
   // 语义区间：script.json 台词里 [@id]…[@/id] 投影出的 {start, end, line, text}（tts.py 写；没写标记的片子没有这个键）
   const spans = Object.fromEntries(Object.entries(data.spans ?? {}).map(([id, v]) => [id, { ...v, ...sh(v) }]));
 
@@ -194,19 +242,26 @@ export function makeNarration(data, { offset = 0, tail = 0 } = {}) {
     activeWord(t) { return words.find((w) => t >= w.start && t < w.end) ?? null; },
 
     /** t 时刻该显示的字幕块 { text, words, spaces, start, end, activeIndex, progress, t }（纯数据）。
-     *  spaces[i] 是第 i 个词前要补的空格（拉丁词与相邻字之间）；progress 是当前词内的 0..1 进度。句间停顿返回 null。
-     *  绘制交给 film-typography 的 runtime/text.js。 */
-    captionAt(t, { maxChars = 16, hold = 0 } = {}) {
+     *  文字是稿子里的写法（带标点，见 disp）；词按标点和 br 断块。spaces[i] 是第 i 个词前要补的空格；
+     *  progress 是当前词内的 0..1 进度。句间停顿返回 null。绘制交给 film-typography 的 runtime/text.js。
+     *  endPunct: 'keep'（默认，照稿子显示）| 'drop'（去掉每块末尾的逗号句号等，问号叹号保留）——这是本片的排版选择，不是默认审美。 */
+    captionAt(t, { maxChars = 16, hold = 0, endPunct = 'keep' } = {}) {
       const ln = lines.find((l) => t >= l.start && t < l.end + hold);
       if (!ln || !ln.words.length) return null;
       const chunks = chunkWords(ln.words, maxChars);
-      const chunk = chunks.find((c, i) => t < (chunks[i + 1]?.[0].start ?? Infinity)) ?? chunks.at(-1);
+      let chunk = chunks.find((c, i) => t < (chunks[i + 1]?.[0].start ?? Infinity)) ?? chunks.at(-1);
       if (t < chunk[0].start) return null;
+      if (endPunct === 'drop') {
+        let j = chunk.length - 1;
+        while (j > 0 && !disp(chunk[j])) j--;
+        const trimmed = disp(chunk[j]).replace(/[，。、；：,.;:\s]+$/, '');
+        chunk = chunk.map((w, i) => (i === j ? { ...w, d: trimmed } : w));
+      } else if (endPunct !== 'keep') throw new Error(`captionAt: endPunct 只能是 keep / drop，收到 ${endPunct}`);
       const spaces = spacing(chunk);
       const activeIndex = chunk.findIndex((w) => t >= w.start && t < w.end);
       const aw = chunk[activeIndex];
       return {
-        text: chunk.map((w, i) => spaces[i] + w.w).join(''),
+        text: chunk.map((w, i) => spaces[i] + disp(w)).join(''),
         words: chunk, spaces,
         start: chunk[0].start, end: chunk.at(-1).end,
         activeIndex, t,

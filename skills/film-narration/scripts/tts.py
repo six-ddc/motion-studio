@@ -30,7 +30,7 @@
     python tts.py --film <slug> --only s3             # 只重合成一句，其余复用 out/vo/*.wav 和旧时间戳
     python tts.py --film <slug> --dry-run             # 只打印请求体（key 打码），不发请求、不计费
     python tts.py --film <slug> --check-timing        # 不合成，只对现有 narration.json 跑「字时间戳 vs 能量包络」自检
-    python tts.py --film <slug> --spans               # 不合成：按 script.json 的 [@id]…[@/id] 重算 narration.json 的 spans
+    python tts.py --film <slug> --spans               # 不合成：按 script.json 重算 narration.json 的区间 spans 和字幕显示字段（别名 --captions）
     python tts.py --list-edge-voices zh
 
 凭证（放 .env，别写进脚本或 prompt —— prompt 会被截图）：
@@ -49,6 +49,9 @@
     narration.json    绝对时间轴 + 字级时间戳，画面和字幕的唯一真相源（schema 见 references/schemas.md）
                       台词写了区间标记 [@id]…[@/id] 时多一个 spans: {id: {start, end, line, text}}；没写就没有这个键。
                       区间投影不上（字级时间戳和台词逐字对不上）→ narration.json 照写、不带 spans，退出码 7。
+                      每个词带字幕显示字段 d（屏幕上显示成什么，含标点；可为空串）和 br（之后强制断行）：
+                      TTS token 没有标点、分词不按意思，不能直接当字幕。显示文本取 script.json 这一句的 caption
+                      （写法和念法不同时写它，| 强制断行），否则取台词原文。对不上 → 那句不带 d，退出码 8（_caption.py）。
 """
 from __future__ import annotations
 
@@ -71,6 +74,7 @@ from film import parser, resolve_film, load_dotenv, out_dir, rel, die, need_file
 from _offset import narration_offset  # noqa: E402
 from _markup import parse as parse_markup, resolve as resolve_markup, needs_split, MarkupError  # noqa: E402
 from _markup import strip_spans, build_spans  # noqa: E402
+import _caption  # noqa: E402
 
 DRY_RUN = False
 URL_STREAM = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
@@ -481,6 +485,9 @@ def script_hash(spec: dict) -> str:
     # 区间标记 [@id] 不改声音：哈希里去掉它。没写区间的句子原样进哈希
     if any(strip_spans(str(l.get("text", ""))) != str(l.get("text", "")) for l in spec.get("lines") or []):
         blob_d["lines"] = [{**l, "text": strip_spans(str(l["text"]))} if "text" in l else l for l in spec["lines"]]
+    # 字幕显示文本 caption 不改声音：也不进哈希
+    if any("caption" in l for l in blob_d.get("lines") or []):
+        blob_d["lines"] = [{k: v for k, v in l.items() if k != "caption"} for l in blob_d["lines"]]
     for k in ("instruction", "contextTexts", "pitch"):
         if spec.get(k) is not None:
             blob_d[k] = spec[k]
@@ -595,6 +602,36 @@ def spans_or_report(spec: dict, nar_lines: list[dict]) -> tuple[dict | None, boo
     return sp or None, False
 
 
+def captions_or_report(spec: dict, nar_lines: list[dict]) -> bool:
+    """给每个词写字幕显示字段 d / br（_caption.py）。显示文本 = script.json 这一句的 caption，否则 = 台词原文（带标点）。
+    返回是否有句子对不上（对不上的句子不写 d，字幕退回 token 拼接，并报错）。"""
+    by_id = {(l.get("id") or f"L{i + 1}"): l for i, l in enumerate(spec.get("lines") or [])}
+    bad = False
+    n_cap = 0
+    for nl in nar_lines:
+        sl = by_id.get(nl["id"]) or {}
+        display = str(sl.get("caption") or nl.get("text") or "")
+        words = nl.get("words") or []
+        for w in words:
+            w.pop("d", None)
+            w.pop("br", None)
+        if not words or not display.strip():
+            continue
+        try:
+            for x in _caption.apply(display, words):
+                print(f"⚠ 字幕 {nl['id']}：{x}", file=sys.stderr)
+        except _caption.CaptionError as e:
+            print(f"✗ 字幕 {nl['id']}：{e}。这一句的字幕会退回 TTS token 拼接（没有标点、断句不对）", file=sys.stderr)
+            for w in words:
+                w.pop("d", None)
+                w.pop("br", None)
+            bad = True
+            continue
+        n_cap += "caption" in sl
+    print(f"✓ 字幕显示文本：{len(nar_lines)} 句（其中 {n_cap} 句用 caption 字段）")
+    return bad
+
+
 def refresh_spans(film: Path) -> int:
     """tts.py --spans：只重算 spans，其余字段原样、键序不变。返回退出码。"""
     nar_path = need_file(film / "narration.json", "先跑 tts.py 合成")
@@ -603,17 +640,16 @@ def refresh_spans(film: Path) -> int:
     sp, bad = spans_or_report(spec, nar.get("lines") or [])
     if bad:
         return 7
-    if not sp and "spans" not in nar:
-        print("✓ 台词里没有区间标记，narration.json 不动")
-        return 0
+    cap_bad = captions_or_report(spec, nar.get("lines") or [])
+    nar["words"] = [w for ln in nar.get("lines") or [] for w in ln.get("words") or []]
     nar.pop("spans", None)
     if sp:
         nar["spans"] = sp
     if nar.get("script_hash") not in (None, script_hash(spec)):
         print("⚠ script_hash 和当前 script.json 不一致：除区间以外还有别的改动，声音可能过期——该重合成的要重合成", file=sys.stderr)
     nar_path.write_text(json.dumps(nar, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    print(f"✓ narration.json spans {'已更新' if sp else '无（台词里没有区间标记）'}")
-    return 0
+    print(f"✓ narration.json spans {'已更新' if sp else '无（台词里没有区间标记）'}，字幕显示字段已更新")
+    return 8 if cap_bad else 0
 
 
 def main() -> None:
@@ -628,8 +664,8 @@ def main() -> None:
     ap.add_argument("--whisper-model", default="small")
     ap.add_argument("--check-timing", action="store_true",
                     help="不合成：只对现有 narration.json 跑字时间戳 vs 能量包络自检（退出 0 / 6）")
-    ap.add_argument("--spans", action="store_true",
-                    help="不合成：按 script.json 的区间标记重算现有 narration.json 的 spans（改了区间不用重花 TTS）")
+    ap.add_argument("--spans", "--captions", dest="spans", action="store_true",
+                    help="不合成：按 script.json 重算现有 narration.json 的区间 spans 和字幕显示字段 d/br（改了区间或 caption 不用重花 TTS）")
     ap.add_argument("--list-edge-voices", metavar="PREFIX")
     args = ap.parse_args()
 
@@ -926,6 +962,8 @@ def main() -> None:
         "lines": result_lines,
         "words": [w for ln in result_lines for w in ln["words"]],
     }
+    caps_bad = captions_or_report(spec, result_lines)
+    payload["words"] = [w for ln in result_lines for w in ln["words"]]
     spans, spans_bad = spans_or_report(spec, result_lines)
     if spans:
         payload["spans"] = spans       # 只在写了区间标记时出现
@@ -968,6 +1006,8 @@ def main() -> None:
         sys.exit(6)
     if spans_bad:
         sys.exit(7)
+    if caps_bad:
+        sys.exit(8)
 
 
 if __name__ == "__main__":

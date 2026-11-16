@@ -32,6 +32,7 @@ film.json 里的留白字段 · narration.json（含两个火山引擎的 token 
 | `_注释` | — | 自由格式的对象，**不发给接口**。约定的键有：`音色`（选择理由和指标）、`pronunciationDict`（为什么这样读）、`speechRate`、`事实核对` |
 | `lines[].timingWaive` | — | 字符串。当这一句的字级时间戳与能量包络的自检（`_timing.py`）报错，而**人已经听过**、确认是误报时，在这里写明理由。该句的失败会降为警告，理由随结果一起打印（`tts.py` 和 `align.py --verify` 都识别这个字段）。不发给接口 |
 | `lines[].gapAfter` | 顶层 `gap` | 这一句之后的静音秒数（≥ 0），覆盖 `gap`。在本地拼接，结果确定；写了这个字段的句子会在 narration.json 里记录 `gapAfter` |
+| `lines[].caption` | 台词原文 | 字幕上显示的写法，`\|` 表示强制断行。写法和念法不同（数字、符号、公式、英文缩写）或者要自己定断行时才写。不发给接口，不进 `script_hash`，改了不用重新合成，跑 `tts.py --captions` 即可。投影规则见 `scripts/_caption.py` |
 
 ### 语气与停顿控制（逐句 + 全片默认）
 
@@ -127,7 +128,9 @@ edge 引擎用 `voice`（如 `zh-CN-YunyangNeural`，可用 `tts.py --list-edge-
 | `lines[].wav` | string | 单句音频，`out/vo/<id>.wav` |
 | `words[]` | array | 全片的字级时间戳，按时间排序（等于各句 words 依次拼接） |
 | `spans` | object? | 只在台词里写了 `[@id]…[@/id]` 时出现，格式为 `{id: {start, end, line, text}}`。start/end 分别是区间首字的 start 和末字的 end（绝对秒），`text` 是区间内要念的字。`vo.span(id)` 读取它（会加上 offset）。可用 `tts.py --spans` 离线重新计算 |
-| `words[].w` | string | 一个 token。中文通常一个字一个 token，英文一个词一个 token。**标点归到哪个 token 因引擎而异**（见下表） |
+| `words[].w` | string | 一个 token。中文通常一个字一个 token，英文一个词一个 token。**标点归到哪个 token 因引擎而异**（见下表），edge 不返回标点，分词也不按意思。**不要拿它直接显示字幕**，字幕用 `d` |
+| `words[].d` | string | 这个词在字幕上显示成什么：取自 script.json 的 `caption` 或台词原文，带标点和空格；写法和念法不同的一段整体放在第一个 token 上，后面的 token 为空串。所有词的 `d` 拼起来就是这一句的显示文本 |
+| `words[].br` | true? | 只在 caption 写了 `\|` 的位置出现：显示完这个词之后强制断行 |
 | `words[].start` / `.end` | number | 绝对秒 |
 | `words[].conf` | number? | 置信度 0..1，只有 volcano-stream 提供；低于 0.4 要人听 |
 | `words[].alias` | string? | 发音词典的文本转写被还原时，记录接口原始返回的 token（如 `F F mpeg，`） |

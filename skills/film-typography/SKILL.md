@@ -133,9 +133,11 @@ drawCaption(ctx, cap, { font: `700 ${L.size(0.052)}px "本片字族"`, x: L.cx, 
 drawCaption(ctx, cap, { font, x: L.cx, y, style: (i, state, p) => ({ fill: state === 'future' ? A : B, dy: -p * L.size(0.004) }) });
 ```
 
+- **画的是稿子的写法，不是 TTS 的 token。** `drawCaption` 画每个词的 `d`（带标点，写法可以和念法不同，见 film-narration 第五节），没有 `d` 才退回 `w`。
+  自己排字幕时也要用 `d`（或 `disp(w)`）：token 没有标点，分词也不按意思，直接画出来就是一行断在词中间的字。
 - 布局一律用前缀测量（中英混排时，拉丁词之间的空格取 `cap.spaces`）。缺少外观参数就抛错，因为套件不提供默认的字幕样式。
 - 只画一行。多行、竖排、逐字入场的字幕，拿 `cap.words` 自己用 `wrapCJK` / `layoutCJK` / `prefixMeasure` 排。
-- 字幕文案（`narration.json` 里的全部字）要加进 `loadFonts`。字号下限按上表、**按字幕实际使用的字重**取值。
+- 字幕文案（`narration.json` 里全部词的 `d`，包括标点和 caption 里写的数字、符号）要加进 `loadFonts`。字号下限按上表、**按字幕实际使用的字重**取值。
 - **一次只显示一组**：任一时刻可见的字幕组 ≤ 1。`captionAt(t)` 是纯函数，天然不会有残留；自己排多组字幕时，不要让上一组的淡出叠在下一组上。
 - **第一组字幕不要从 0 s 开始**：0 s 就在的字会被读成"本来就印在画面上"，不像是在念；起点 ≥ 0.1 s（来源 HyperFrames captions，经验值）。如果要从 0 开始，写进 style_guide。
 

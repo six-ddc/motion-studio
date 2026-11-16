@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "film-core" / "lib"))
 from film import parser, resolve_film, need_file, rel, die  # noqa: E402
 from _offset import narration_offset  # noqa: E402
+from _caption import disp, apply as caption_apply, CaptionError  # noqa: E402
 
 
 PUNCT_END = tuple("，。、；：！？,.;:!?")
@@ -35,42 +36,54 @@ def wlen(w: str) -> float:
 
 
 def chunk_words(words, max_chars):
-    """先按标点切成意群，再把意群装箱到 ≤max_chars；单个意群超长时**均分**，
+    """先按标点（和 br 强制断行）切成意群，再把意群装箱到 ≤max_chars；单个意群超长时**均分**，
     不做贪心截断——贪心会留下「面。」这种 0.26 秒一闪的孤字（实测过）。
+    看的是显示文本 d（稿子里的写法，带标点；_caption.py），没有 d 才看 TTS token。
     runtime/narration.js 的 captionAt() 用同一算法，两条路的断行一致。"""
     phrases, cur = [], []
     for w in words:
         cur.append(w)
-        if w["w"].endswith(PUNCT_END):
+        if w.get("br") or disp(w).endswith(PUNCT_END):
             phrases.append(cur)
             cur = []
     if cur:
         phrases.append(cur)
-    pieces = []
+    pieces = []          # [(words, hard)]
     for ph in phrases:
-        total = sum(wlen(w["w"]) for w in ph)
+        hard = bool(ph[-1].get("br"))
+        total = sum(wlen(disp(w)) for w in ph)
         n = max(1, -(-int(total + 0.999) // max_chars))
         if n == 1:
-            pieces.append(ph)
+            pieces.append((ph, hard))
             continue
         # 均分：按累计宽度切到 n 份
         target, part, acc, k = total / n, [], 0.0, 1
         for w in ph:
             part.append(w)
-            acc += wlen(w["w"])
+            acc += wlen(disp(w))
             if acc >= target * k - 1e-6 and k < n:
-                pieces.append(part)
+                pieces.append((part, False))
                 part, k = [], k + 1
         if part:
-            pieces.append(part)
+            pieces.append((part, hard))
+    # 不显示任何字的片段（写法≠念法时被并走的 token）跟前一段走
+    i = len(pieces) - 1
+    while i > 0:
+        if not any(disp(w) for w in pieces[i][0]) and not pieces[i - 1][1]:
+            pieces[i - 1] = (pieces[i - 1][0] + pieces[i][0], pieces[i][1])
+            del pieces[i]
+        i -= 1
     chunks, cur, length = [], [], 0.0
-    for pc in pieces:
-        L = sum(wlen(w["w"]) for w in pc)
+    for pc, hard in pieces:
+        L = sum(wlen(disp(w)) for w in pc)
         if cur and length + L > max_chars:
             chunks.append(cur)
             cur, length = [], 0.0
         cur = cur + pc
         length += L
+        if hard:
+            chunks.append(cur)
+            cur, length = [], 0.0
     if cur:
         chunks.append(cur)
     return chunks
@@ -81,8 +94,11 @@ def _latin(c: str) -> bool:
 
 
 def join_words(ws) -> str:
-    """拉丁词与相邻字之间补空格，前一个词以标点结尾时不补（与 narration.js 的 spacing() 同规则）。
+    """带显示文本 d 的词：照稿子拼（空格和标点都在 d 里）。
+    只有 token 时：拉丁词与相邻字之间补空格，前一个词以标点结尾时不补（与 narration.js 的 spacing() 同规则）。
     接口返回的 token 不带空格，实测不补会出「调用seek」。"""
+    if any("d" in w for w in ws):
+        return "".join(disp(w) for w in ws)
     out, prev = "", ""
     for w in ws:
         t = w["w"]
@@ -152,12 +168,12 @@ def as_ass(blocks, width, height, font, size, karaoke) -> str:
                     parts.append(f"{{\\k{gap_cs}}}")
                 if w["end"] <= w["start"]:
                     # volcano-audio 的标点 token 是零宽的：不单独占 \\kf 时长，跟在前一个词后面
-                    parts.append(w["w"])
+                    parts.append(disp(w))
                     cursor = max(cursor, w["end"])
                     continue
                 cs = max(1, int(round((w["end"] - w["start"]) * 100)))
-                sep = " " if i and join_words([blk["words"][i-1], w]).count(" ") else ""
-                parts.append(f"{{\\kf{cs}}}{sep}{w['w']}")
+                sep = "" if "d" in w else (" " if i and join_words([blk["words"][i-1], w]).count(" ") else "")
+                parts.append(f"{{\\kf{cs}}}{sep}{disp(w)}")
                 cursor = w["end"]
             text = "".join(parts)
         else:
@@ -197,6 +213,14 @@ def main() -> None:
 
     def sh(w):
         return {**w, "start": w["start"] + off, "end": w["end"] + off}
+
+    if not any("d" in w for w in data["words"]):
+        # tts.py 加 d 字段之前生成的 narration.json：现场把台词原文挂上去（重跑 tts.py --captions 可写进文件，并支持 caption 字段）
+        for l in data["lines"]:
+            try:
+                caption_apply(l.get("text") or "", l.get("words") or [])
+            except CaptionError as e:
+                print(f"⚠ {l.get('id')}：{e}，这一句退回 TTS token（没有标点）", file=sys.stderr)
 
     blocks = []
     for line in [{**sh(l), "words": [sh(w) for w in l.get("words") or []]} for l in data["lines"]]:

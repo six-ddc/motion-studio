@@ -384,14 +384,15 @@ export function layoutCJK(ctx, text, size, { punct = 'adjacent' } = {}) {
  */
 export function layoutCaption(ctx, words, { spaces = null, joiner = '' } = {}) {
   const gaps = words.map((_, i) => spaces?.[i] ?? (i ? joiner : ''));
-  const lay = prefixMeasure(ctx, words.map((wd) => wd.w), { gaps });
+  const lay = prefixMeasure(ctx, words.map((wd) => wd.d ?? wd.w), { gaps });   // d：稿子里的写法（带标点），见 film-narration narration.js
   const out = lay.map(({ s, x, w }) => ({ w: s, x, width: w }));
   out.totalWidth = lay.totalWidth;
   return out;
 }
 
 /**
- * 逐词高亮字幕。cap 来自 film-narration 的 vo.captionAt(t)（{ words:[{w,start,end}], spaces, t }），或任何同形数据。
+ * 逐词高亮字幕。cap 来自 film-narration 的 vo.captionAt(t)（{ words:[{w,d,start,end}], spaces, t }），或任何同形数据。
+ * 画的是 d（稿子里的写法，带标点），没有 d 才画 w（TTS token，没有标点、分词不按意思）。
  * 外观全部由调用方按本片 style_guide 给，没有默认字体和配色（缺了就抛错，避免所有片子长成同一个字幕）。
  *
  *   drawCaption(ctx, cap, { font, x, y, align, idle, active, mode, stroke, lineWidth, alpha })
@@ -440,10 +441,10 @@ export function drawCaption(ctx, cap, opts) {
       ctx.lineJoin = 'round';
       ctx.lineWidth = s.lineWidth;
       ctx.strokeStyle = s.stroke;
-      ctx.strokeText(wd.w, px, py);
+      ctx.strokeText(wd.d ?? wd.w, px, py);
     }
     ctx.fillStyle = s.fill;
-    ctx.fillText(wd.w, px, py);
+    ctx.fillText(wd.d ?? wd.w, px, py);
     if (s.axes) clearAxes(ctx, font);
     ctx.restore();
   });

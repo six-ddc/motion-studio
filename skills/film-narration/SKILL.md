@@ -113,12 +113,24 @@ const both = vo.span('黑棋', '右边');   // 两个关键词之间
 
 ## 五、字幕：时间数据归这里，绘制归 film-typography
 
+**坑：TTS 的 token 不能直接当字幕。** 它没有标点（edge 返回时整句去掉），分词按引擎的切法而不是按意思（edge 实测切成「叫定|宽曲|线」），
+念法也不等于写法（念「百分之九十八点八」，屏幕上该写 98.8%）。直接拿 token 拼起来，就是一行没有标点、断在词中间的字，观众读不下去。
+所以**字幕的文字来自稿子，时间才来自 token**：
+
+- `tts.py` 把每句的显示文本逐字挂到念它的 token 上，给每个词写 `d`（这个词在屏幕上显示成什么，带标点，可以是空串）和 `br`（显示完它之后强制断行）。`w` 不变，`vo.at()` 仍按念出来的字查。
+- 显示文本默认是台词原文（去掉控制标记，保留标点）。**写法和念法不同、或者想自己定断行时，在 script.json 那一句写 `caption`**：
+  `{"text": "扫过的面积是百分之九十八点八。", "caption": "扫过的面积|是 98.8%。"}`，其中 `|` 表示强制断行。写法和念法不同的一段，会整段挂到念它的第一个 token 上。`caption` 只影响显示，不触发重新合成。
+- 只改了 caption 或标点时，跑 `tts.py --film <slug> --captions` 离线重算，不花 TTS 费用。caption 和念的字对不上（写成了另一句话）时，那一句会退回 token 拼接，退出码 8。
+- 旧的 narration.json 没有 `d` 字段：只要台词原文和 token 能逐字对上，运行时和 `subs.py` 会现场把标点挂回去；对不上就重跑 `--captions`。
+- 字幕是给人读的，断句要按意思来：一屏一个意群，不要把一个词拆到两屏。标点、断行、要不要保留句末逗号句号，是本片的排版决定，写进 style_guide。自检时要看字幕在画面上实际断成了什么样。
+
 ```js
-const cap = vo.captionAt(t, { maxChars: 14, hold: 0 });
-// 返回 { text, words: [{w, start, end}], spaces, start, end, activeIndex, progress, t }；句间停顿返回 null
+const cap = vo.captionAt(t, { maxChars: 14, hold: 0, endPunct: 'keep' });   // endPunct: 'drop' 去掉每屏末尾的逗号句号
+// 返回 { text, words: [{w, d, start, end}], spaces, start, end, activeIndex, progress, t }；句间停顿返回 null
 ```
 
-`words` 已经是成片时间，`spaces[i]` 是第 i 个词前要补的空格。分块时先按标点切意群，超长的意群均分后再装箱；`chunkWords(words, maxChars)` 单独导出，和 `subs.py` 用同一个算法。
+`words` 已经是成片时间，`text` 和绘制都用 `d`（`disp(w)` 单独导出）。分块时先按标点和 `br` 切意群，超长的意群均分后再装箱；
+不显示任何字的 token 并到前一屏，不会单独出现一块空字幕。`chunkWords(words, maxChars)` 单独导出，和 `subs.py` 用同一个算法。
 
 **画面内字幕**：把 `vo.captionAt(t)` 交给 film-typography 绘制，字幕和画面共享字体、配色、动效；代价是观众不能关闭，剪辑时不能修改，换语种要重新渲染。
 **导出字幕文件**：`subs.py --film <slug> [--format ass --font <字体>]`，观众可以关闭，剪辑师和译者能修改，平台可以渲染，还能做多语种；代价是 SRT 只有文字，ASS 的 `\kf` 逐词填色只在部分播放器或硬烧时生效，MP4 软字幕轨（mov_text）会丢掉全部样式。

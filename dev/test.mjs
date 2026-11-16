@@ -121,6 +121,12 @@ const UNITS = [
       const tail = (r.out + r.err).trim().split('\n').filter((l) => /通过|一致|失败/.test(l)).slice(0, 2).join(' / ');
       return { ok: r.code === 0, expect: 'exit 0', got: `exit ${r.code}  ${tail.slice(0, 70)}`, r };
     } },
+  { id: 'unit/film-narration _caption.py', why: '字幕显示文本挂到 TTS token：edge 怪分词补标点、写法≠念法整段挂、| 断行、开引号、对不上报错',
+    async go() {
+      const r = await run(PY, [join(SKILLS, 'film-narration/scripts/_caption.py')]);
+      const bad = (r.out + r.err).split('\n').filter((l) => l.startsWith('✗'));
+      return { ok: r.code === 0, expect: 'exit 0，全部 ✓', got: `exit ${r.code}  ${bad.join(' / ').slice(0, 70) || '全部 ✓'}`, r };
+    } },
   { id: 'unit/_test-typography tests/unit.mjs', why: 'text.js 的字体加载报错（拼错族名、缺字）与断行',
     async go() {
       const r = await run(process.execPath, [join(FIXTURES, '_test-typography/tests/unit.mjs')]);
