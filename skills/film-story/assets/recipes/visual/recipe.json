@@ -13,7 +13,7 @@
   "checks": ["page", "mp4", "readability", "contrast", "style-guide", "laws", "still", "cover", "rhythm", "continuity", "motion", "variety", "hook", "beatsync"],
   "next": [
     "1. 填 docs/brief.md —— 时长、画幅、参考锚、时间从哪来",
-    "2. 风格帧比稿：2–3 个方向各写一页 look/<名>.html，stills.mjs --entries 拼图，交给用户选（film-story references/lookdev.md §2）",
+    "2. 风格帧比稿：至少 3 个真正不同的方向各写一页 look/<名>.html，stills.mjs --entries 拼图，交给用户选（film-story references/lookdev.md §2）；style_guide 写视觉方向、能力取舍、冲击点",
     "3. 节奏骨架 → docs/beats.md（镜头边界读节拍栅格或一张具名时刻表）",
     "4. 粗剪预演：占位形状 + 真实的镜头运动和时刻，出小样确认节奏（lookdev.md §3）",
     "5. 逐镜精修 scene.html（守 film-core references/kernel.md）",

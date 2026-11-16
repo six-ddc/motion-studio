@@ -22,7 +22,7 @@
   "next": [
     "1. 填 docs/brief.md —— 先定画幅、时长、传播目标与说话姿态（人设）",
     "2. 涉及客观数据/历史/外部事实时做调研 → docs/memory-snapshot.md + docs/facts.md",
-    "3. 按题型定主轴、前 3 秒钩子与视觉方向 → docs/mechanism.md + docs/style_guide.md（可跑 siblings.mjs 看近作）",
+    "3. 按题型定主轴和前 3 秒钩子 → docs/mechanism.md；风格帧比稿：至少 3 个不同方向各一帧 → out/lookdev.png，挑一个（film-story references/lookdev.md §2）；style_guide 写视觉方向、能力取舍、冲击点（可跑 siblings.mjs 看近作）",
     "4. 写听觉化台词进 script.json（先跑 _timing.py estimate 估时长），再合成 narration.json",
     "5. 按实测锚点排分镜 → docs/shotlist.md（跑 check_shotlist.py --write）",
     "6. 写 scene.html（守 film-core references/kernel.md），先过静帧闸门再渲整片",

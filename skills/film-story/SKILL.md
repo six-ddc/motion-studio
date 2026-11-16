@@ -48,7 +48,7 @@ films/<slug>/docs/
 ├── facts.md            事实总表 + 原文出处 + 叙事权重骨架（有事实断言时用）
 ├── mechanism.md        视觉机制或叙事主轴、开场钩子、可选讲法比选
 ├── shotlist.md         镜头设计与 ```json 可执行分镜 spec（多镜/音画对账时用）
-└── style_guide.md      参考锚、视觉方向与近作对照、配色/字体/运动/本片拒绝项
+└── style_guide.md      参考锚、视觉方向与近作对照、能力取舍与冲击点、配色/字体/运动/本片拒绝项
 ```
 
 另可选 `look/<名>.html`（风格帧比稿）与 `docs/beats.md`（`--recipe visual` 节奏骨架）。用 `node <film-core>/scripts/new-film.mjs <slug> --recipe explainer`（或 `visual`）可一键生成模板；字段细节见 `references/templates.md`，完整解说片协作流见 `references/explainer.md`。
@@ -67,7 +67,8 @@ films/<slug>/docs/
 ### B. 参考拆解与"先看后写"（防闭门造车与成片返工）
 
 - **拆解同类好片**：拆对方怎么抓钩子、怎么映射核心关系、信息密度与运动手感（`scripts/motionprint.mjs` 测速度/静止占比/能量曲线），不照搬具体表皮。见 `references/deconstruct.md`。
-- **参考锚、风格帧比稿、粗剪预演**：在 `style_guide.md` 写清参考锚取什么不取什么；拿不准长相时先画 2–3 张静态风格帧拼图让用户挑，拿不准节奏时先用占位几何跑粗剪预演。见 `references/lookdev.md`。
+- **参考锚、风格帧比稿、粗剪预演**：在 `style_guide.md` 写清参考锚取什么不取什么。**新片默认先比稿**：至少 3 个真正不同的方向各画一帧，拼成一张图让用户挑（没人在场就自己选，并写下理由），其中至少一个不是你的第一反应；系列片沿用、brief 已经指定长相，或者用户说"直接出"时可以跳过，跳过要写理由。拿不准节奏时，先用占位几何跑一遍粗剪预演。见 `references/lookdev.md`。
+- **能力取舍与冲击点**：定方向时，对着 film-core §11 的能力表在 style_guide 里逐项表态（用在哪，或者为什么不用），并写下本片的 3–5 个冲击点。不规定答案，只要求每一项都是想过之后的决定，而不是没想到。见 `assets/style_guide.md`。
 - **近作对照**：跑 `node <film-story>/scripts/siblings.mjs --film <slug>` 生成 `out/siblings.png`，看清仓库里已有片子的真实画面，决定本片要拉开哪些维度，还是作为系列片有意沿用。
 
 ### C. 视觉机制与防默认诊断透镜（防退回廉价 PPT 模板）
