@@ -23,8 +23,7 @@
       [--family "Noto Sans SC Variable"]              # 包里有多个族时必填
       [--rename "Film Sans"] [--name noto-sans-sc]    # 产出族名 / 文件名前缀
       [--copy-chunks]                                 # 原样拷分片，不再子集化
-      [--license path/to/OFL.txt]                     # 包里找不到许可文件时必填
-  # -> assets/fonts/<name>/*.woff2 + 许可文件、assets/fonts/<name>.subset.css、<name>.subset.json
+  # -> assets/fonts/<name>/*.woff2、assets/fonts/<name>.subset.css、<name>.subset.json
   .venv/bin/python <film-assets>/scripts/subset_font.py --film <slug> --check assets/fonts/<name>.subset.css
 
 默认收字来源（都存在才读）：
@@ -34,12 +33,13 @@
 
 产出：
   assets/fonts/<name>.subset.<format>   子集字体
-  assets/fonts/<name>.subset.json       台账：源字体 sha256、字符集、来源、日期
+  assets/fonts/<name>.subset.json       记录：源字体路径与 sha256、字符集、收字来源、缺字放行声明（--check 沿用）、日期
 
 失败（缺源字体、源字体缺字、--check 发现缺字）时 exit 非 0，并在 stderr 说明。
 """
 from __future__ import annotations
 
+import argparse
 import datetime as _dt
 import hashlib
 import json
@@ -231,7 +231,7 @@ def _family_match(item: dict, families: list[str]) -> bool:
 
 def apply_allow(missing: list[str], allow: list[dict], families: list[str], what: str):
     """把缺字分成 (放行的 {标签: 字}, 照旧致命的 [字])，并把"作用域外"的情况讲清楚。
-    families：这款字体的族名（name 表 / CSS font-family / 台账 family），用于 '族名=' 限定。"""
+    families：这款字体的族名（name 表 / CSS font-family / .subset.json 的 family），用于 '族名=' 限定。"""
     live = [it for it in allow if _family_match(it, families)]
     skipped = [it for it in allow if it not in live]
     if skipped:
@@ -274,7 +274,7 @@ ALLOW_HINT = ("换字体、改文案；或确认这些字本来就不归这款�
 
 
 def allow_manifest(allow: list[dict], allowed: dict[str, list[str]]) -> dict:
-    """台账里记下放行声明与实际放行的字——--check 照同一份声明查。没用放行时不加键（旧台账形状不变）。"""
+    """.subset.json 里记下放行声明与实际放行的字——--check 照同一份声明查。没用放行时不加键。"""
     if not allow:
         return {}
     return {"allowMissing": [it["raw"] if it["raw"] else "*" for it in allow],
@@ -282,7 +282,7 @@ def allow_manifest(allow: list[dict], allowed: dict[str, list[str]]) -> dict:
 
 
 def manifest_allow(manifest_path: Path, cli_allow: list[str] | None) -> list[dict]:
-    """--check 用的放行声明 = 台账里建子集时记下的 + 命令行这次给的。旧台账没有这个键 → 只有命令行的。"""
+    """--check 用的放行声明 = 建子集时记进 .subset.json 的 + 命令行这次给的。没有这个键 → 只有命令行的。"""
     recorded = []
     if manifest_path.is_file():
         try:
@@ -290,7 +290,7 @@ def manifest_allow(manifest_path: Path, cli_allow: list[str] | None) -> list[dic
         except (json.JSONDecodeError, AttributeError):
             recorded = []
     if recorded:
-        print(f"  · 沿用台账 {manifest_path.name} 里的放行声明：{', '.join(recorded)}")
+        print(f"  · 沿用 {manifest_path.name} 里的放行声明：{', '.join(recorded)}")
     return parse_allow([*recorded, *(cli_allow or [])])
 
 
@@ -320,7 +320,6 @@ def check(film: Path, subset_path: str, extra_text, extra_files, cli_allow=None)
 # 都是这个形态。单文件接口吃不下它，使用者只能自己写挑片工具（见仓库 docs/verified/film-assets.md）。
 # ─────────────────────────────────────────────────────────────────────────────
 FONT_EXT = (".woff2", ".woff", ".ttf", ".otf")
-LICENSE_RE = re.compile(r"^(licen[cs]e|ofl|copying)([-_.][\w.-]*)?$", re.I)
 
 
 def _strip_css_comments(s: str) -> str:
@@ -419,14 +418,13 @@ def resolve_pack(spec: str, film: Path) -> Path:
     raise SystemExit
 
 
-def pack_info(css: Path) -> tuple[str | None, list[Path]]:
-    """返回 (包名@版本, 候选许可文件)。只在 node_modules 里往上找 package.json——
+def pack_ident(css: Path) -> str | None:
+    """返回包名@版本（记进 .subset.json，便于知道是从哪个版本挑的片）。只在 node_modules 里往上找 package.json——
     片子目录里的分片包往上走会撞到仓库根的 package.json，那不是字体的包。"""
-    ident, roots = None, [css.parent]
+    ident = None
     if "node_modules" in css.parts:
         d = css.parent
         while d.name != "node_modules" and d != d.parent:
-            roots.append(d)
             if (d / "package.json").is_file():
                 try:
                     pj = json.loads((d / "package.json").read_text("utf-8"))
@@ -435,20 +433,7 @@ def pack_info(css: Path) -> tuple[str | None, list[Path]]:
                     pass
                 break
             d = d.parent
-    else:
-        roots.append(css.parent.parent)
-    lic = []
-    for r in dict.fromkeys(roots):
-        lic += [p for p in sorted(r.iterdir()) if p.is_file() and LICENSE_RE.match(p.name)]
-    return ident, lic
-
-
-def license_facts(text: str, copyright_: str | None) -> dict:
-    blob = f"{text}\n{copyright_ or ''}"
-    rfn = re.findall(r"with Reserved Font Names?\s*[\"'“‘]([^\"'”’]+)[\"'”’]", blob, re.I)
-    kind = "SIL OFL 1.1" if re.search(r"SIL Open Font License", text, re.I) else (
-        "Apache-2.0" if "Apache License" in text else "（未识别，读原文）")
-    return {"license": kind, "reservedFontNames": sorted(set(rfn))}
+    return ident
 
 
 def pack_coverage(faces: list[dict], need: set[int]) -> dict[int, set[int]]:
@@ -485,13 +470,7 @@ def build_pack(film: Path, a, chars: set[str], sources: list[str]) -> None:
     bad = [f for f in faces if f["hasLocal"] or not f["path"]]
     if bad:
         die(f"{len(bad)} 个 @font-face 不是本地文件（local() 或外链），分片包必须是一组本地字体文件：{bad[0]['url']}")
-    ident, lic_found = pack_info(css)
-    lic_src = Path(a.license).resolve() if a.license else (lic_found[0] if lic_found else None)
-    if a.license and not lic_src.is_file():
-        die(f"--license 不存在：{lic_src}")
-    if not lic_src:
-        die(f"分片包旁边找不到许可文件（LICENSE / OFL.txt…，在 {css.parent} 及上级找过）。\n"
-            f"  OFL 等授权要求许可文本随字体分发。找到原文后用 --license 指定", 1)
+    ident = pack_ident(css)
 
     need = {ord(c) for c in chars}
     groups: dict[tuple[str, str], list[dict]] = {}
@@ -524,23 +503,14 @@ def build_pack(film: Path, a, chars: set[str], sources: list[str]) -> None:
             die(missing_report(f"分片包 {faces[0]['family']}", fatal, allowed, ALLOW_HINT), 1)
 
     by_index = {f["index"]: f for f in faces}
-    first = by_index[min(chosen)] if chosen else None
-    src_font = TTFont(str(first["path"]), lazy=True) if first else None
-    copyright_ = src_font["name"].getDebugName(0) if src_font else None
-    lic_text = lic_src.read_text("utf-8", errors="replace")
-    facts = license_facts(lic_text, copyright_)
     family_out = a.rename or faces[0]["family"]
     name = a.name or re.sub(r"[^\w-]+", "-", faces[0]["family"].lower()).strip("-")
-    if not a.copy_chunks and not a.rename:
-        hit = [r for r in facts["reservedFontNames"] if r.lower() in family_out.lower()]
-        if hit:
-            print(f"  ⚠ 族名 {family_out!r} 含保留字体名 {hit}：子集化算修改，公开分发时用 --rename 改名", file=sys.stderr)
 
     fonts_dir = film / "assets" / "fonts"
     out_dir = fonts_dir / name
     out_dir.mkdir(parents=True, exist_ok=True)
-    # 上次挑的片这次可能用不上了，留着会变成没入账的孤儿文件。只删上次台账里记着的——
-    # 目录里别的文件（手放的、别的工具生成的）不碰。
+    # 上次挑的片这次可能用不上了，留着会变成没人引用的孤儿文件。只删上次 .subset.json 里记着的
+    # （licenseFile 是旧版随附的许可文本）——目录里别的文件（手放的、别的工具生成的）不碰。
     prev = fonts_dir / f"{name}.subset.json"
     if prev.is_file():
         try:
@@ -550,8 +520,6 @@ def build_pack(film: Path, a, chars: set[str], sources: list[str]) -> None:
                     (film / old).unlink()
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
-    lic_dst = out_dir / lic_src.name
-    shutil.copyfile(lic_src, lic_dst)
 
     opts = ft_subset.Options()
     opts.flavor = "woff2"
@@ -598,15 +566,12 @@ def build_pack(film: Path, a, chars: set[str], sources: list[str]) -> None:
     css_out = fonts_dir / f"{name}.subset.css"
     css_out.write_text(
         f"/* 由 film-assets subset_font.py --pack 生成，别手改；改文案后重跑。\n"
-        f"   源：{src_label}（{css.name}）  族：{faces[0]['family']}  模式：{'原样拷贝分片' if a.copy_chunks else '逐片子集化'}\n"
-        f"   许可：{facts['license']}，原文随附 {lic_dst.relative_to(fonts_dir).as_posix()} */\n"
+        f"   源：{src_label}（{css.name}）  族：{faces[0]['family']}  模式：{'原样拷贝分片' if a.copy_chunks else '逐片子集化'} */\n"
         + "\n".join(rules) + "\n", "utf-8")
     manifest = {
         "kind": "pack",
         "source": src_label, "sourceCss": os.path.relpath(css, film), "sourceFamily": faces[0]["family"],
         "family": family_out, "mode": "copy" if a.copy_chunks else "subset",
-        "copyright": copyright_, **facts,
-        "licenseFile": lic_dst.relative_to(film).as_posix(), "licenseFrom": os.path.relpath(lic_src, film),
         "css": css_out.relative_to(film).as_posix(),
         "faces": out_faces,
         "chars": "".join(sorted(chars)), "charCount": len(chars), "missingInSource": miss_s,
@@ -618,9 +583,6 @@ def build_pack(film: Path, a, chars: set[str], sources: list[str]) -> None:
     print(f"✓ {faces[0]['family']}（{src_label}）：{len(faces)} 片中挑 {len(out_faces)} 片，"
           f"{fmt_size(before)} -> {fmt_size(after)}  ({len(chars)} 字符, {'原样拷贝' if a.copy_chunks else '逐片子集化'})")
     print(f"  {css_out}")
-    print(f"  许可：{facts['license']}"
-          + (f"，RFN {facts['reservedFontNames']}" if facts["reservedFontNames"] else "")
-          + f"；原文已拷到 {lic_dst.relative_to(film).as_posix()}")
     if missing:
         print(f"  ⚠ 分片包缺字（已按 --allow-missing 跳过）：{miss_s}", file=sys.stderr)
         for k, v in allowed.items():
@@ -628,13 +590,9 @@ def build_pack(film: Path, a, chars: set[str], sources: list[str]) -> None:
 
 
 def check_pack(film: Path, target: Path, family: str | None, extra_text, extra_files, cli_allow=None) -> None:
-    css, lic, mpath = target, None, target.with_suffix(".json")
+    css, mpath = target, target.with_suffix(".json")
     if target.suffix == ".json":
-        m = json.loads(target.read_text("utf-8"))
-        css, lic = film / m["css"], film / m["licenseFile"]
-    elif target.with_suffix(".json").is_file():
-        m = json.loads(target.with_suffix(".json").read_text("utf-8"))
-        lic = film / m["licenseFile"] if m.get("licenseFile") else None
+        css = film / json.loads(target.read_text("utf-8"))["css"]
     if not css.is_file():
         die(f"分片包 CSS 不存在：{css}")
     faces = parse_font_faces(css)
@@ -659,13 +617,6 @@ def check_pack(film: Path, target: Path, family: str | None, extra_text, extra_f
         problems.append(f"缺 {len(missing)} 个字（文案改过了？重跑 --pack）：{''.join(missing)}"
                         + (f"（另有 {sum(map(len, allowed.values()))} 个按声明放行："
                            + "；".join(f"[{k}] {len(v)}" for k, v in allowed.items()) + "）" if allowed else ""))
-    if lic is not None and not lic.is_file():
-        problems.append(f"许可文件不见了：{lic}（OFL 要求随字体分发）")
-    if lic is None:
-        here = [p.name for p in css.parent.iterdir() if p.is_file() and LICENSE_RE.match(p.name)]
-        sub = [p for d in css.parent.iterdir() if d.is_dir() for p in d.iterdir() if LICENSE_RE.match(p.name)]
-        if not here and not sub:
-            print(f"  ⚠ {css.parent} 附近没有许可文件；如果是 OFL 字体，许可原文要随附", file=sys.stderr)
     if lies:
         print(f"  ⚠ {len(lies)} 个字在某片的 unicode-range 里但那片的 cmap 没有：{''.join(map(chr, lies))[:40]}",
               file=sys.stderr)
@@ -690,10 +641,10 @@ def main() -> None:
                     help="保留的 OpenType 特性；竖排要 vert/vrt2，标点挤压要 palt/halt")
     ap.add_argument("--pack", help="分片包：npm 包名 / @font-face CSS 文件 / 含 index.css 的目录")
     ap.add_argument("--family", help="分片包里有多个族时，取哪一个（CSS 里的 font-family）")
-    ap.add_argument("--rename", help="分片包产出的族名（默认沿用原族名；有 RFN 且要公开分发时改名）")
+    ap.add_argument("--rename", help="分片包产出的 CSS 族名（默认沿用原族名）")
     ap.add_argument("--copy-chunks", action="store_true",
                     help="分片原样拷贝不子集化：字节与上游一致、可按 sha256 复核，代价是体积大（ghost-jam 实测约 8 倍）")
-    ap.add_argument("--license", help="许可文件；分片包旁边找不到时必填")
+    ap.add_argument("--license", help=argparse.SUPPRESS)  # 旧参数：不再拷许可文本，接受后忽略，免得旧命令报错
     a = ap.parse_args()
 
     film = resolve_film(a.film, a.films_dir)
@@ -736,7 +687,7 @@ def main() -> None:
     opts = ft_subset.Options()
     opts.flavor = "woff2" if a.format == "woff2" else None
     opts.layout_features = [f for f in a.keep_features.split(",") if f]
-    opts.name_IDs = ["*"]          # 保留 name 表（含版权/授权声明，OFL 要求随附）
+    opts.name_IDs = ["*"]          # 保留完整 name 表（族名、版本等元数据），只占几 KB
     opts.name_languages = ["*"]
     opts.notdef_outline = True
     opts.hinting = False           # 视频按像素渲染，hinting 只增体积
@@ -758,9 +709,6 @@ def main() -> None:
         "sourceFontNumber": a.font_number,
         "sourceSha256": hashlib.sha256(src.read_bytes()).hexdigest(),
         "family": family,
-        "copyright": font["name"].getDebugName(0),
-        "licenseDescription": font["name"].getDebugName(13),
-        "licenseURL": font["name"].getDebugName(14),
         "output": str(out.relative_to(film)),
         "chars": "".join(sorted(chars)),
         "charCount": len(chars),
@@ -774,7 +722,6 @@ def main() -> None:
     (out_dir / f"{name}.subset.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), "utf-8")
     print(f"✓ {family}: {fmt_size(before)} -> {fmt_size(after)}  ({len(chars)} 字符, {after/before*100:.2f}%)")
     print(f"  {out}")
-    print(f"  授权字段(name 13)：{(manifest['licenseDescription'] or '（字体里没写，去来源页确认）')[:120]}")
     if missing:
         print(f"  ⚠ 源字体缺字（已按 --allow-missing 跳过）：{''.join(missing)}", file=sys.stderr)
         for k, v in allowed.items():

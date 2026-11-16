@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// 自包含 + 台账检查。
+// 自包含检查（换台机器渲出来一样）。
 //   node <film-assets>/scripts/audit.mjs --film <slug>
-// 查：assets/ 下没进 LICENSES.md 的文件（台账一行可记一个 `dir/`）；入口页（film.json entry）/ 片内 runtime/ 里的 local()、file://、绝对路径、
-//     外链 http(s) 素材；用到了但没有本地 @font-face / FontFace 声明的字体族名。有问题 exit 1。
+// 查：入口页（film.json entry）/ 片内 runtime/ 里的 local()、file://、绝对路径、外链 http(s) 素材；
+//     用到了但没有本地 @font-face / FontFace 声明的字体族名。有问题 exit 1。
+// 不查授权、不要求素材台账：片子按个人使用处理，出处由作者发帖时自己注明。
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, isAbsolute } from 'node:path';
 import { FILM_OPTS, parseArgs, resolveFilm, fail } from '../../film-core/lib/film.mjs';
 
 const A = parseArgs({
   usage: 'node audit.mjs --film <slug>',
-  about: '自包含 + 台账检查：assets/ 未入 LICENSES.md 的文件、local()/file:// /绝对路径/外链素材、没有本地声明的字体族。有问题 exit 1。只读。',
+  about: '自包含检查：local()/file:// /绝对路径/外链素材、没有本地声明的字体族。有问题 exit 1。只读。',
   opts: { ...FILM_OPTS },
 });
 const die = (m, code = 2) => fail(m, code);
@@ -25,25 +26,7 @@ const walk = (d) => (existsSync(d) ? readdirSync(d).flatMap((n) => {
   const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p];
 }) : []);
 
-// 1. 台账
-const ledgerPath = F.path('assets/LICENSES.md');
-const assets = walk(F.path('assets')).map((p) => relative(F.dir, p))
-  .filter((p) => !p.includes('/_incoming/') && !/LICENSES\.md$|\.subset\.(?:json|css)$|\.DS_Store$|^assets\/text\//.test(p));
-if (!existsSync(ledgerPath)) {
-  if (assets.length) problems.push(`assets/ 有 ${assets.length} 个文件但没有 assets/LICENSES.md（模板在 film-assets/assets/LICENSES.md）`);
-} else {
-  const ledger = readFileSync(ledgerPath, 'utf8');
-  // 一行可以记一个目录（写成以 / 结尾的路径，如 `assets/fonts/noto-sans-sc/`）：
-  // 分片包几十个文件同源同授权，逐个记只会让台账没人看
-  const dirs = [...ledger.matchAll(/`((?:assets\/)?[^`\s]+\/)`/g)].map((m) => m[1].replace(/^assets\//, ''));
-  for (const a of assets) {
-    const short = a.replace(/^assets\//, '');
-    if (!ledger.includes(a) && !ledger.includes(short) && !dirs.some((d) => short.startsWith(d))) problems.push(`未入账：${a}`);
-  }
-  if (/待确认|TODO/.test(ledger)) problems.push('LICENSES.md 里还有"待确认/TODO"条目');
-}
-
-// 2. 引用检查
+// 引用检查
 const code = [F.path(F.config.entry), ...walk(F.path('runtime'))].filter((p) => existsSync(p) && /\.(html|m?js|css)$/.test(p));
 const declared = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'inherit', 'initial']);
 const used = new Map();
@@ -63,4 +46,4 @@ for (const p of code) {
 for (const [f, rel] of used) if (!declared.has(f)) problems.push(`${rel}: 字体族 "${f}" 没有本地 @font-face/FontFace 声明，会取本机字体或回退`);
 
 if (problems.length) { for (const p of problems) console.error(`✗ ${p}`); die(`${problems.length} 个问题`, 1); }
-console.log(`✓ ${F.slug}: ${assets.length} 个素材已入账，代码里无本机/外链依赖`);
+console.log(`✓ ${F.slug}: 代码里无本机/外链依赖，用到的字体族都有本地声明`);

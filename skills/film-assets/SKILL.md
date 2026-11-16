@@ -1,12 +1,15 @@
 ---
 name: film-assets
-description: 给代码渲染的片子找素材、确认授权、把素材处理成片子能自带的文件。要用字体（尤其中文字体）、图标、照片、视频素材、配乐或音效素材、纹理/HDRI、三维模型，或者要判断"这个文件能不能商用、要不要署名、能不能打包分发"时加载，包括用户只说"加个字体""找首能商用的曲子""找张图""这个能商用吗""片尾要署名吗"。也负责素材处理：中文字体子集化（单文件或 unicode-range 分片包）、验证字体真能渲出文案、SVG 图标转 canvas path、图片批量裁切缩放、音频转码、拆片帧网格、素材台账 LICENSES.md 与自包含检查、环境声自制还是找录音、参考影片的下载与授权。音效的合成、摆放与混音归 film-narration，拆解参考片归 film-story。
+description: 给代码渲染的片子找素材、把素材处理成片子能自带的文件。要用字体（尤其中文字体）、图标、照片、视频素材、配乐或音效素材、纹理/HDRI、三维模型时加载，包括用户只说"加个字体""找首曲子""找张图"。也负责素材处理：中文字体子集化（单文件或 unicode-range 分片包）、验证字体真能渲出文案、SVG 图标转 canvas path、图片批量裁切缩放、音频转码、拆片帧网格、自包含检查、环境声自制还是找录音、参考影片的下载。音效的合成、摆放与混音归 film-narration，拆解参考片归 film-story。
 ---
 
 # film-assets
 
-本 skill 管三件事：**素材从哪来、授权允不允许使用、怎么处理成片子能自带的文件**。它不管事实是否可信（归 film-story）、
+本 skill 管两件事：**素材从哪来、怎么处理成片子能自带的文件**。它不管事实是否可信（归 film-story）、
 素材怎么进画面（归 film-motion / film-typography / film-webfx）、声音怎么合成、摆放和混音（归 film-narration）。
+
+**片子是个人创作，素材按个人使用来处理。** 不用判断能不能商用、要不要授权、片尾要不要署名，片子里也不加任何署名、出处或"转载"字样。
+用了别人的素材、作品或画面，发帖时由作者自己在正文或备注里注明转载。想帮作者省事，可以在 `docs/sources.md` 随手记一行"用了什么、从哪来"，这一步可选，没有检查。
 
 ## 硬约束（违反就是 bug）
 
@@ -14,43 +17,20 @@ description: 给代码渲染的片子找素材、确认授权、把素材处理�
    字体随片打包是内核契约（`../film-core/references/kernel.md`），理由是**可复现性**：用系统字体时本机这次渲得对，
    换台机器就可能悄悄换了字形或回退到别的字体，而且没有报错。"每个字是不是都由随片字体画出来"由内核门 fontsrc（`node <film-core>/scripts/font_source.mjs --film <slug>`）
    机械判定，deliver 和 accept --deep 每次都会跑它（判定表与盲区见 `../film-core/references/kernel.md` 第 4 节）；写完第一版画字代码就跑一次，最省事。
-   fontsrc 不管的两件事由本 skill 负责：授权（`scripts/audit.mjs` 另外检查 `local()`、绝对路径、外链和台账），以及字体里的字够不够用（`--check`、`font_proof.mjs`）。
-2. **每个素材都要记进台账。** `assets/LICENSES.md`（模板在本 skill 的 `assets/LICENSES.md`）记录来源 URL、授权名称、
-   授权原文链接、是否需要署名和查证日期。`audit.mjs` 会列出 `assets/` 里没有记进台账的文件。
-3. **下载的文件是不可信数据。** 每个来源放进自己的新空目录（如 `assets/_incoming/<来源>/`），不在那个目录里运行解释器或构建工具；
+   fontsrc 不管的两件事由本 skill 负责：代码里的 `local()`、绝对路径、外链素材（`scripts/audit.mjs`），以及字体里的字够不够用（`--check`、`font_proof.mjs`）。
+2. **下载的文件是不可信数据。** 每个来源放进自己的新空目录（如 `assets/_incoming/<来源>/`），不在那个目录里运行解释器或构建工具；
    字体、SVG、音频都以路径参数的形式传给脚本。SVG 里可以带 `<script>`，`svg2path.mjs` 只读取几何数据，不执行脚本。
-4. **缺字时报错，不回退。** 子集化或换字体之后，只要有一个字回退到系统字体就是 bug（成片里会出现字重、字形突变）。
+3. **缺字时报错，不回退。** 子集化或换字体之后，只要有一个字回退到系统字体就是 bug（成片里会出现字重、字形突变）。
    `subset_font.py` 默认遇到缺字就 exit 1；`font_proof.mjs` 在 Chromium 里逐字验证。
 
-## 授权判据：先分清"渲染成像素"和"分发文件"
+## 什么时候自己拍、自己画或自己合成
 
-大多数素材授权限制的是**文件的分发**，而不是**渲染结果**：
-
-| 你在做的事 | 受什么约束 | 典型问题 |
-|---|---|---|
-| 把字体渲染成视频帧 | 字体许可里的"嵌入/输出"条款；OFL/Apache 没有限制 | 商业字体常把"视频/广告"列为需要单独付费的用途 |
-| 把字体文件放进 `films/<slug>/assets/` 并提交到 git | **分发**条款 | 仓库公开就等于分发。厂商自定的协议常禁止"提供下载渠道" |
-| 子集化字体 | **修改**条款 | OFL 允许修改，但有保留字体名（RFN）的问题；部分厂商协议禁止修改 |
-| 把图片或视频素材剪进片子 | 素材站许可 | 一般可以；"原样再分发""做成模板""用作商标/Logo"常被禁止 |
-| 配乐 | 同步权和平台 Content ID | **最容易出问题**，见 `references/audio.md` |
-| 发布素材包或模板 | 再分发条款 | 实际上只有 CC0 / OFL / MIT 这类真正自由的授权能放心打包 |
-
-### 授权会变：怎么核实
-
-`references/` 里的结论都带查证日期，只能当起点，不能当权威。使用前自己再核实一次：
-
-1. **找原始权利人发布的文本**（仓库根目录的 `LICENSE` / `OFL.txt`、官方下载包里的协议、官方 FAQ）。npm 包的 `license` 字段、第三方镜像和媒体报道**都不算数**（有 npm 包把厂商字体标成 GPL-3.0，那只是打包者自己的声明）。
-2. **字体要看文件自身的 name 表**（ID 13/14 分别是授权描述和授权 URL；`subset_font.py` 会打印出来）。命令见 `references/fonts.md` 第 1 节。
-3. **看版本**：同一款字体或图标库，不同版本的授权可能不同（Remix Icon 从 4.9 起改用自有协议）。台账要记**具体版本和下载日期**。
-4. **逐条回答四个问题**：能商用吗？要署名吗，署在哪里？能修改（包括子集化）吗？能放进仓库或交付给别人吗？任何一条答不上来，就按"不能"处理，记进台账的"待确认"。
-
-### 什么时候自己拍、自己画或自己合成
+这是效果和可控性的取舍：
 
 - **产品 UI、真实界面**：用真实截图，不用"差不多"的素材图，也不凭记忆画。
-- **真实人物、品牌、商标**：素材站的许可通常不包含肖像权和商标权，"图片可商用"不等于"图里的人或 Logo 可以为你的产品背书"。
-- **需要和 `seek(t)` 精确对齐的东西**（运动、参数可变的图形）：用代码画更可控，也没有授权问题。
-- **音效**：whoosh、thump、tick 这类声音用合成往往就够了，没有授权风险；判断标准见 `references/audio.md` 第 4 节。
-- **配乐**：如果找不到授权清晰的曲子，代价是可能被平台认领或静音，而且没有凭据可以申诉；各替代方案按代价排序见 `references/audio.md` 第 2 节。
+- **需要和 `seek(t)` 精确对齐的东西**（运动、参数可变的图形）：用代码画更可控。
+- **音效**：whoosh、thump、tick 这类声音用合成往往就够了，还能和事件逐帧对齐；什么时候值得找真实录音，见 `references/audio.md` 第 4 节。
+- **配乐**：可以用现成的曲子，也可以代码合成（film-narration）；各自的代价见 `references/audio.md` 第 2 节。
 
 ## 来源地图（按需要的素材类型查）
 
@@ -59,19 +39,15 @@ description: 给代码渲染的片子找素材、确认授权、把素材处理�
 选字体时要考虑以下几个维度（具体选择由 brief 和 `style_guide.md` 决定，本 skill 不给搭配方案）：
 - **字重数量，是否为可变字体**：要做字重动画就需要可变轴（wght）；只有 1-2 个字重的字体只能切换，不能插值。
 - **字符覆盖范围**：GB2312（6763 字）够日常文案用；人名地名、古文、繁体需要 GB18030 或大字库，覆盖范围窄的字体会在生僻字上回退。
-- **授权四问**：中文厂商字体（阿里/OPPO/小米/华为）大多是"免费商用，但限制修改或再分发"的自定协议。
 - **文件大小**：中文字体全量每个字重 8-30 MB，需要子集化；西文可变字体通常小于 500 KB，不必子集化。
 
-能放心子集化、放心提交进仓库的中文字体基本只有 OFL 系（思源/Noto CJK、霞鹜文楷、得意黑、Google Fonts 版站酷系列等）；本机系统字体只适合本地测试。清单见 `references/fonts.md` 第 2–5 节。
+常用的开源中文字体有思源/Noto CJK、霞鹜文楷、得意黑、站酷系列等，系统和网上的其他字体也可以用，下载下来放进片子就行。清单见 `references/fonts.md` 第 2–5 节。
 
-### 图标、图片、视频：见 `references/icons-images.md`（图标库的选择维度、各素材站许可、热链义务、再分发限制）
+### 图标、图片、视频：见 `references/icons-images.md`（图标库的选择维度、素材站、视频素材的处理）
 
 ### 3D 模型（GLB / glTF / HDRI）：做法见 `../film-webfx/references/models.md`
 
-台账里单列一类"3D 模型"，每个模型记一行。除了四个授权问题，还要多记三项：**来源**（素材站页面、厂商发布页或自建；自建的写明参考了哪些官方图）；**许可以及是否允许再分发**（不少模型站允许"渲染进作品"，但禁止再分发 .glb 文件本身，而片子目录进入公开仓库就等于再分发）；
-**是否包含商标外形或 Logo**（模型许可不授予商标权）。base64 内联的 `*.glb.js` 和原始 `.glb` 算同一个文件，记一行并注明。
-
-### 音频：见 `references/audio.md`（配乐的三重约束与来源表、合成与真实素材的选择判据、环境声自制配方与录音素材的对比）
+### 音频：见 `references/audio.md`（配乐的来源、合成与真实素材的选择判据、环境声自制配方与录音素材的对比）
 
 ## 素材处理（脚本）
 
@@ -85,13 +61,13 @@ description: 给代码渲染的片子找素材、确认授权、把素材处理�
 .venv/bin/python <fa>/scripts/subset_font.py --film <slug> \
     --font assets/fonts/src/SomeFont.ttf [--font-number 0]   # TTC 要指定第几个
     [--text "画面上额外出现的字"] [--text-file docs/onscreen.txt]
-# -> assets/fonts/<name>.subset.woff2 + <name>.subset.json（台账：源 sha256、字符集、来源）
+# -> assets/fonts/<name>.subset.woff2 + <name>.subset.json（源 sha256、字符集）
 .venv/bin/python <fa>/scripts/subset_font.py --film <slug> --check assets/fonts/<name>.subset.woff2   # 改文案后跑：缺字 exit 1
 node <fa>/scripts/font_proof.mjs --film <slug> --font assets/fonts/<name>.subset.woff2   # Chromium 逐字验证，样张出到 out/
 ```
 
 默认收录的字符包括：`script.json`/`narration.json` 里的全部字符串、`content.json` 的画面文字（基础槽位、claims，以及**全部变体覆盖内容的并集**，不收 note，所以变体里的新字不会漏）、`scene.html` 里的所有非 ASCII 字符、`assets/text/*.txt`、可打印 ASCII
-和常用中文标点。运行时拼出来的文字要放进 `assets/text/*.txt`。子集化的代价（改文案要重跑、RFN、厂商的修改条款、丢失 OpenType 特性）见 `references/fonts.md` 第 8 节。字体来源门在 film-core（见硬约束 1）。
+和常用中文标点。运行时拼出来的文字要放进 `assets/text/*.txt`。子集化的代价（改文案要重跑、丢失 OpenType 特性）见 `references/fonts.md` 第 8 节。字体来源门在 film-core（见硬约束 1）。
 
 ### SVG 转 path：`scripts/svg2path.mjs`
 
@@ -132,25 +108,25 @@ node <fa>/scripts/media.mjs tiles [--film <slug>] <视频> [--count 24 | --every
 node <fa>/scripts/audit.mjs --film <slug>
 ```
 
-检查以下内容：`assets/` 下没有记进 `LICENSES.md` 的文件（一行可以记一个 `dir/`）；入口页和片内 `runtime/` 里出现的 `local(...)`、`file://`、绝对路径、外链 http(s) 素材；CSS 或 canvas 里出现、但没有对应 `@font-face`/`FontFace` 的字族名。发现问题时 exit 1。字族名这一项靠正则匹配，看不到用变量拼出来的字体字符串，所以字体来源以 fontsrc 的结果为准。
-如果要让 deliver 和 accept --deep 也运行它，在 film.json 的 `checks` 里声明 `licenses`（由本 skill 的 `gates.json` 认领）。
+检查入口页和片内 `runtime/` 里出现的 `local(...)`、`file://`、绝对路径、外链 http(s) 素材，以及 CSS 或 canvas 里出现、但没有对应 `@font-face`/`FontFace` 的字族名。发现问题时 exit 1。
+字族名这一项靠正则匹配，看不到用变量拼出来的字体字符串，所以字体来源以 fontsrc 的结果为准。
+要让 deliver 和 accept --deep 也运行它，在 film.json 的 `checks` 里声明 `selfcontained`（旧名 `licenses` 也认），由本 skill 的 `gates.json` 认领。
 
 ## 目录约定（本片里）
 
 ```
 films/<slug>/assets/
-├── LICENSES.md        台账（从本 skill assets/LICENSES.md 拷）
 ├── _incoming/<来源>/   原始下载，不可信，不在这里跑任何东西；处理完可以删
 ├── fonts/
-│   ├── src/           全量源字体（是否进 git 看授权）
+│   ├── src/           全量源字体
 │   ├── *.subset.woff2 + *.subset.json          单文件子集
-│   └── <name>/ + <name>.subset.css + .subset.json   分片包（目录里含许可文件）
+│   └── <name>/ + <name>.subset.css + .subset.json   分片包
 ├── icons/             svg2path 产出的 JSON
 ├── img/  video/  audio/
-├── models/            GLB（或 base64 内联的 *.glb.js）、HDRI；进台账"3D 模型"一类
+├── models/            GLB（或 base64 内联的 *.glb.js）、HDRI；做法见 film-webfx references/models.md
 └── text/*.txt         画面上会出现、但不在 script.json 里的文字（供子集化收字）
 ```
 
 ## 参考影片
 
-下载参考影片（拆解归 film-story）只用于内部研究：放进 `assets/_incoming/refs/`，在台账里标注"仅参考，不进成片"。成片里如果出现参考影片的画面或音频，需要明确的授权，因为"合理使用"是上了法庭之后的抗辩理由，而不是事先取得的许可。
+下载参考影片（拆解归 film-story）放进 `assets/_incoming/refs/`。要剪进成片也可以，出处由作者发帖时注明，片子里不加字样。
