@@ -326,3 +326,9 @@ countRing 谓词缓存：5000 事件、谓词 on，每次调用 359.5 µs → 1.
 - cues.json 在 sfx.wav 生成之后改过：输入摘要会变（accept 红、要重新 deliver），但 deliver 不会替作者重跑 sfx.mjs，也不判 sfx.wav 过期——那是 film-narration 的 sfx.json 记录的事。
 - Node 侧记录是"合并写"：很久以前跑过、现在不用的脚本留下的条目也会被冻结；源头改过时 deliver 红，提示重跑或删记录。
 - 不经 openScene 自己开页的其它 skill 工具里，只有 film-physics physcheck 打开场景页，已补注入；film-critique 的拼图页、typography legibility、assets font_proof、story siblings 开的不是场景页，不需要。
+
+## 收据输入范围：工作笔记不算输入（2026-11-17，birthday 交付时发现）
+- 现象：birthday 交付后在 docs/PROGRESS.md、docs/review_log.md 记一笔，accept 就报"改过"，只能为一行笔记把整套 deliver（门 4/5 两遍全片渲染，约 25 分钟）重跑一遍。
+- 改法：`lib/receipt.mjs` 加 `NOT_INPUT = ['docs/PROGRESS.md', 'docs/review_log.md', 'look/']`，`receiptInputs` 跳过它们；`receiptState` 对旧收据（files 里还含笔记）按现行口径滤掉后比——前提是收据的 files 清单与它的 digest 自洽，手改过的收据不走这条宽口径。
+- 实测：`dev/test-receipt.mjs`（`node dev/test.mjs --only receipt`）6 项全过：改笔记/加比稿页 ok、改 scene.html/style_guide changed、旧收据兼容、手改 digest changed。films/birthday、films/reuleaux（两张旧格式收据）accept ✓；在两支片的 review_log/PROGRESS 各追加一行仍 ✓、在 birthday 的 brief.md 追加一行 ✗"改了 docs/brief.md"，随后都已还原。
+- 没覆盖：brief.md、mechanism.md、memory-snapshot.md 仍算输入（factcheck 会看 memory-snapshot 是否存在；brief/mechanism 没有门读，但它们是"本片设计"，留在收据里更保守）。

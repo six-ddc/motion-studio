@@ -227,7 +227,7 @@ Python 侧：`film.capability('film-x') → Path`（没装时 die 1）。运行�
 
 | 字段 | 含义 |
 |---|---|
-| `inputs.files` | 片子目录里 **out/ 以外**全部文件的 sha256（不含 receipt.json 自身；film.json 去掉 `renderer` 字段后再计算；跳过 .DS_Store/__pycache__/node_modules/.git）。在冻结之后计算，所以包含 `runtime/` 里冻结的副本 |
+| `inputs.files` | 片子目录里 **out/ 以外**全部文件的 sha256（不含 receipt.json 自身；film.json 去掉 `renderer` 字段后再计算；跳过 .DS_Store/__pycache__/node_modules/.git；**不含工作笔记与比稿页** `docs/PROGRESS.md`、`docs/review_log.md`、`look/`——没有门读它们，交付后记笔记不该让 accept 变红，名单是 `lib/receipt.mjs` 的 `NOT_INPUT`）。在冻结之后计算，所以包含 `runtime/` 里冻结的副本。旧收据里若含这些文件，accept 按现行口径滤掉后再比 |
 | `inputs.digest` | 按路径排序后，对 `路径\0sha\0…` 计算的 sha256。**accept 只比较这一个值** |
 | `runtime` | 渲染时实际加载的运行时；`from` 是冻结前的来源（`film`、skill 名或 `kit:<kit>@<版本>`） |
 | `node` | 只有片子有 Node 侧加载记录时才有：`{ runtime: {名: {from, sha256}}, scripts: {"{skills}/…/x.mjs": sha256} }`。runtime 已冻结进片内（所以在 `inputs` 里）；scripts 是生成音效/烘焙的工具脚本（与 render.mjs 同类，不冻结、不进 inputs），交付时它们若在生成之后改过，deliver 打 ⚠ |

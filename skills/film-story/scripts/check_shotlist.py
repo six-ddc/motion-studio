@@ -163,6 +163,13 @@ class Curves:
         if name not in self.spec:
             raise KeyError(f"曲线 {name} 没有在 curves 里声明")
         c = self.spec[name]
+        if not c.get("keys"):
+            src = c.get("source", "curve")
+            if src == "curve":
+                raise ValueError(f"曲线 {name} 没有 keys（默认 source: curve 要钉点；仿真/场景推出的量标 source: scene、pixels 或 anchor）")
+            raise ValueError(f"曲线 {name} 是 source: {src} 但没写 keys：segments（叙事区间）要靠意图钉点把取值范围换成秒数，"
+                             f"补一组 keys（例如 [[\"s7.start\", 0], [\"s7@词\", 253]]，只表意图，画面实测仍归 check.mjs），"
+                             f"或者这个区间别挂在 {name} 上")
         if "of" in c:
             keys = [(float(x), float(v)) for x, v in c["keys"]]
         else:

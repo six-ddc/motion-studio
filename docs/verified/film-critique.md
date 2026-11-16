@@ -650,3 +650,10 @@ ghost-jam 只声明 page 7.3s → 全开 13.6s（kinetics 6.2s）；demo-tls 全
 - beatsync 只在手写的 120bpm 栅格上测过，没在 beats.py 实测的拍点、music.json 的 sections / hits 上跑过；`offset` 参数没有夹具。
 - mute 看不见预渲染进位图 / 路径 / WebGL 的字；DOM 字幕以文本节点计，不判断字是否被遮挡。
 - 期望条目还没并进 dev/test-fixtures.json（本轮按约定只交出条目），所以 `dev/test.mjs` 暂不覆盖这五个夹具。
+
+## check.mjs 内存：证据帧落盘 + 分析页位图 close（2026-11-17，birthday）
+- 复现：films/birthday（9x16、64.2 s、10 fps 采样 643 帧），每条命令 4 GB cgroup 上限（memory.max=4294967296）。改前 `check.mjs --workers 1` 被 OOM 杀（dmesg：Killed process chrome-headless，anon-rss 1.3 GB），`--sample-fps 5` 也被杀（分析页渲染进程 6 分钟涨到 2.8 GB，Node 进程约 1.1 GB）。场景自身无泄漏：单页连续 seek/截图 640 次，渲染进程 RSS 稳定 170–210 MB。
+- 两个来源：①Node 端 `evidence` 把每个采样帧的整张 PNG 留在 Map 里（check.mjs 原 251/285 行）；②分析页 `A.load` 每帧 `createImageBitmap` 一张 1080×1920 位图，替换引用但不 `close()`（原 194 行），像素在 V8 堆外，GC 不急着收。本片还放大了①：毡面逐像素噪声让 PNG 1.8–3.7 MB/帧（片子已改成 0.4–1.5 MB）。
+- 改法：`DiskFrames`（Map 同形的 get/set/has，存 out/critique/.frames/，结束删）；`A.load` 先 close 上一张位图。
+- 实测（同一台机器、默认 2 worker、同一支片子）：跑完，FAIL 0 / LOOK 12 / HUMAN 3 与改前单 worker 结论一致；峰值 anon 3114 MB、最大渲染进程 1249 MB、Node 462 MB。`--only _test-critique`、`--only _test-kin-variety` 阴/阳性对照照旧。
+- 剩下的风险：峰值仍有 3.1 GB，离 4 GB 上限不远；最大的那个渲染进程还在随帧数涨（base64 截图字符串经 evaluate 传进分析页，GC 不及时），更长或更多 worker 的片子在小内存机器上仍可能被杀。根治要把 180px 缩略统计挪到 Node 侧（_pixels.mjs 的线程里已有 PNG 解码），这次没做。

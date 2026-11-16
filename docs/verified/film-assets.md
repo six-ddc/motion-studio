@@ -279,3 +279,9 @@ $ node media.mjs tiles --film weiqi2-l1 out/final-9x16.mp4 --words narration.jso
 - **"与常见印象不符的"四条**（霞鹜新晰黑是 IPA、思源/得意黑有 RFN、npm 包 GPL-3.0、方正四款）：原在 references/fonts.md 第 6 节，
   已删；霞鹜新晰黑并入 fonts.md 第 4 节表格，其余三条在表格备注里各留一处。全文见本文件第 1 节。
 - fonts.md 原第 10 节（font_source 判定表指针）与 SKILL.md 重复，删去；判定表本体在 film-core `references/kernel.md`。
+
+## 2026-11-17 · subset_font 收字：去掉 scene.html 注释、默认补字缺失不判红
+- 现象（birthday）：scene.html 模板注释里的"↓↓↓"、作者注释里的"①"被收进文案，加上默认补的"·"，展示字体（ZCOOL 青刻黄油体）没有这几个字，--pack 直接 exit 1，只能写 `--allow-missing 'chars:·↑↓≈×①'`。
+- 改法：收 scene.html 的字前去掉 HTML/JS 注释；默认补进来的 ASCII + 常用中文标点里文案没用到的字，字体缺了只提示不判红（三条路径：--pack、--font、--check）。
+- 对照：_test-subset/scene.html 加了含"鬣麤龘↯①↓"的三种注释；`--only subset` 2/2；用 HEAD 版 subset_font.py 跑同一个 pos 用例会红"缺 14 个字…鬣麤龘"。
+- 没解决：一份文案对应多款字体时，不分哪款字画哪些字（scene.html 里 Sans 画的"≈"会被算到展示字体头上）。

@@ -51,7 +51,7 @@
 - `claims.source` 疑点通过读取服务器的加载记录，判断本片加载了哪些 film-physics 运行时（film-physics 没有安装时，只认记录里标为 `from: film-physics` 的条目）。
 - 本片法律里的 HUMAN 条目写了 `from` / `to` 时，check.mjs 会保存时间窗中点的帧 `evidence-human-<id>-<t>s.png`，指明人该看哪一帧（结论仍是 HUMAN）；
   check.mjs 还会在 checks.json 旁写一份 `checks.json.meta.json` 记录新鲜度（见 `references/sampling.md` §4）。`duration.film`（film.json 的 duration 与 DURATION 对账）和 `determinism` 的 TODO 不受 `checks` 开关控制。
-- `continuity`、`rhythm`、`motion`、`variety`、`beatsync`、`hook`、`mute` **只报 LOOK / PASS / SKIP，永远不会 FAIL**，`--strict` 时 LOOK 照常算失败（与其他 LOOK 同一语义）；`explainer` 配方不会替片子声明它们和 `legible`。
+- `continuity`、`rhythm`、`motion`、`variety`、`beatsync`、`hook`、`mute` **只报 LOOK / PASS / SKIP，永远不会 FAIL**，`--strict` 时 LOOK 照常算失败（与其他 LOOK 同一语义）；`explainer` 配方只替片子声明其中的 `variety`（构图单调是解说片最常见的"做浅"，它只报 LOOK、不拦交付），其余几项和 `legible` 不声明。
   要把其中某个量当本片法律，写进 style_guide 的 critique 块（如 `max_still`）或 `laws[]` 的像素判据，走第 3 节的法律机制，这几项本身不升级。
 
 ## 1. 结论等级
@@ -103,7 +103,7 @@ MARKS 各字段：`load: true` 表示该事件在叙事上是关键事件（chec
 | `read_cps` | 阅读速度，默认 9 字/秒 | readability.time、mark.length |
 | `min_mark` / `sync_tol` | 关键事件的最短时长 / 事件对词的容差 | mark.* |
 | `empty_edge` | 判定"画面已空"的边缘像素占比 | empty.vo |
-| `facts_ignore` | 不参与对账的数字（正则，按整段匹配） | facts |
+| `facts_ignore` | 不参与对账的画面文字段（正则字符串或正则数组，任一条命中即排除；对每段文字做 `test`，要整段匹配就自己写 `^…$`） | facts |
 | `facts_single` | 孤立的单个数字：写 `"check"` 表示也参与对账；写其他字符串表示不对账，该字符串作为理由原样写进报告 | facts.single |
 | `ortho_ok` | 一句理由，说明大面积非等比变换是有意的（等轴测、图解风格），写了之后 `tilt.ortho` 转为 PASS | tilt.ortho |
 

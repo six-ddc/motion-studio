@@ -111,7 +111,7 @@ node <本skill>/scripts/legibility.mjs --film <slug> --cjk … --latin … --fra
     --weights 600 --max 220 --phases 8 --at 58.32 --chars "$(本片字幕文案)"
 ```
 
-**竖版平台遮挡带**（来源 HyperFrames vertical.md，**未核实，平台会改版**）：在 1080×1920 的信息流里，顶部约 168 px（8.75%）、1330 px 以下（约 30%）和右侧动作栏会被平台 UI 盖住，文字和主体应放在 168–1330 px 的区间内。要让机器检查，就在舞台里放透明的 `<div data-avoid="平台顶栏">`（以及底栏）盖住遮挡带，film-core preflight 的 overflow 检查会报出压住它的 `data-slot`。preflight 的 `--safe` 是四边对称的比例，表达不了这种不对称的遮挡。
+**竖版平台遮挡带**（来源 HyperFrames vertical.md，**未核实，平台会改版**）：在 1080×1920 的信息流里，顶部约 168 px（8.75%）、1330 px 以下（约 30%）和右侧动作栏会被平台 UI 盖住，文字和主体应放在 168–1330 px 的区间内。遮挡带不等于留空：那 30% 在成片文件、转发和别的平台上是露着的，空着就读成"下面三分之一没用上"（本仓库样例 birthday 被这样评价）。放可以被盖住也不损失信息的东西（背景延伸、次要运动、桌沿、次要装饰）是一种取舍，代价是平台 UI 压上去时画面更满。要让机器检查，就在舞台里放透明的 `<div data-avoid="平台顶栏">`（以及底栏）盖住遮挡带，film-core preflight 的 overflow 检查会报出压住它的 `data-slot`。preflight 的 `--safe` 是四边对称的比例，表达不了这种不对称的遮挡。
 
 ## 中日韩排版（细节见 references/cjk.md）
 

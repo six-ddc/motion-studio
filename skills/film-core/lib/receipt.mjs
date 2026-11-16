@@ -3,7 +3,9 @@
 // accept 对有收据的片子只做一件事：重算输入哈希，和收据比。一样 = 交付之后没人动过它（✓收据）；
 // 不一样 = 改过却没重新交付（红）。所以"输入"要包含一切会影响成片或检查结论的东西：
 // 片子目录里 out/ 以外的全部文件（场景、冻结的运行时、素材、narration.json、docs/、film.json）。
-// 不含：out/（产物）、receipt.json 自己、film.json 的 renderer 字段（render 渲完才记）、.DS_Store 之类。
+// 不含：out/（产物）、receipt.json 自己、film.json 的 renderer 字段（render 渲完才记）、.DS_Store 之类，
+// 以及 NOT_INPUT 列的工作笔记与比稿页：它们不影响成片，也没有任何门读它们；算进输入的代价是交付后记一笔笔记 accept 就红，
+// 只能为了一行笔记把整套门重跑一遍（birthday 实测一次 deliver 约 25 分钟）。
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -26,6 +28,15 @@ export function writeReceipt(dir, r) {
 }
 
 const SKIP = new Set(['.DS_Store', '__pycache__', 'node_modules', '.git']);
+// 不算收据输入的工作文件（相对片子目录）。判据：成片像素和任何门的结论都不读它。
+//   docs/PROGRESS.md    中途停下时的进度便条
+//   docs/review_log.md  评审记录：是检查的产物，不是输入（film-critique _inputs.mjs 同样不比它）
+//   look/               风格帧比稿页：不是入口，门不渲它们
+// 想让某个笔记受收据保护，就别放在这几个位置。
+export const NOT_INPUT = ['docs/PROGRESS.md', 'docs/review_log.md', 'look/'];
+export const isReceiptInput = (rel) => !NOT_INPUT.some((x) => (x.endsWith('/') ? rel.startsWith(x) : rel === x));
+const digestOf = (files) => { const h = createHash('sha256'); for (const [r, s] of Object.entries(files)) h.update(`${r}\0${s}\0`); return h.digest('hex'); };
+const onlyInputs = (files = {}) => Object.fromEntries(Object.entries(files).filter(([r]) => isReceiptInput(r)));
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
 /** 输入清单：{ algo, digest, files: { 相对路径: sha256 } } */
@@ -36,6 +47,7 @@ export function receiptInputs(dir) {
       if (SKIP.has(e.name)) continue;
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (r === 'out' || r === RECEIPT) continue;
+      if (!isReceiptInput(r) || (e.isDirectory() && !isReceiptInput(`${r}/`))) continue;
       let st = e;
       if (e.isSymbolicLink()) { try { st = statSync(join(d, e.name)); } catch { continue; } }
       if (st.isDirectory()) walk(join(d, e.name), r);
@@ -48,9 +60,7 @@ export function receiptInputs(dir) {
   };
   walk(dir, '');
   const sorted = Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  const h = createHash('sha256');
-  for (const [r, s] of Object.entries(sorted)) h.update(`${r}\0${s}\0`);
-  return { algo: 'sha256', digest: h.digest('hex'), files: sorted };
+  return { algo: 'sha256', digest: digestOf(sorted), files: sorted };
 }
 
 /** 两份输入清单的差别：{ changed, added, removed }（相对路径数组） */
@@ -87,7 +97,11 @@ export function receiptState(dir) {
   if (r.schema !== 1 || !r.inputs?.digest) return { state: 'broken', why: 'receipt.json 缺 schema/inputs.digest', receipt: r };
   const now = receiptInputs(dir);
   if (now.digest === r.inputs.digest) return { state: 'ok', why: '', receipt: r };
-  return { state: 'changed', why: `交付后改过、没重新交付：${describeDiff(diffInputs(r.inputs.files, now.files))}`, receipt: r };
+  // 旧收据（NOT_INPUT 出现之前写的）把工作笔记也算进了 files：按现行口径滤掉再比，笔记改了不算"改过"。
+  // 只在收据带 files 清单、且清单本身和它的 digest 对得上时才这么做（防手改收据）。
+  const was = r.inputs.files;
+  if (was && digestOf(was) === r.inputs.digest && digestOf(onlyInputs(was)) === now.digest) return { state: 'ok', why: '', receipt: r };
+  return { state: 'changed', why: `交付后改过、没重新交付：${describeDiff(diffInputs(onlyInputs(was), now.files))}`, receipt: r };
 }
 
 /**

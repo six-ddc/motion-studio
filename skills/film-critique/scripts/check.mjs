@@ -16,7 +16,7 @@
 // 跨能力（narration.js、tiltscan、check_shotlist.py）经 film-core 的 capability() 取：声明了要它的检查而它没装 →「缺能力 film-X」exit 1。
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { capability, hasCapability } from '../../film-core/lib/env.mjs';
 import { importRuntime } from '../../film-core/lib/runtime-node.mjs';
@@ -192,6 +192,8 @@ const ANALYSIS = () => {
     W: 180,
     async load(b64) {
       const bm = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob());
+      // 上一帧的位图显式 close：ImageBitmap 的像素在 V8 堆外，GC 不急着收，逐帧解码 1080×1920 会让分析页每帧涨约 8 MB（birthday 实测涨到 2.8 GB 被 OOM）
+      if (this.bm) { try { this.bm.close(); } catch { /* */ } }
       this.H = Math.round((bm.height * this.W) / bm.width); this.bm = bm;
       const c = new OffscreenCanvas(this.W, this.H).getContext('2d');
       c.drawImage(bm, 0, 0, this.W, this.H);
@@ -248,7 +250,20 @@ const lastT = (Math.round(D * F.fps) - 1) / F.fps;
 const N = Math.floor(D * sfps - 1e-9) + 1;
 const ts = Array.from({ length: N }, (_, i) => +(i / sfps).toFixed(4));
 const samples = [];
-const evidence = new Map();
+// 每个采样帧的整张截图（证据帧、像素法律、断言、运动读数都要回头取）。放磁盘不放内存：
+// 1080×1920 一帧 PNG 0.4–4 MB，643 帧全留在 Node 里就是 GB 级，60 秒竖版片在 4 GB 内存限额的机器上被 OOM 杀过（birthday，2026-11）。
+// 接口仍是 Map 的 get/set/has，调用点不变；目录在 out/critique/.frames/，每次运行开头清空、结束删掉。
+class DiskFrames {
+  constructor(dir) { this.dir = dir; this.keys_ = new Set(); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true }); }
+  file(t) { return join(this.dir, `${(+t).toFixed(4)}.png`); }
+  set(t, png) { writeFileSync(this.file(t), png); this.keys_.add(+t); return this; }
+  has(t) { return this.keys_.has(+t); }
+  get(t) { return this.keys_.has(+t) ? readFileSync(this.file(t)) : undefined; }
+  keys() { return this.keys_.values(); }
+  get size() { return this.keys_.size; }
+  dispose() { rmSync(this.dir, { recursive: true, force: true }); }
+}
+const evidence = new DiskFrames(join(outDir, '.frames'));
 // 运动读数：声明了才在 consume 里按时间顺序算（帧差能量、前景、运动区域），没声明的片子这里什么都不多做
 const KIN = KIN_IDS.some(on), kinRGB = on('motion') || on('variety') || on('hook');
 const kinAcc = KIN ? kineticsAccumulator() : null;
@@ -613,7 +628,8 @@ for (const s of samples) for (const g of joinRuns(s.texts)) { if (!segSeen.has(g
 //   没声明            疑点（LOOK），列出是哪些数、在哪一刻，不静默跳过
 // 只想排除其中一部分：facts_ignore（正则，按整段匹配）对单字同样生效。
 // 本片还可以用 critique 块的 facts_ignore（正则）排除装饰性数字，例如 HTTP 状态码底纹。
-const ign = laws.facts_ignore ? new RegExp(laws.facts_ignore) : null;
+// facts_ignore 可以是一条正则字符串，也可以是正则数组（任一条命中即排除）。以前只认字符串，写成数组会被 new RegExp 拼成逗号连接的一条、静默不生效
+const ign = laws.facts_ignore ? new RegExp([].concat(laws.facts_ignore).map((r) => `(?:${r})`).join('|')) : null;
 const isGlyphwise = (t) => [...t.trim()].length < 2 || !typeset.has(t);
 const shownTexts = [...segSeen.keys()].filter((t) => !isGlyphwise(t) && !(ign && ign.test(t)));
 const singleSegs = [...segSeen.keys()].filter((t) => isGlyphwise(t) && /\d/.test(t) && !(ign && ign.test(t)))
@@ -946,7 +962,7 @@ if (on('legible')) Object.assign(cost, await phase('legible', () => runLegible({
 
 // 页面报错按所有页面汇总（串行时它们都落在同一个页面上）
 const pageErrors = pool.errors();
-await pool.close(); await pix.close();
+await pool.close(); await pix.close(); evidence.dispose();
 if (on('page') && pageErrors.length) add('FAIL', '客观', 'page.errors', `页面报错 ${pageErrors.length} 条：${pageErrors.slice(0, 3).join(' | ')}`);
 cost.phases = { ...phases, total: Date.now() - tRun0 };
 cost.parallel = { ...pool.info, pixelThreads: pix.size };

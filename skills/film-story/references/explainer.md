@@ -52,6 +52,7 @@
 | `facts.script` | film-story（`factcheck.mjs`） | 旁白数字与事实对账（自动忽略行内语气/停顿/区间标记） |
 | `verify` | film-narration（`align.py --verify`） | 对成片音轨重新转写 |
 | `narration` `mp4` `truepeak` `loop` `readability` `contrast` `facts.screen` `style-guide` `laws` `still` `empty` `marks` `claims` `tilt` `page` | film-critique（`check.mjs`） | 见 film-critique `references/checks.md` 第 0 节 |
+| `variety` | film-critique（`check.mjs`） | 连续几镜构图几乎相同（景别、重心、填充率）：**只报 LOOK，永远不拦交付**，是给"一个机位到底"的自检提醒 |
 
 这些检查在 deliver 时才统一把关。做风格帧和粗剪的阶段不需要先让它们变绿：那时该花注意力的是画面，客观项留到实现之后一次清。
 声明了检查却没装认领它的 skill，就算缺少能力，deliver 会拒绝交付。不想要某一项就从 `checks` 里删掉：这些都是质量护栏，不是契约。

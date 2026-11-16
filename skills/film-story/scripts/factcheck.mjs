@@ -113,9 +113,29 @@ function numValue(m) {
 }
 
 // skipped：收集被单字闸挡掉、但后面紧跟汉字的单字数字（"三头""两端"），给提示用
+// 口播里的百分数与小数："百分之四十九点三" = 49.3%，"四十九点三" = 49.3。NUM_RE 只认整数中文数字，
+// 以前会把它们拆成"四十九"（单位"点三"）对账，片子只能把整句原文登记成匹配词绕过去（birthday 踩到）。
+// "点"后面逐位读（三点一四 = 3.14）；"百分之"的数带单位 %，和匹配词 `49.3%` 同口径。
+const CN_DEC = '零〇一二三四五六七八九';
+const SPOKEN_RE = new RegExp(`百分之([零〇一二两三四五六七八九十百千]+)(?:点([${CN_DEC}]+))?|([零〇一二两三四五六七八九十百千万亿]+)点([${CN_DEC}]+)`, 'g');
+const decOf = (d) => (d ? Number('0.' + [...d].map(c => CN_DIGIT[c]).join('')) : 0);
 function extractNumbers(text, skipped) {
   const out = [];
+  const spans = [];
+  for (const m of text.matchAll(SPOKEN_RE)) {
+    const pct = m[1] !== undefined;
+    const value = cnToNumber(pct ? m[1] : m[3]) + decOf(pct ? m[2] : m[4]);
+    if (!Number.isFinite(value)) continue;
+    const after = text.slice(m.index + m[0].length);
+    const tail = pct ? '%' + squash(after) : tailOf('', after);
+    const unit = pct ? '%' : unitIn(tail);
+    spans.push([m.index, m.index + m[0].length]);
+    out.push({ raw: m[0], value: +value.toFixed(10), unit, tail, shown: m[0] + (pct ? '' : unit), index: m.index, end: m.index + m[0].length, year: false });
+  }
   for (const m of text.matchAll(NUM_RE)) {
+    if (spans.some(([a, b]) => m.index >= a && m.index < b)) continue;
+    // "两两牵线""三三两两"：重叠的数字字是副词，不是数量
+    if (m[5] !== undefined && /^([两三])\1+$/.test(m[5])) continue;
     const raw = m[0];
     const after = text.slice(m.index + raw.length);
     const tail = tailOf(m[4], after);
@@ -133,7 +153,7 @@ function extractNumbers(text, skipped) {
     out.push({ raw, value, unit, tail, shown, index: m.index, end: m.index + raw.length,
                year: unit === '年' && value >= 100 && value <= 2100 });
   }
-  return out;
+  return out.sort((a, b) => a.index - b.index);
 }
 
 // 匹配词 → { value, unit } 或 null（按原文子串匹配）。

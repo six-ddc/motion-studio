@@ -18,7 +18,7 @@
   "film": { "narrationOffset": 0, "narrationTail": 0 },
   "checks": ["shotlist", "facts.script", "facts.screen", "verify",
              "narration", "mp4", "truepeak", "loop", "readability", "contrast", "style-guide",
-             "laws", "still", "empty", "marks", "claims", "tilt", "page"],
+             "laws", "still", "empty", "marks", "claims", "tilt", "page", "variety"],
   "next": [
     "1. 填 docs/brief.md —— 先定画幅、时长、传播目标与说话姿态（人设）",
     "2. 涉及客观数据/历史/外部事实时做调研 → docs/memory-snapshot.md + docs/facts.md",

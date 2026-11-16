@@ -106,8 +106,19 @@ def content_texts(doc) -> list[str]:
     return out
 
 
+# 默认补进来的 ASCII + 常用中文标点里、文案里其实没出现的字。字体缺这些字只提示不判红：
+# 它们是"以防万一"，不是本片要画的字（展示字体常没有「·」，以前会逼片子写 --allow-missing 去放行一个从没用过的字）。
+DEFAULT_ONLY: set[str] = set()
+
+
+def _strip_comments(src: str) -> str:
+    """scene.html 去掉 HTML/JS 注释再收字：注释里的 ↓↓↓、①、说明文字不会被画出来，收进来只会让缺字检查报假红。"""
+    src = re.sub(r"<!--.*?-->|/\*.*?\*/", "", src, flags=re.S)
+    return re.sub(r"(^|[\s;{}(),])//[^\n]*", r"\1", src)
+
+
 def collect(film: Path, extra_text: list[str], extra_files: list[str]) -> tuple[set[str], list[str]]:
-    chars: set[str] = set(ASCII) | set(CJK_PUNCT)
+    chars: set[str] = set()
     sources: list[str] = ["<ascii+cjk-punct>"]
     for rel in ("script.json", "narration.json", "docs/script.json"):
         p = film / rel
@@ -129,8 +140,8 @@ def collect(film: Path, extra_text: list[str], extra_files: list[str]) -> tuple[
         sources.append(f"content.json(基础+全部变体 {len(texts)} 段)")
     scene = film / "scene.html"
     if scene.is_file():
-        chars |= {c for c in scene.read_text("utf-8") if ord(c) > 0x7F}
-        sources.append("scene.html(non-ascii)")
+        chars |= {c for c in _strip_comments(scene.read_text("utf-8")) if ord(c) > 0x7F}
+        sources.append("scene.html(non-ascii，去注释)")
     for p in sorted((film / "assets" / "text").glob("*.txt")):
         chars |= set(p.read_text("utf-8"))
         sources.append(str(p.relative_to(film)))
@@ -144,7 +155,10 @@ def collect(film: Path, extra_text: list[str], extra_files: list[str]) -> tuple[
         chars |= set(t)
         sources.append(f"--text({len(t)} chars)")
     chars -= {"\n", "\r", "\t", "﻿"}
-    return chars, sources
+    defaults = set(ASCII) | set(CJK_PUNCT)
+    DEFAULT_ONLY.clear()
+    DEFAULT_ONLY.update(defaults - chars)
+    return chars | defaults, sources
 
 
 def load_font(path: Path, number: int) -> TTFont:
@@ -301,7 +315,7 @@ def check(film: Path, subset_path: str, extra_text, extra_files, cli_allow=None)
     chars, sources = collect(film, extra_text, extra_files)
     font = TTFont(str(p))
     cmap = font.getBestCmap()
-    missing = sorted(c for c in chars if ord(c) not in cmap and not c.isspace())
+    missing = sorted(c for c in chars if ord(c) not in cmap and not c.isspace() and c not in DEFAULT_ONLY)
     allow = manifest_allow(p.with_suffix(".json"), cli_allow)
     allowed: dict = {}
     if missing and allow:
@@ -490,6 +504,10 @@ def build_pack(film: Path, a, chars: set[str], sources: list[str]) -> None:
             remaining -= cover[best]
         missing |= {cp for cp in remaining if not chr(cp).isspace()}
 
+    soft = {cp for cp in missing if chr(cp) in DEFAULT_ONLY}
+    if soft:
+        print(f"  提示：字体没有这些默认补进来的字（文案里没用到，不判红）：{''.join(sorted(chr(c) for c in soft))}", file=sys.stderr)
+        missing -= soft
     miss_s = "".join(sorted(chr(c) for c in missing))
     allow = parse_allow(a.allow_missing)
     allowed: dict = {}
@@ -607,7 +625,7 @@ def check_pack(film: Path, target: Path, family: str | None, extra_text, extra_f
     have = set().union(*cover.values()) if cover else set()
     lies = sorted({cp for f in faces for cp in need
                    if _in_spans(cp, f["spans"]) and cp not in cover.get(f["index"], set())})
-    missing = sorted(chr(c) for c in need - have if not chr(c).isspace())
+    missing = sorted(chr(c) for c in need - have if not chr(c).isspace() and chr(c) not in DEFAULT_ONLY)
     allow = manifest_allow(mpath, cli_allow)
     allowed: dict = {}
     if missing and allow:
@@ -672,7 +690,10 @@ def main() -> None:
     chars, sources = collect(film, a.text, a.text_file)
     font = load_font(src, a.font_number)
     cmap = font.getBestCmap()
-    missing = sorted(c for c in chars if ord(c) not in cmap and not c.isspace())
+    soft = sorted(c for c in chars if ord(c) not in cmap and c in DEFAULT_ONLY)
+    if soft:
+        print(f"  提示：字体没有这些默认补进来的字（文案里没用到，不判红）：{''.join(soft)}", file=sys.stderr)
+    missing = sorted(c for c in chars if ord(c) not in cmap and not c.isspace() and c not in DEFAULT_ONLY)
     allow = parse_allow(a.allow_missing)
     allowed: dict = {}
     if missing and not allow:

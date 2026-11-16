@@ -943,3 +943,7 @@ style_guide 拒绝条目的样例（原在 SKILL.md 第 7 步，只说明格式"
 夹具 `tests/fixtures/_test-probe`：匀速摇镜 + 1.6 s 起 2.5 Hz 衰减震动。`scene.html` 从波峰起拍（1.6 s 位置跳 40 px）→ 标 cam_x、cam_y @1.600s(f48)，glow 不标；
 `scene-ease.html` 同样的震动带 0.15 s 包络 → 0 处；`scene-noprobe.html` → exit 2。早先按"|Δ| > 3× 前后帧步长"判，7 Hz 震动在 30 fps 下每帧步长都大，起拍那帧漏标——改为比加速度 |Δ−Δ前| 与邻近 ±6 帧中位。
 没测到：forge 没有 window.probe（不改它），1.6 s 那次怀疑没在 forge 上复核；硬切、离散计数信号会被标，未做豁免。
+
+## 2026-11-17 · birthday 交付暴露的两处脚本问题
+- check_shotlist：segments 挂在 `source: scene` 且没写 keys 的曲线上，`_keys()` 直接 `c["keys"]` 抛 KeyError，报告里只剩 `[失败] 区间 253 对: 'keys'`。改成可读报错（说清是 source:scene 缺意图钉点、怎么补）。对照夹具 tests/fixtures/_test-storyboard/scene-nokeys（期望红 + 新判词、且不出现旧的 `'keys'`），`--only storyboard` 5/5。
+- factcheck：口播"百分之四十九点三"被拆成"四十九"+单位"点三"、"两两牵线"被读成 22，片子只能把整句原文登记成匹配词绕过。加了口播百分数/中文小数的抽取（值 + 单位 %），叠字（两两、三三）不算数。selftest 新增 spoken-percent（绿）、red-spoken-percent、red-spoken-decimal-unit（红），27/27；align.py --selftest 交叉校验 33/33 一致。

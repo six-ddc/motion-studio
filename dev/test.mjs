@@ -137,6 +137,12 @@ const UNITS = [
         : !j ? '输出不是 JSON' : `good=${j.good} typo=${j.typo === 'ok' ? 'ok(应报错)' : '报错'} 缺字=${j.missingGlyph === 'ok' ? 'ok(应报错)' : '报错'}`;
       return { ok, expect: 'exit 0；good 能加载，拼错/缺字报错', got, r };
     } },
+  { id: 'unit/film-core receipt 输入范围', why: '工作笔记（PROGRESS、review_log、look/）不算收据输入：改它们 accept 仍绿；改场景/style_guide 变红；旧收据兼容；手改收据不放过',
+    async go() {
+      const r = await run(process.execPath, [join(DEV, 'test-receipt.mjs')]);
+      const bad = (r.out + r.err).split('\n').filter((l) => l.startsWith('✗'));
+      return { ok: r.code === 0 && /全部通过/.test(r.out), expect: 'exit 0，全部通过', got: `exit ${r.code}  ${bad.join(' / ').slice(0, 80) || '全部 ✓'}`, r };
+    } },
   { id: 'unit/film-core content.json 变体', why: 'content.js 校验与合并的阴/阳性对照 + render --matrix 端到端（跨变体复用分片、清单、未接 content.js 报错）',
     async go() {
       const r = await run(process.execPath, [join(DEV, 'test-content.mjs')]);
