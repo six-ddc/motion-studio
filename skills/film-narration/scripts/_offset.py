@@ -50,8 +50,27 @@ def _shotlist_spec(film: Path):
 
 
 def _scene_imports(film: Path, name: str) -> bool:
+    # 1) 优先看真实加载记录（out/.render/runtime.json）
+    rec = film / "out" / ".render" / "runtime.json"
+    if rec.exists():
+        try:
+            files = json.loads(rec.read_text(encoding="utf-8")).get("files") or {}
+            if name in files:
+                return True
+        except ValueError:
+            pass
+    # 2) 再扫入口页与本地 JS 模块（兼容 scene.html -> scene.js / shots/*.js 的多模块长片）
+    needle = f"runtime/{name}"
     entry = film / (film_json(film).get("entry") or "scene.html")
-    return entry.exists() and f"runtime/{name}" in entry.read_text(encoding="utf-8")
+    if entry.exists() and needle in entry.read_text(encoding="utf-8"):
+        return True
+    for p in list(film.glob("*.js")) + list(film.glob("*.mjs")) + list((film / "shots").glob("*.js")):
+        try:
+            if needle in p.read_text(encoding="utf-8"):
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def offset_links(film: Path, offset: float, sfx: Path | None = None) -> tuple[list[str], list[str]]:

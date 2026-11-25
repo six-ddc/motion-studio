@@ -76,6 +76,7 @@ const args = parseArgs({
     'chunk-seconds': ['<S>', '分片秒数（默认 1）'], capture: ['<cdp|locator>', '截图方式（默认 cdp）'],
     png: ['<fast|default>', '截图 PNG 编码（默认 fast）'], 'pin-renderer': '把渲染环境指纹钉进 film.json',
     'no-cache': '不用分片缓存', 'clean-cache': '先清掉分片缓存', scale: ['<k>', '缩放（如 0.5 出小样）'],
+    draft: '迭代小样快捷档：等价 --scale 0.5 --sub 1 --preset veryfast（可被显式参数覆盖），产物进 out/draft/',
     'no-adaptive': '关掉自适应子帧', 'motion-px': ['<px>', '自适应：每张子帧对应的位移（默认 6）'],
     'sub-min': ['<N>', '自适应子帧下限（默认 4）'], 'sub-max': ['<N>', '自适应子帧上限（默认 48）'],
     variant: ['<id>', '按 content.json 渲一个变体（如 hook-b.cta-a；base = 不覆盖）→ out/variants/<id>/'],
@@ -151,18 +152,19 @@ function ranges(idx, from, fps) {
 await main(async () => {
   const F = resolveFilm(args.film, args);
   const C = F.config;
+  const isDraftFlag = args.has('draft');
   const fps = args.num('fps', C.fps);
-  const sub = args.num('sub', C.sub);
+  const sub = args.num('sub', isDraftFlag ? 1 : C.sub);
   const shutter = args.num('shutter', C.shutter);
   const crf = args.num('crf', C.crf);
-  const preset = args.flag('preset', 'slow');
+  const preset = args.flag('preset', isDraftFlag ? 'veryfast' : 'slow');
   // 固定值，不随机器核数变：并行度来自多个 worker 各起一个 ffmpeg，单进程线程数不需要大
   const x264Threads = args.num('x264-threads', 4);
   if (!(Number.isInteger(x264Threads) && x264Threads >= 1)) fail(`x264-threads 必须是 ≥1 的整数，收到 ${x264Threads}`);
   const capture = args.flag('capture', 'cdp');
-  // --scale：迭代用的缩小版。只在截图时降采样（见 lib/browser.mjs），产物进 out/draft/，名字带比例，
+  // --scale / --draft：迭代用的缩小版。只在截图时降采样（见 lib/browser.mjs），产物进 out/draft/，名字带比例，
   // 不叫 silent-*/final-* —— 下游按名字挑成片的工具（mux.sh、contact.sh、align.py）因此挑不中它。
-  const scale = args.num('scale', 1);
+  const scale = args.num('scale', isDraftFlag ? 0.5 : 1);
   const draft = scale !== 1;
   if (draft && capture !== 'cdp') fail('--scale 只支持 --capture cdp');
   const workers = args.num('workers', Math.max(1, Math.min(16, Math.floor(cpus().length / 2))));

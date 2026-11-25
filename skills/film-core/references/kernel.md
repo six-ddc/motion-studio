@@ -65,7 +65,8 @@ window.seek  = (t) => { clear(); for (const c of clips) c.render(c.map ? c.map(t
 
 | 来源 | 如何关掉自带时钟并映射 t | 状态 |
 |---|---|---|
-| 手写 canvas 2D / SVG | 不需要处理 | 已验（全部现有片子） |
+| 手写 canvas 2D / SVG / HTML+CSS 静态样式 | 不需要处理（JS 按 t 直接写 DOM 样式或属性即可） | 已验（全部现有片子） |
+| GSAP / 任意时间轴库 | `gsap.ticker.sleep()` 或暂停 timeline（`paused: true`），seek 里调用 `tl.seek(t, false)`（不触发内部时钟） | 推演（与 Lottie 同构，接入后用 seamcheck 验） |
 | three.js | 用 film-webfx `stage3d.js` 的 `S.frame(t, paint)`（每帧复位到冻结时的姿态）；原版 three 也可以，只要不使用 `setAnimationLoop` / `Clock` | 已验（#41，weiqi-fx-open） |
 | 片元着色器 | 用 film-webfx `webfx.js` 的 `fx.render(t)`，时间只通过 uniform 传入 | 已验 |
 | 增量引擎：物理、ECS、游戏逻辑 | 用 film-physics `createReplay({init, step, clone})` 做定步重放加检查点，seek 里调用 `draw(stateAt(t))` | 已验（physcheck）；接入 Phaser 之类属于推演 |

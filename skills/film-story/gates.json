@@ -3,8 +3,8 @@
   "gates": [
     {
       "id": "shotlist",
-      "about": "check_shotlist.py：分镜 ↔ narration.json 对账（锚点、覆盖、重要区间时长、旁白断言）",
-      "when": { "checks": ["shotlist"] },
+      "about": "check_shotlist.py：分镜 ↔ narration.json 对账（锚点、覆盖、重要区间时长、旁白断言；旧名 divergence 仍认领以兼容老片）",
+      "when": { "checks": ["shotlist", "divergence"] },
       "run": ["python", "{skill}/scripts/check_shotlist.py", "--film", "{slug}", "--films-dir", "{films}"],
       "cost": 1
     },

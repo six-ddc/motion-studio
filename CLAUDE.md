@@ -4,100 +4,66 @@
 
 ## 做片子
 
-读 `film-core` skill。它是入口：建内核骨架（解说片流程是可选配方 `--recipe explainer`，镜头节奏先定的片子用 `--recipe visual`），给出 seek(t) 契约，并指出每步该读哪个 skill。
-或者 `/film`。
+读 `film-core` skill 或直接用 `/film`。
 
 ```bash
 node skills/film-core/scripts/new-film.mjs <slug> --format 9x16
-node skills/film-core/scripts/deliver.mjs --film <slug>     # 定稿渲染 → 全部适用的门 → 冻结运行时 → receipt.json
+node skills/film-core/scripts/render.mjs --film <slug> --draft     # 探索期快速小样（0.5x / sub=1 / veryfast）
+node skills/film-core/scripts/deliver.mjs --film <slug>            # 定稿渲染 → 全部适用的门 → 冻结运行时 → receipt.json
 ```
 
-片子在 `films/<slug>/`，一切产出进 `out/`。新片不拷运行时：服务器把 `/runtime/*` 解析为"片内同名文件优先，否则套件里的"；
-`deliver` 过门后把实际加载的运行时冻结进片子 `runtime/`，写入库的 `receipt.json`。交付之后改了任何输入，accept 就是红的，重新 deliver。
+片子在 `films/<slug>/`，产出进 `out/`。新片不拷运行时：服务器按"片内 `runtime/` 优先，否则套件挂载"解析 `/runtime/*`；`deliver` 过门后冻结进片子 `runtime/` 并写 `receipt.json`。
 
-配方不是唯一做法：配乐片、Lottie 片、游戏思路的片子各按自己的时间真相源排序。
-唯一绕不开的是 `skills/film-core/references/kernel.md`。风格和思路是菜单，不是规定（`film-core/references/style-menu.md`）；
-片子可以整体采用一个外部设计 skill 的方向，在 style_guide 写一句采用了谁即可。
+## 核心哲学：极薄内核 + 像素优先 + 释放自主性
+
+这套东西刻意保持**极薄的一层**，只锁住时间驱动的底层物理契约，把其余全部自由还给模型：
+
+1. **只有两条技术硬约束，其余全部可选**：
+   - **时间纯函数（`kernel.md`）**：`window.seek(t)` 只由 `t` 与加载期常量决定，不读时钟/裸 `Math.random`/定时器，第三方库关闭自带循环改由 `t` 驱动，字体随片打包。
+   - **有旁白同步时音频先行（`film-narration`）**：先合成拿字级时间戳 `narration.json`，画面事件与时长从 `vo.at()` / `vo.line()` 读，不手填猜测秒数。
+2. **不限定风格、工具、UI 框架或动画库**：
+   - 模型可以自由选用原生 Canvas 2D、SVG、HTML/CSS、WebGL/Shader、Three.js、PixiJS、GSAP、D3、Lottie、p5 或任意前端库，也可以自由组合真实/生成式图片、插画、纹理、3D 模型、视频片段与外部音轨（**混合管线**：代码负责精密时间轴、镜头调度、排版、交互与合成，视觉/听觉资产负责丰富质感，不必拿 2D 原语硬画一切）。
+   - 套件自带的 `runtime/*.js`、`--recipe` 配方、各类文档模板和可选检查门都是**按需取用的杠杆，不是必须执行的仪式**。
+3. **像素优先，而非文档先行（Think by Rendering）**：
+   - 不靠长篇文字发散空想画面。风格未定前，直接写出 2–3 个真正不同方向的单帧 `look/*.html`，拼成 `out/lookdev.png` 给用户看图拍板，再写整片。
+   - **探索期与交付期解耦**：创作探索期优先用 `--draft` 小样或硬件 GPU（`"backend": "gpu"`）大胆打磨审美、镜头张力和声音情绪；定稿确认后再走 `deliver` 完整确定性验收与冻结。
+4. **追求作品感，对抗“做浅”**：
+   - 不给效果模板、默认配色、默认字体或“禁止 X”的审美立法；只讲原理、在 `seek(t)` 下的难点和代价。
+   - 目标是一支能发出去、有人看完和转发的片子，而不是能跑的课件或平涂演示。用“像素比稿 → 快速小样看节奏 → 陌生人盲审挑廉价感”来抬高成片上限。
 
 ## 改 skill
 
-先读 film-core 的 `references/kernel.md`（唯一无条件的技术契约）和 `references/api.md`（能力 skill 能依赖的全部接口），
-再读 `docs/MAINTAINING.md`（skill 边界、写法、交付标准）。改任何一个 skill 之前先确认不是你该让步。
+先读 `skills/film-core/references/kernel.md`、`skills/film-core/references/api.md` 和 `docs/MAINTAINING.md`。
+往套件加内容前先问：**它是 `seek(t)` 或音频同步的硬契约吗？** 不是的话，就不要做成拦路的门、必写文档或强制依赖。依赖只有一个方向：能力 skill 只许 import `film-core`，跨能力走 `capability(name)`。
 
-这套东西要保持**很薄的一层**：内核之外的东西都应该是可插拔的能力、可参考的菜单、可选的检查，
-不管以后叠加什么（外部设计 skill、游戏开发思路、Lottie……）都应该好加。
-往套件里加东西前先问：它是内核契约吗？不是的话，它就不该是拦路的门，也不该是每支片都要写的文档。
-依赖只有一个方向：能力 skill 只许 import film-core，跨能力走 `capability(name)`。
+审美判据只来自每支片自己的 `films/<slug>/docs/style_guide.md`。每一条“不要 X”都要能改写成“X 的代价是 Y，什么时候值得付”。
 
-一条贯穿全套的原则：**skill 呈现能力，不规定风格。**
-
-同一原则的另一面：**skill 给方向、方法论和硬约束，不给效果模板。** 模型写代码的能力足够强，
-skill 的活是把需求和难点讲清楚（原理、在 seek(t) 下难在哪、代价、踩过的坑），顶多指一下现成的库，
-而不是预先写好转场库、特效函数、参数预设让模型挑着调——那会把模型锁在模板的参数空间里，片子也会长得一样。
-套件运行时只留管线和"自己写极易写错"的基础件（种子随机、检查点重放、字体加载、着色器宿主、three 每帧复位……）。
-以前的效果模板在 `examples/`，不随安装、不被 skill 引用。
-
-不给模板，不等于不要求质量。**不限制风格和表达形式，但要求把片子做精、做到有传播力**：
-画几张图、加几行字幕远远不够，要把代码能力用足，按这支片能做到的最好去做。默认目标是一支能发出去的片子，不是能跑的演示。
-对付"做浅"用的是流程上的默认动作，不是审美规定：
-先比稿再定方向；在 style_guide 里写「能力取舍」（每项能力用不用，不用的写理由）和「冲击点」；critique 逐个核对这些冲击点在画面上是否成立。
-这几步只要求"想过再决定"，不规定决定成什么。不要把它们做成拦交付的门。
-
-不要往任何 skill 里加默认配色、默认字体组合、默认转场，或者"禁止 X"。
-这套东西早期版本就是因为把一种审美写成了法律而失败的——
-规则对水墨片成立，对霓虹赛博全是错的；模型为了守规则每次都退回它最会写的那一招，
-两支片子长得一模一样。
-
-审美判据的唯一来源是每支片自己的 `films/<slug>/docs/style_guide.md`。
-如果你发现自己在往 skill 里写"推荐做法"，先问这是技术不变量还是你的口味。
-每一条"不要 X"都要能改写成"X 的代价是 Y，什么时候值得付"；
-改写不了的，要么标成硬约束，要么删掉。
-
-## 合格线，都是可执行的
+## 合格线（可执行）
 
 ```bash
-node skills/film-core/scripts/accept.mjs   # 查片子：已交付的对账收据，未交付的只报告（--deep 把门全跑一遍）
-node dev/selfcheck.mjs                     # 查 skill 本身：9 个 skill、依赖方向、gates.json、语法
-node dev/test.mjs                          # 回归：各 skill 自测 + 阴性/阳性对照（--quick 跳过慢的三维夹具）
+node skills/film-core/scripts/accept.mjs   # 查片子：已交付的对账收据，未交付的只报告（--deep 全跑门）
+node dev/selfcheck.mjs                     # 查 skill：9 个 skill、依赖方向、gates.json、md 行数、语法
+node dev/test.mjs                          # 回归：自测 + 阴性/阳性对照（--quick 跳过慢的三维夹具）
 ```
 
-改完任何东西，这三条都要过。改了门或运行时，再对受影响的片子跑 `accept --deep`。
-
-## 技术不变量（这些才是无条件的）
-
-一部影片是**时间的纯函数**：`seek(t)` 画出第 t 秒那一帧，别的什么都不做——seek 期间不读时钟、不用 `Math.random`、
-不靠定时器或跨帧状态推进，第三方库的自带循环关掉改由 t 驱动，字体随片打包。
-完整契约、守它的门（1a/1b/2/3/4/5、探针、字体来源等）和症状表只在 film-core `references/kernel.md` 写一遍，以它为准。
-
-## 音频对齐（最容易做错的地方）
-
-对齐不是把动画凑到音频上，是让动画去读音频的时间戳。音频先行、时长回写、
-关键词触发、事后校验，四条缺一条就漂。细节见 `film-narration`。
-
-API key 只放 `.env`，代码和文档里只提变量名。
+改完 skill 后三条都要过；改了门或运行时，再对受影响片子跑 `accept --deep`。API key 只放 `.env`。
 
 ## 环境既成事实
 
-- Node + Playwright(Chromium 156)，`node_modules/` 在仓库根。
-  **默认跑的是 `chromium_headless_shell-*`，不是 `chromium-*` 那个完整 Chrome。**
-  两者 `browser.version()` 返回同一个字符串，但渲出来差 5.4–13.6% 像素、肉眼可见
-  （等宽字体回退不同）。手动指定浏览器路径时特别容易拿错那个。
-- Python 在 `.venv/`：librosa、edge-tts、faster-whisper、truststore
-- **这台机器做 TLS 拦截**，Python 直连会 `CERTIFICATE_VERIFY_FAILED`。
-  解法是 `truststore` 走系统钥匙串，见 `film-narration` 的 `make_ssl_context()`
-- WebGL/WebGL2 都可用但是软件渲染（SwiftShader）。
-  **每种 context 必须用各自的 canvas**，同一个 canvas 上先取 webgl 再取 webgl2 返回 null
+- Node + Playwright(Chromium 156)，`node_modules/` 在仓库根。默认用 `chromium_headless_shell-*`（与完整 Chrome 像素差 5.4–13.6%，字体回退不同），统一走 `film-core/lib/browser.mjs`。
+- Python 在 `.venv/`：librosa、edge-tts、faster-whisper、truststore。
+- **本机做 TLS 拦截**，Python 直连会 `CERTIFICATE_VERIFY_FAILED`，走 `truststore` 系统钥匙串（见 `film-narration` `make_ssl_context()`）。
+- WebGL 默认软件渲染（SwiftShader），声明 `"backend": "gpu"` 可走 Apple Metal 硬件加速（快 3–10×）。**每种 context 必须用各自的 canvas**，同一 canvas 先取 `webgl` 再取 `webgl2` 返回 `null`。
 
 ## 目录
 
 ```
-skills/film-core/    入口与内核：契约、共享 lib、基础运行时、渲染、内核门、deliver/freeze/accept
-skills/film-*/       另外 8 个能力 skill：motion webfx physics typography narration assets story critique
-                     装机只拷 skills/film-*/（装法见 skills/README.md）
-dev/                 开发工具，不随安装：selfcheck、test（期望表 test-fixtures.json）、各 skill 的基准脚本
-examples/            从套件退出的效果模板（运行时、只为它们存在的夹具与基准），不随安装、不维护，见 examples/README.md
-tests/fixtures/      阴性/阳性对照夹具 _test-*：没有 runtime/、测现行代码、不交付；脚本对它们加 --films-dir tests/fixtures
-docs/                开发台账：MAINTAINING.md 维护约定、INTEGRATION.md 变更与 bug 记录、verified/<skill>.md 实测记录
+skills/film-core/    入口与内核：seek(t) 契约、共享 lib、基础运行时、渲染、内核门、deliver/freeze/accept
+skills/film-*/       8 个按需能力 skill：motion webfx physics typography narration assets story critique
+dev/                 开发工具：selfcheck、test（test-fixtures.json）、基准脚本（不随安装）
+examples/            退出的效果模板，不随安装、不维护
+tests/fixtures/      阴性/阳性对照夹具 _test-*（--films-dir tests/fixtures）
+docs/                MAINTAINING.md、INTEGRATION.md、verified/<skill>.md
 films/<slug>/        片子；已交付的带 receipt.json
 .venv/               Python 环境
 ```

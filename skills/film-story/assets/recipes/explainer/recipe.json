@@ -1,31 +1,21 @@
 {
   "schema": 1,
   "name": "explainer",
-  "tags": ["解说片", "科普", "KOL观点", "种草转化", "旁白先行", "调研", "分镜", "explainer"],
-  "about": "旁白与叙事配方：按主题选切入路线（原理机制 / 冲突故事 / KOL观点 / 痛点种草），音频先行拿实测时长再排分镜，写出模板并声明常用客观检查。",
+  "tags": ["解说片", "科普", "KOL观点", "种草转化", "旁白先行", "explainer"],
+  "about": "轻量化旁白片起步配方：生成 style_guide + script.json，并默认开启核心客观检查（事实/分镜/法律等重检查按需自加）。",
   "files": [
-    { "dest": "docs/brief.md", "from": "brief.md" },
-    { "dest": "docs/PROGRESS.md", "from": "PROGRESS.md" },
-    { "dest": "docs/facts.md", "skill": "film-story", "from": "assets/facts.template.md" },
-    { "dest": "docs/mechanism.md", "skill": "film-story", "from": "assets/mechanism.md" },
-    { "dest": "docs/shotlist.md", "skill": "film-story", "from": "assets/shotlist.md" },
     { "dest": "docs/style_guide.md", "skill": "film-story", "from": "assets/style_guide.md" },
-    { "dest": "docs/review_log.md", "skill": "film-critique", "from": "assets/review_log.md" },
     { "dest": "script.json", "skill": "film-narration", "from": "assets/script.template.json",
       "fallback": { "engine": "volcano-stream", "speaker": "去 film-narration 跑音色筛选再填，不要硬编码", "format": "mp3", "sampleRate": 44100,
                     "speechRate": 0, "gap": 0.6, "pronunciationDict": { "tone": [] }, "lines": [{ "id": "s1", "text": "" }] } }
   ],
   "film": { "narrationOffset": 0, "narrationTail": 0 },
-  "checks": ["shotlist", "facts.script", "facts.screen", "verify",
-             "narration", "mp4", "truepeak", "loop", "readability", "contrast", "style-guide",
-             "laws", "still", "empty", "marks", "claims", "tilt", "page", "variety"],
+  "checks": ["verify", "narration", "mp4", "truepeak", "readability", "page", "variety"],
   "next": [
-    "1. 填 docs/brief.md —— 先定画幅、时长、传播目标与说话姿态（人设）",
-    "2. 涉及客观数据/历史/外部事实时做调研 → docs/memory-snapshot.md + docs/facts.md",
-    "3. 按题型定主轴和前 3 秒钩子 → docs/mechanism.md；风格帧比稿：至少 3 个不同方向各一帧 → out/lookdev.png，挑一个（film-story references/lookdev.md §2）；style_guide 写视觉方向、能力取舍、冲击点（可跑 siblings.mjs 看近作）",
-    "4. 写听觉化台词进 script.json（先跑 _timing.py estimate 估时长），再合成 narration.json",
-    "5. 按实测锚点排分镜 → docs/shotlist.md（跑 check_shotlist.py --write）",
-    "6. 写 scene.html（守 film-core references/kernel.md），先过静帧闸门再渲整片",
-    "中途停下时在 docs/PROGRESS.md 记当前问题和下一步（几行，过时就删）"
+    "1. 有外部客观数字/史实时才做调研并建 docs/facts.md（可加 checks: facts.script）",
+    "2. 先在像素上定长相：写 2–3 个不同方向的单帧 look/*.html → stills.mjs --entries 拼 out/lookdev.png 给用户拍板，再简记进 docs/style_guide.md",
+    "3. 写听觉化台词进 script.json → tts.py 合成拿真实字级时间戳 narration.json（音频先行）",
+    "4. 自由选用前端技术与素材写 scene.html（长片可拆 shots/*.js），用 render.mjs --draft 快速看动效与节奏",
+    "5. 静帧/转场 + 陌生人盲审打磨 → 定稿后 deliver.mjs 交付"
   ]
 }

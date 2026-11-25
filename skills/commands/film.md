@@ -1,21 +1,22 @@
 ---
-description: 用代码渲染一支视频：建 films/<slug>/ 骨架（默认内核骨架，可选配方），按片子自己的时间真相源推进到成片，deliver 交付
+description: 用代码渲染一支视频：极薄 seek(t) 内核 + 像素优先风格帧比稿 + 自由技术栈与混合素材，按时间真相源推进到成片
 argument-hint: [主题或 slug，可带 --format 9x16 等]
 ---
 
-读 `film-core` skill，按它的说明做一支片子。唯一无条件的是它的 `references/kernel.md`（seek(t) 纯函数）；
-其余流程是可选配方，风格是菜单不是规定。
+读 `film-core` skill，按它的说明做一支片子。
 
 用户给的是：$ARGUMENTS
 
-如果上面是空的，先问清三件事再动手——**时长、画幅、主题**，这三个定了之后改动成本最高。
+## 工作方式（轻量、像素优先、不锁技术栈）
 
-默认建内核骨架（`new-film.mjs <slug>`），不写文档、不拷运行时（`import './runtime/x.js'` 直接用）。
-是解说、科普、KOL 观点或产品种草片时可以用配方（`--recipe explainer`：按题型选切入路线与前 3 秒钩子 → 按需调研 → 音频先行 → 分镜对账 → 实现 → 自检）；
-画面与节拍主导的宣传片、片头、MV 可用 `--recipe visual`；Lottie 片、游戏或模拟驱动的片子按各自的时间真相源排序（见 film-core 的 `references/style-menu.md`）。
-有旁白同步需求时坚持音频先行；构思画面时警惕滑向"最好写代码的通用卡片网格"——先按题型定好视觉机制或证据反差（见 `film-story`）再动手写代码。
-
-做完用 `deliver.mjs --film <slug>` 交付：定稿渲染、全部门、冻结运行时、写收据。没有收据的片子不算做完。
-
-如果上面给的是一个已存在的 `films/<slug>/`，不从 brief 重来：读那支片的 `docs/`（尤其 `style_guide.md`，那是它的法律），
-改，只重渲改动的那几秒，跑门，再 deliver。
+1. **先明确三件事**（若上面未给）：**主题、时长、画幅（默认 9x16）**。已存在的 `films/<slug>/` 直接读它的 `docs/style_guide.md` 与现状，局部修改重渲即可。
+2. **只守两条硬约束，其余自由发挥**：
+   - `window.seek(t)` 是 `t` 的纯函数 + 字体随片打包（见 `film-core/references/kernel.md`）。
+   - 有旁白同步时**音频先行**：先用 `film-narration` 合成拿到 `narration.json`，所有镜头边界与事件读 `vo.at()` / `vo.line()`，绝不手填秒数。
+   - **不限技术栈、框架、动画库或素材来源**：Canvas 2D、SVG、HTML/CSS、Three.js、Shader、GSAP、PixiJS、Lottie，以及真实/AI 生成的图片、插画、模型、视频和配乐都能混用；长片自由拆成多模块（如 `shots/*.js`）。`runtime/*.js` 和 `--recipe` 都是可选工具，不是硬性规定。
+3. **像素优先比稿（硬确认点，防整片返工）**：
+   - 只要用户没指定现成长相、也没明说"直接出完"，先建最薄骨架 `new-film.mjs <slug>`，在写整片之前先用几分钟写出 **2–3 个真正不同方向的单帧 `look/*.html`**，跑 `stills.mjs --entries` 拼出 `out/lookdev.png`，**先给用户看图拍板方向，再写整片**。
+   - 决定落盘为简短的 `docs/style_guide.md`（半页写清美术方向、核心冲击点、声音与素材取舍即可，不必写长篇八股）。
+4. **快速迭代 + 陌生人盲审 + 按需交付**：
+   - 探索期用 `render.mjs --draft`（3D/重着色器片在 `film.json` 加 `"backend": "gpu"`）快速出小样看动态、节奏和声音情绪；不要为了省算力退回平涂课件。
+   - 出终稿前看静帧、转场图并做一次**陌生人盲审**（不看代码和说明，只看画面挑“哪儿显廉价、第几秒会划走”）。用户点头定稿后再跑 `deliver.mjs --film <slug>` 过门、冻结运行时、写 `receipt.json`。
